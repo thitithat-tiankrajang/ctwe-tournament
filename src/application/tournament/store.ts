@@ -17,6 +17,8 @@ interface TournamentState {
   error: string | null;
   load: () => Promise<void>;
   refreshAuth: () => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
   clearError: () => void;
   createCard: (input: CreateCardInput) => Promise<string>;
   addPlayer: (cardId: string, player: Pick<Player, "firstName" | "lastName" | "school">) => Promise<void>;
@@ -109,6 +111,31 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       } catch (error) {
         set({ loading: false, error: error instanceof Error ? error.message : "ไม่สามารถเชื่อมต่อ API ได้" });
       }
+    },
+    async login(username, password) {
+      const body = new URLSearchParams({ username, password, _csrf: get().auth.csrfToken });
+      const response = await fetch("/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(response.status === 401 ? "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" : `เข้าสู่ระบบไม่สำเร็จ (${response.status})`);
+      await get().refreshAuth();
+      if (!get().auth.authenticated) throw new Error("สร้าง session เจ้าหน้าที่ไม่สำเร็จ");
+    },
+    async logout() {
+      const body = new URLSearchParams({ _csrf: get().auth.csrfToken });
+      const response = await fetch("/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`ออกจากระบบไม่สำเร็จ (${response.status})`);
+      set({ auth: anonymous });
     },
     async createCard(input) {
       const card = await request<TournamentCard>("/api/cards", { method: "POST", body: JSON.stringify(input) });

@@ -6,7 +6,8 @@ Base path: `/api`
 
 - Public `GET` tournament data is read-only and does not require login.
 - Every `POST`, `PUT`, and `DELETE` requires an authenticated `ROLE_STAFF` server session and a valid CSRF token.
-- Staff login uses `POST /login`; `GET /api/auth/me` returns membership, roles, and the CSRF request token.
+- Staff login uses `POST /login` and returns `204` on success or `401` on invalid credentials; the frontend performs navigation without relying on a cross-origin redirect.
+- Staff logout uses `POST /logout` and returns `204`; `GET /api/auth/me` returns membership, roles, and the CSRF request token.
 - Mutations on an existing card require `If-Match: "<card.version>"`; stale versions return `409 Conflict`.
 - Audit data and `/api/dev/**` are staff-only. Developer endpoints exist only when `DEV_TOOLS_ENABLED=true`.
 

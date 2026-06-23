@@ -68,12 +68,12 @@ public class SecurityConfiguration {
             .formLogin(form -> form
                 .loginPage("/staff-login")
                 .loginProcessingUrl("/login")
-                .defaultSuccessUrl("/cards", true)
-                .failureUrl("/staff-login?error=1")
+                .successHandler((request, response, authentication) -> response.setStatus(HttpStatus.NO_CONTENT.value()))
+                .failureHandler((request, response, exception) -> response.sendError(HttpStatus.UNAUTHORIZED.value()))
                 .permitAll())
             .logout(logout -> logout
                 .logoutRequestMatcher(new AntPathRequestMatcher("/logout", "POST"))
-                .logoutSuccessUrl("/cards")
+                .logoutSuccessHandler((request, response, authentication) -> response.setStatus(HttpStatus.NO_CONTENT.value()))
                 .invalidateHttpSession(true)
                 .deleteCookies("JSESSIONID"))
             .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(

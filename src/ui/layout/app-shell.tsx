@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import {
   Activity,
   ClipboardList,
@@ -16,6 +16,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { FormEvent, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { Button } from "@/ui/components/button";
 
@@ -41,13 +42,30 @@ function NavigationLink({ href, label, icon: Icon, active }: { href: string; lab
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const pathname = usePathname();
   const params = useParams<{ id?: string }>();
   const id = typeof params.id === "string" ? params.id : undefined;
   const auth = useTournamentStore((state) => state.auth);
+  const logout = useTournamentStore((state) => state.logout);
+  const [loggingOut, setLoggingOut] = useState(false);
   const isStaff = auth.authenticated && auth.roles.includes("ROLE_STAFF");
   const generalLinks = isStaff ? [...publicGeneralLinks, { href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : publicGeneralLinks;
   const links = id ? cardLinks(id, isStaff) : generalLinks;
+
+  const submitLogout = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoggingOut(true);
+    try {
+      await logout();
+      router.replace("/cards");
+      router.refresh();
+    } catch (failure) {
+      window.alert(failure instanceof Error ? failure.message : "ออกจากระบบไม่สำเร็จ");
+    } finally {
+      setLoggingOut(false);
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -68,7 +86,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? "เจ้าหน้าที่" : "ดูข้อมูลเท่านั้น"}</small></span>
         </div>
         {isStaff ? (
-          <form action="/logout" method="post" style={{ padding: "0 18px 18px" }}><input type="hidden" name="_csrf" value={auth.csrfToken} /><Button type="submit" variant="secondary" size="sm"><ShieldCheck size={15} />ออกจากระบบ</Button></form>
+          <form onSubmit={submitLogout} style={{ padding: "0 18px 18px" }}><Button type="submit" variant="secondary" size="sm" disabled={loggingOut}><ShieldCheck size={15} />{loggingOut ? "กำลังออก…" : "ออกจากระบบ"}</Button></form>
         ) : (
           <Link href="/staff-login" style={{ padding: "0 18px 18px" }}><Button variant="secondary" size="sm"><LogIn size={15} />เข้าสู่ระบบเจ้าหน้าที่</Button></Link>
         )}
