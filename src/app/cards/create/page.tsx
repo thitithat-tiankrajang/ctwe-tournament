@@ -16,7 +16,7 @@ import { LockKeyhole } from "lucide-react";
 const ruleLabels: Record<PairingRuleType, string> = {
   SWISS: "Swiss — จับคู่ตามคะแนนและผลต่าง",
   KING_OF_THE_HILL: "King of the Hill — อันดับใกล้กันพบกัน",
-  PAIR_RESULT: "Pair Result — ผู้ชนะพบผู้ชนะในเกมถัดไป",
+  PAIR_RESULT: "แพ้เจอแพ้ / ชนะเจอชนะ — กรอกผล 2 เกมเป็นหนึ่งชุด",
 };
 
 export default function CreateCardPage() {
@@ -104,6 +104,7 @@ export default function CreateCardPage() {
 
         <Panel title="ลำดับเกมและกติกาการจับคู่" description="ทุกเส้นเชื่อมต้องมีกติกาหนึ่งรายการก่อนบันทึก">
           <div className="notice notice--info" style={{ margin: 18 }}><Info size={18} /><p><strong>กติกามีผลกับเกมถัดไป</strong><span>ตัวอย่าง: กติกาบนเส้น เกม 1 → เกม 2 ใช้สร้างคู่แข่งขันของเกม 2</span></p></div>
+          {rules.includes("PAIR_RESULT") && <div className="notice notice--warning" style={{ margin: 18 }}><Info size={18} /><p><strong>แพ้เจอแพ้ / ชนะเจอชนะ ใช้ผู้เล่นเป็นกลุ่มละ 4 คน</strong><span>เจ้าหน้าที่จะกรอกผลทั้ง Game ต้นทางและ Game ถัดไปในชุดเดียวกัน จำนวนผู้เล่นต้องหาร 4 ลงตัว และห้ามเลือกกติกานี้ต่อกันสองเส้น</span></p></div>}
           <div className="rule-list">
             {rules.map((rule, index) => (
               <div className="rule-row" key={index}>

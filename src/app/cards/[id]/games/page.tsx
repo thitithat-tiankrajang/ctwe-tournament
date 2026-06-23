@@ -2,166 +2,59 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Calculator, Check, Edit3, Eye, Gamepad2, LoaderCircle, LockKeyhole, Save, Search, ToggleRight, Trophy } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, Check, Eye, Gamepad2, LockKeyhole, Trophy } from "lucide-react";
+import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
+import { rankingAfterGame } from "@/domain/tournament/history";
 import type { Pairing, Player, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
-import { GameFlow, pairingRuleForGame } from "@/ui/components/game-flow";
-import { CustomCombobox } from "@/ui/components/institution-combobox";
+import { GameFlow } from "@/ui/components/game-flow";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
-
-interface CalculatedOutcome {
-  resultType: "WIN" | "DRAW";
-  winnerId?: string;
-  calculatedDiff: number;
-}
+import { PlayerHistoryTable } from "@/ui/components/player-history-table";
+import { ResultEntryGrid, ResultViewGrid, type EntrySlot } from "@/ui/components/result-entry-grid";
+import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
 
 function isRecorded(pairing: Pairing) {
   return pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
 }
 
-function calculateOutcome(scoreOne: string, scoreTwo: string, maxDiff: number, playerOneId: string, playerTwoId: string): CalculatedOutcome | null {
-  if (scoreOne.trim() === "" || scoreTwo.trim() === "") return null;
-  const one = Number(scoreOne); const two = Number(scoreTwo);
-  if (!Number.isInteger(one) || !Number.isInteger(two) || one < 0 || two < 0 || one > 1_000_000_000 || two > 1_000_000_000) return null;
-  if (one === two) return { resultType: "DRAW", calculatedDiff: 0 };
-  return { resultType: "WIN", winnerId: one > two ? playerOneId : playerTwoId, calculatedDiff: Math.min(Math.abs(one - two), maxDiff) };
-}
-
-function outcomeLabel(outcome: CalculatedOutcome | null, players: Map<string, Player>) {
-  if (!outcome) return "รอคะแนนครบ";
-  if (outcome.resultType === "DRAW") return "เสมอ · +1 WP ทั้งคู่ · Diff 0";
-  const winner = players.get(outcome.winnerId ?? "");
-  return `${winner?.id ?? "—"} ชนะ · +2 WP · Diff ±${outcome.calculatedDiff}`;
-}
-
-function ResultRow({ pairing, players, maxDiff, onSubmit }: {
-  pairing: Pairing;
-  players: Map<string, Player>;
-  maxDiff: number;
-  onSubmit: (scoreOne: number, scoreTwo: number, editExisting: boolean) => Promise<void>;
-}) {
-  const one = players.get(pairing.playerOneId); const two = players.get(pairing.playerTwoId);
-  const saved = isRecorded(pairing);
-  const [scoreOne, setScoreOne] = useState(pairing.scoreOne?.toString() ?? "");
-  const [scoreTwo, setScoreTwo] = useState(pairing.scoreTwo?.toString() ?? "");
-  const [enabled, setEnabled] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const outcome = calculateOutcome(scoreOne, scoreTwo, maxDiff, pairing.playerOneId, pairing.playerTwoId);
-
-  useEffect(() => {
-    if (enabled) return;
-    setScoreOne(pairing.scoreOne?.toString() ?? "");
-    setScoreTwo(pairing.scoreTwo?.toString() ?? "");
-  }, [enabled, pairing.scoreOne, pairing.scoreTwo]);
-
-  const save = async () => {
-    if (!outcome) return;
-    setSaving(true);
-    try {
-      await onSubmit(Number(scoreOne), Number(scoreTwo), saved);
-      setEnabled(false);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "บันทึกผลไม่สำเร็จ");
-    } finally { setSaving(false); }
-  };
+/** Non-active view: ranking per game (window-slide); click a player row to see their history. */
+function GamesBrowse({ card, players }: { card: TournamentCard; players: Map<string, Player> }) {
+  const [rankingGame, setRankingGame] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
+  const games = [...new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers))].sort((a, b) => a - b);
+  const latest = games[games.length - 1] ?? 0;
+  const selected = rankingGame && games.includes(rankingGame) ? rankingGame : latest;
+  const rankingCard = { ...card, snapshots: publishedSnapshots };
+  const ranked = selected > 0 ? rankingAfterGame(rankingCard, selected) : [];
+  const selectedPlayer = selectedId ? players.get(selectedId) : undefined;
 
   return (
-    <div className={`result-entry-row${enabled ? " result-entry-row--enabled" : ""}`}>
-      <div className="result-entry-match"><strong>คู่ {pairing.tableNumber}</strong><small>Max {maxDiff}</small></div>
-      <div className="result-entry-player"><b>{one?.id}</b><strong>{one?.firstName} {one?.lastName}</strong><small>{one?.school}</small></div>
-      <input aria-label={`คะแนน ${one?.id}`} className="result-score-input" type="number" min={0} max={1_000_000_000} value={scoreOne} disabled={!enabled || saving} onChange={(event) => setScoreOne(event.target.value)} />
-      <div className={`result-calculation result-calculation--${outcome?.resultType?.toLowerCase() ?? "pending"}`}><Calculator size={15} /><span>{outcomeLabel(outcome, players)}</span></div>
-      <input aria-label={`คะแนน ${two?.id}`} className="result-score-input" type="number" min={0} max={1_000_000_000} value={scoreTwo} disabled={!enabled || saving} onChange={(event) => setScoreTwo(event.target.value)} />
-      <div className="result-entry-player result-entry-player--right"><b>{two?.id}</b><strong>{two?.firstName} {two?.lastName}</strong><small>{two?.school}</small></div>
-      <div className="result-entry-actions">
-        {saved && !enabled && <Badge tone="success">บันทึกแล้ว</Badge>}
-        {enabled ? <Button size="sm" variant="success" disabled={saving || !outcome} onClick={() => void save()}>{saving ? <LoaderCircle className="loading-spinner" size={14} /> : <Save size={14} />}บันทึก</Button>
-          : <Button size="sm" variant="secondary" onClick={() => setEnabled(true)}>{saved ? <Edit3 size={14} /> : <ToggleRight size={14} />}{saved ? "Edit" : "Enable"}</Button>}
-      </div>
-    </div>
-  );
-}
+    <>
+      {games.length > 0 ? (
+        <Panel title="อันดับประจำแต่ละเกม" description="เลือกเกมเพื่อดูคะแนนชัยชนะและผลต่างสะสม · คลิกผู้เล่นเพื่อดูประวัติการเล่นรายเกม">
+          <div className="panel-padding archive-game-flow"><GameFlow card={rankingCard} selectedGame={selected} onSelect={setRankingGame} mode="ranking" /></div>
+          <div className="archive-rule-summary"><strong>อันดับหลังจบเกม {selected}</strong><span>เรียงตาม Win Point แล้ว Total Difference</span></div>
+          <RankingGrid ranked={ranked} storageKey={`${card.id}:games:ranking`} resetKey={String(selected)} onRowClick={(player) => setSelectedId(player.id)} activeId={selectedId} />
+        </Panel>
+      ) : (
+        <Panel><EmptyState icon={<Gamepad2 size={25} />} title="ยังไม่มีอันดับที่เผยแพร่" description="อันดับและประวัติการเล่นจะปรากฏที่นี่หลังเจ้าหน้าที่ Publish ผลเกมแรก" /></Panel>
+      )}
 
-function QuickResultForm({ pairings, players, maxDiff, onSubmit }: {
-  pairings: Pairing[];
-  players: Map<string, Player>;
-  maxDiff: number;
-  onSubmit: (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => Promise<void>;
-}) {
-  const [firstId, setFirstId] = useState(""); const [secondId, setSecondId] = useState("");
-  const [firstScore, setFirstScore] = useState(""); const [secondScore, setSecondScore] = useState("");
-  const [enabled, setEnabled] = useState(false); const [saving, setSaving] = useState(false);
-  const first = players.get(firstId); const second = players.get(secondId);
-  const pairing = pairings.find((item) => (item.playerOneId === firstId && item.playerTwoId === secondId) || (item.playerOneId === secondId && item.playerTwoId === firstId));
-  const saved = pairing ? isRecorded(pairing) : false;
-  const outcome = calculateOutcome(firstScore, secondScore, maxDiff, firstId, secondId);
-  const options = useMemo(() => [...players.values()].map((player) => ({ value: player.id, label: `${player.id} · ${player.firstName} ${player.lastName}`, detail: player.school })), [players]);
-
-  useEffect(() => {
-    if (!pairing || !saved) { setFirstScore(""); setSecondScore(""); return; }
-    const direct = pairing.playerOneId === firstId;
-    setFirstScore((direct ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "");
-    setSecondScore((direct ? pairing.scoreTwo : pairing.scoreOne)?.toString() ?? "");
-  }, [firstId, pairing, saved, secondId]);
-
-  const save = async () => {
-    if (!pairing || !outcome) return;
-    const direct = pairing.playerOneId === firstId;
-    setSaving(true);
-    try {
-      await onSubmit(pairing, Number(direct ? firstScore : secondScore), Number(direct ? secondScore : firstScore), saved);
-      setFirstId(""); setSecondId(""); setFirstScore(""); setSecondScore(""); setEnabled(false);
-    } catch (error) { window.alert(error instanceof Error ? error.message : "บันทึกผลไม่สำเร็จ"); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <Panel title="กรอกผลด้วยรหัสผู้เล่น" description="ค้นหารหัส ชื่อ หรือสถาบัน ระบบจะตรวจว่าทั้งสองคนเป็นคู่แข่งขันในเกมนี้">
-      <div className="quick-result-form panel-padding">
-        <div className="quick-result-side">
-          <label className="form-label" htmlFor="quick-player-one">ผู้เล่นฝ่ายที่ 1</label>
-          <CustomCombobox id="quick-player-one" value={firstId} onChange={(value) => { setFirstId(value.toUpperCase()); setEnabled(false); }} options={options.filter((option) => option.value !== secondId)} placeholder="รหัส ชื่อ หรือสถาบัน" caption="เลือกผู้เล่นฝ่ายที่ 1" listLabel="ผู้เล่นฝ่ายที่ 1" />
-          <div className="quick-player-detail">{first ? <><strong>{first.firstName} {first.lastName}</strong><span>{first.id} · {first.school}</span></> : <span>กรอกรหัสเพื่อแสดงข้อมูล</span>}</div>
-        </div>
-        <input aria-label="คะแนนผู้เล่นฝ่ายที่ 1" className="result-score-input result-score-input--large" type="number" min={0} max={1_000_000_000} value={firstScore} disabled={!enabled || saving} onChange={(event) => setFirstScore(event.target.value)} />
-        <div className="quick-result-center"><Search size={17} /><strong>{pairing ? `พบคู่ที่ ${pairing.tableNumber}` : first && second ? "สองคนนี้ไม่ได้พบกันในเกมนี้" : "เลือกผู้เล่น 2 คน"}</strong><span>{pairing ? outcomeLabel(outcome, players) : `Max diff เกมนี้ ${maxDiff}`}</span></div>
-        <input aria-label="คะแนนผู้เล่นฝ่ายที่ 2" className="result-score-input result-score-input--large" type="number" min={0} max={1_000_000_000} value={secondScore} disabled={!enabled || saving} onChange={(event) => setSecondScore(event.target.value)} />
-        <div className="quick-result-side">
-          <label className="form-label" htmlFor="quick-player-two">ผู้เล่นฝ่ายที่ 2</label>
-          <CustomCombobox id="quick-player-two" value={secondId} onChange={(value) => { setSecondId(value.toUpperCase()); setEnabled(false); }} options={options.filter((option) => option.value !== firstId)} placeholder="รหัส ชื่อ หรือสถาบัน" caption="เลือกผู้เล่นฝ่ายที่ 2" listLabel="ผู้เล่นฝ่ายที่ 2" />
-          <div className="quick-player-detail">{second ? <><strong>{second.firstName} {second.lastName}</strong><span>{second.id} · {second.school}</span></> : <span>กรอกรหัสเพื่อแสดงข้อมูล</span>}</div>
-        </div>
-        <div className="quick-result-actions">
-          {enabled ? <Button variant="success" disabled={saving || !pairing || !outcome} onClick={() => void save()}>{saving ? <LoaderCircle className="loading-spinner" size={15} /> : <Save size={15} />}บันทึกผล</Button>
-            : <Button disabled={!pairing} onClick={() => setEnabled(true)}>{saved ? <Edit3 size={15} /> : <ToggleRight size={15} />}{saved ? "Edit ผลนี้" : "Enable กรอกคะแนน"}</Button>}
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
-function ResultArchive({ card, players }: { card: TournamentCard; players: Map<string, Player> }) {
-  const [selectedGame, setSelectedGame] = useState<number | null>(null);
-  const retainCurrentResults = card.runtimeStage === "RESULT_COLLECTION" || card.runtimeStage === "RESULT_REVIEW";
-  const snapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt) || (retainCurrentResults && snapshot.gameNumbers.includes(card.currentGame)));
-  if (snapshots.length === 0) return null;
-  const latestGame = Math.max(...snapshots.flatMap((snapshot) => snapshot.gameNumbers));
-  const gameNumber = selectedGame && snapshots.some((snapshot) => snapshot.gameNumbers.includes(selectedGame)) ? selectedGame : latestGame;
-  const snapshot = snapshots.find((item) => item.gameNumbers.includes(gameNumber));
-  const pairings = snapshot?.pairings.filter((pairing) => pairing.gameNumber === gameNumber) ?? [];
-  const game = card.games.find((item) => item.number === gameNumber);
-  const archiveCard = { ...card, snapshots };
-
-  return (
-    <Panel title="ผลการแข่งขันที่บันทึกไว้ตามเกม" description="ดูผลเกมปัจจุบันและผลที่ Publish แล้วได้จาก bar เดียวกัน ข้อมูลเดิมจะไม่หายเมื่อ workflow เดินต่อ">
-      <div className="panel-padding archive-game-flow"><GameFlow card={archiveCard} selectedGame={gameNumber} onSelect={setSelectedGame} mode="results" /></div>
-      <div className="archive-rule-summary"><strong>เกม {gameNumber} · {pairingRuleForGame(card, gameNumber)} · Max diff {game?.maxDiff}</strong><span>{snapshot?.confirmedAt ? `Publish เมื่อ ${new Date(snapshot.confirmedAt).toLocaleString("th-TH")}` : "กำลังกรอก/Review ผล"}</span></div>
-      <div className="dense-table-wrap archive-table-wrap"><table className="data-table review-results"><thead><tr><th className="numeric">คู่</th><th>ผู้เล่น 1</th><th className="numeric">คะแนน</th><th>ผู้เล่น 2</th><th className="numeric">คะแนน</th><th>ผล</th><th className="numeric">Diff</th></tr></thead><tbody>{pairings.map((pairing) => { const one = players.get(pairing.playerOneId); const two = players.get(pairing.playerTwoId); const winner = players.get(pairing.winnerId ?? ""); const recorded = pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined; return <tr key={pairing.id}><td className="numeric">{pairing.tableNumber}</td><td><strong>{one?.firstName} {one?.lastName}</strong><small className="table-subline">{one?.id} · {one?.school}</small></td><td className="numeric score-review">{pairing.scoreOne ?? "—"}</td><td><strong>{two?.firstName} {two?.lastName}</strong><small className="table-subline">{two?.id} · {two?.school}</small></td><td className="numeric score-review">{pairing.scoreTwo ?? "—"}</td><td>{!recorded ? <Badge tone="info">รอกรอกผล</Badge> : pairing.resultType === "DRAW" ? <Badge tone="warning">เสมอ</Badge> : <Badge tone="success">{winner?.id} ชนะ</Badge>}</td><td className="numeric">{!recorded ? "—" : pairing.resultType === "DRAW" ? "0" : `±${pairing.calculatedDiff}`}</td></tr>; })}</tbody></table></div>
-    </Panel>
+      {selectedPlayer && (
+        <Panel
+          title={`ประวัติการเล่น · ${selectedPlayer.id} · ${selectedPlayer.firstName} ${selectedPlayer.lastName}`}
+          description={`${selectedPlayer.school} · แต้มชัยชนะและผลต่างสะสมคิดรวมจากเกมแรกถึงเกมนั้น`}
+          actions={<Button variant="secondary" size="sm" onClick={() => setSelectedId(null)}>ปิดประวัติ</Button>}
+        >
+          <PlayerHistoryTable card={card} players={players} playerId={selectedId!} />
+        </Panel>
+      )}
+    </>
   );
 }
 
@@ -178,40 +71,63 @@ export default function GamesPage() {
   if (!card) return <CardNotFound />;
 
   const playerMap = new Map(card.players.map((player) => [player.id, player]));
-  const currentGame = card.games.find((game) => game.number === card.currentGame);
-  const maxDiff = currentGame?.maxDiff ?? 350;
+  const activeGames = resultBlockGames(card);
+  const pairResultBlock = isPairResultBlock(card);
+  const blockLabel = activeGames.length === 1 ? `Game ${activeGames[0]}` : `Game ${activeGames[0]}–${activeGames[activeGames.length - 1]}`;
   const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.includes(card.currentGame));
-  const pairings = currentSnapshot?.pairings.filter((pairing) => pairing.gameNumber === card.currentGame) ?? [];
+  const pairings = currentSnapshot?.pairings.filter((pairing) => activeGames.includes(pairing.gameNumber ?? card.currentGame)) ?? [];
   const resultCollection = card.runtimeStage === "RESULT_COLLECTION"; const reviewing = card.runtimeStage === "RESULT_REVIEW";
-  const completedCount = pairings.filter(isRecorded).length; const allComplete = pairings.length > 0 && completedCount === pairings.length;
+  const expectedCount = (card.players.length / 2) * activeGames.length;
+  const completedCount = pairings.filter(isRecorded).length;
+  const allComplete = pairings.length === expectedCount && completedCount === expectedCount;
+  const pairingsForGame = (gameNumber: number) => pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === gameNumber);
+  const maxDiffForGame = (gameNumber: number) => card.games.find((game) => game.number === gameNumber)?.maxDiff ?? 350;
+  const latestActiveGame = activeGames[activeGames.length - 1];
+  const latestActivePairings = pairingsForGame(latestActiveGame);
 
   const saveResult = (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => submitResult(id, pairing.id, scoreOne, scoreTwo, editExisting);
   const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { window.alert(error instanceof Error ? error.message : "เปิดหน้า review ไม่สำเร็จ"); } finally { setBusy(false); } };
   const publish = async () => {
-    if (!window.confirm(`ยืนยัน Publish ผลเกม ${card.currentGame}? ข้อมูลจะขึ้นหน้าภาพรวมและแก้ไขไม่ได้`)) return;
-    const finalGame = card.currentGame === card.games.length; setBusy(true);
+    if (!window.confirm(`ยืนยัน Publish ผล ${blockLabel}? ข้อมูลจะขึ้นหน้าภาพรวมและแก้ไขไม่ได้`)) return;
+    const finalGame = activeGames[activeGames.length - 1] === card.games.length; setBusy(true);
     try { await publishResults(id); router.push(finalGame ? `/cards/${id}` : `/cards/${id}/tables`); }
     catch (error) { window.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ"); } finally { setBusy(false); }
   };
 
-  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title="ผลการแข่งขัน" description="ข้อมูลเกมก่อนหน้าดูย้อนหลังได้ด้านล่าง ส่วนการกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><Panel><EmptyState icon={card.runtimeStage === "FINAL_PUBLISHED" ? <Trophy size={25} /> : <Gamepad2 size={25} />} title={card.runtimeStage === "FINAL_PUBLISHED" ? "ประกาศผลการแข่งขันแล้ว" : "ยังไม่ถึงขั้นตอนกรอกผลเกมปัจจุบัน"} description={card.runtimeStage === "PAIRING_PREVIEW" || card.runtimeStage === "TABLE_PAIRING" ? "กลับไปสร้างและยืนยัน pairing ก่อน" : "ตรวจสอบขั้นตอนปัจจุบันจากหน้าภาพรวม"} action={<Link href={card.runtimeStage === "FINAL_PUBLISHED" ? `/cards/${id}` : `/cards/${id}/tables`}><Button>{card.runtimeStage === "FINAL_PUBLISHED" ? "ดูผลรวม" : "ไปหน้าโต๊ะ"}</Button></Link>} /></Panel><ResultArchive card={card} players={playerMap} /></>;
+  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} /></>;
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · เกม ${card.currentGame} · Max diff ${maxDiff}`} title={reviewing ? "Review ผลการแข่งขัน" : "กรอกผลการแข่งขัน"} description={reviewing ? "ตรวจคะแนน ผลชนะ/เสมอ และ diff ก่อน Publish" : "ทุกแถวเริ่มจากสถานะ Disabled ต้องกด Enable หรือ Edit ก่อนบันทึก ระบบคำนวณผลให้จากคะแนน"} actions={resultCollection ? <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />Review ผล <ArrowRight size={16} /></Button> : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{card.currentGame === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>} />
-      <div className="notice notice--warning"><LockKeyhole size={18} /><p><strong>ต้อง Enable และบันทึกครบทุกคู่</strong><span>{completedCount} จาก {pairings.length} คู่บันทึกแล้ว · ผลเกมจะเผยแพร่หลัง Finish หน้า Review เท่านั้น</span></p></div>
+      <PageHeader eyebrow={`${card.name} · ${blockLabel}`} title={reviewing ? "Review ผลการแข่งขัน" : "กรอกผลการแข่งขัน"} description={reviewing ? "ตรวจคะแนน ผลชนะ/เสมอ และ diff ก่อน Publish" : pairResultBlock ? "กรอก Game ต้นทางก่อน ระบบจะสร้างคู่ผู้ชนะและคู่ผู้แพ้ใน Game ถัดไปให้กรอกต่อในหน้าเดียวกัน" : "พิมพ์คะแนนในตารางแล้วกด Enter เพื่อบันทึกและเลื่อนไปคู่ถัดไปทันที ไม่ต้องกดปุ่มเปิด/บันทึก"} actions={resultCollection ? <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />Review ผล <ArrowRight size={16} /></Button> : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>} />
+      <div className="notice notice--warning"><LockKeyhole size={18} /><p><strong>ต้องบันทึกผลครบทุกคู่ของ {blockLabel}</strong><span>{completedCount} จาก {expectedCount} คู่บันทึกแล้ว · Pairing และผลจะเผยแพร่ตาม milestone ที่ยืนยัน</span></p></div>
 
       {resultCollection ? <>
-        <QuickResultForm pairings={pairings} players={playerMap} maxDiff={maxDiff} onSubmit={saveResult} />
-        <Panel title={`ผลเกม ${card.currentGame}`} description={`${completedCount} จาก ${pairings.length} คู่บันทึกแล้ว · Win +2 / Draw +1 / Loss +0`} actions={<Badge tone={allComplete ? "success" : "warning"}>{allComplete ? "พร้อม Review" : "กำลังกรอก"}</Badge>}>
-          <div className="result-entry-wrap"><div className="result-entry-header"><span>คู่</span><span>ฝ่ายที่ 1</span><span>คะแนน</span><span>ระบบคำนวณ</span><span>คะแนน</span><span>ฝ่ายที่ 2</span><span>สถานะ</span></div>{pairings.map((pairing) => <ResultRow key={pairing.id} pairing={pairing} players={playerMap} maxDiff={maxDiff} onSubmit={(one, two, edit) => saveResult(pairing, one, two, edit)} />)}</div>
-        </Panel>
+        {activeGames.map((gameNumber) => {
+          const gamePairings = pairingsForGame(gameNumber);
+          const maxDiff = maxDiffForGame(gameNumber);
+          const isDestination = pairResultBlock && gameNumber === activeGames[1];
+          const slots: EntrySlot[] = isDestination
+            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => ({ tableNumber: source.tableNumber, pairing: gamePairings.find((dest) => dest.tableNumber === source.tableNumber) }))
+            : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing }));
+          const completed = gamePairings.filter(isRecorded).length;
+          if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`Game ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยัน pairing เกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
+          return <Panel key={gameNumber} title={`กรอกผล Game ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === slots.length ? "success" : "warning"}>{completed}/{slots.length} คู่</Badge>}>
+            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} pendingNote={isDestination ? `คู่ที่ยังว่างจะแสดงผู้เล่นและกรอกได้อัตโนมัติ เมื่อบันทึกผล Game ${activeGames[0]} ครบทั้งสองคู่ในกลุ่มนั้น (ผู้ชนะขึ้นคู่บน ผู้แพ้ลงคู่ล่าง)` : undefined} onSubmit={saveResult} />
+          </Panel>;
+        })}
       </> : (
-        <Panel title={`Review เกม ${card.currentGame}`} description={`${pairings.length} คู่ · Maximum Difference ${maxDiff}`}>
-          <div className="dense-table-wrap"><table className="data-table review-results"><thead><tr><th>คู่</th><th>ผู้เล่น 1</th><th className="numeric">คะแนน</th><th>ผู้เล่น 2</th><th className="numeric">คะแนน</th><th>ผลที่คำนวณ</th><th className="numeric">Diff</th></tr></thead><tbody>{pairings.map((pairing) => { const one = playerMap.get(pairing.playerOneId); const two = playerMap.get(pairing.playerTwoId); const winner = playerMap.get(pairing.winnerId ?? ""); return <tr key={pairing.id}><td className="numeric">{pairing.tableNumber}</td><td><strong>{one?.firstName} {one?.lastName}</strong><small className="table-subline">{one?.id} · {one?.school}</small></td><td className="numeric score-review">{pairing.scoreOne}</td><td><strong>{two?.firstName} {two?.lastName}</strong><small className="table-subline">{two?.id} · {two?.school}</small></td><td className="numeric score-review">{pairing.scoreTwo}</td><td><Badge tone={pairing.resultType === "DRAW" ? "warning" : "success"}>{pairing.resultType === "DRAW" ? "เสมอ · +1 WP ทั้งคู่" : `${winner?.id} · ${winner?.firstName} ชนะ`}</Badge></td><td className="numeric">{pairing.resultType === "DRAW" ? "0" : `±${pairing.calculatedDiff}`}</td></tr>; })}</tbody></table></div>
+        <>{activeGames.map((gameNumber) => {
+          const gamePairings = pairingsForGame(gameNumber); const maxDiff = maxDiffForGame(gameNumber);
+          return <Panel key={gameNumber} title={`Review Game ${gameNumber}`} description={`${gamePairings.length} คู่ · Maximum Difference ${maxDiff}`}>
+            <ResultViewGrid pairings={gamePairings} players={playerMap} storageKey={`${id}:review:${gameNumber}`} />
+          </Panel>;
+        })}</>
+      )}
+      {latestActivePairings.length > 0 && (
+        <Panel title={`Pairing เกม ${latestActiveGame}`} description="คู่แข่งขันของเกมที่กำลังกรอกผล">
+          <PairingGrid pairings={latestActivePairings} players={playerMap} storageKey={`${id}:games:current-pairing`} />
         </Panel>
       )}
-      <ResultArchive card={card} players={playerMap} />
     </>
   );
 }

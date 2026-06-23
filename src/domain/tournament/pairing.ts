@@ -53,6 +53,8 @@ export const pairingStrategies: Record<PairingRuleType, PairingStrategy> = {
   },
   PAIR_RESULT: {
     type: "PAIR_RESULT",
-    generate: (players, gameNumber) => pairSequentially(ranked(players), gameNumber),
+    generate() {
+      throw new Error("PAIR_RESULT ต้องสร้างจากผลสองคู่ในเกมต้นทาง ไม่สามารถสร้างจาก Ranking ได้");
+    },
   },
 };

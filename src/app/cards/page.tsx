@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Plus, Trophy } from "lucide-react";
+import { ArrowRight, Plus, Trash2, Trophy } from "lucide-react";
+import { useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
+import type { TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
+import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { EmptyState, PageHeader, Stat } from "@/ui/components/page";
 
 export default function CardsPage() {
@@ -12,7 +15,19 @@ export default function CardsPage() {
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
   const error = useTournamentStore((state) => state.error);
+  const deleteCard = useTournamentStore((state) => state.deleteCard);
   const isStaff = auth.authenticated && auth.roles.includes("ROLE_STAFF");
+  const [deleting, setDeleting] = useState<TournamentCard | null>(null);
+  const [pending, setPending] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setPending(true); setDeleteError("");
+    try { await deleteCard(deleting.id); setDeleting(null); }
+    catch (failure) { setDeleteError(failure instanceof Error ? failure.message : "ลบการ์ดไม่สำเร็จ"); }
+    finally { setPending(false); }
+  };
   const running = cards.filter((card) => card.status === "RUNNING").length;
   const totalPlayers = cards.reduce((sum, card) => sum + card.players.length, 0);
   const finished = cards.filter((card) => ["FINISHED", "CLOSED"].includes(card.status)).length;
@@ -46,7 +61,10 @@ export default function CardsPage() {
             <article className="competition-card" key={card.id}>
               <div className="competition-card__header">
                 <div><h2>{card.name}</h2><span className="competition-card__division">{card.division}</span></div>
-                <Badge>{card.status}</Badge>
+                <div className="competition-card__header-actions">
+                  <Badge>{card.status}</Badge>
+                  {isStaff && <Button variant="ghost" size="sm" className="card-delete" aria-label={`ลบการ์ด ${card.name}`} title="ลบการ์ดและข้อมูลทั้งหมด" onClick={() => { setDeleteError(""); setDeleting(card); }}><Trash2 size={15} /></Button>}
+                </div>
               </div>
               <div className="competition-card__metrics">
                 <div className="competition-card__metric"><span>ผู้เล่น</span><strong>{card.players.length}</strong></div>
@@ -61,6 +79,18 @@ export default function CardsPage() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleting !== null}
+        title={`ลบการ์ด “${deleting?.name}” ?`}
+        description="ระบบจะลบการ์ดนี้และข้อมูลที่เกี่ยวข้องทั้งหมดอย่างถาวร ทั้งผู้เล่น, pairing, ผลการแข่งขัน, อันดับ และบันทึกกิจกรรม (log) ทั้งหมด — ไม่สามารถกู้คืนได้"
+        confirmLabel="ลบถาวร"
+        danger
+        busy={pending}
+        error={deleteError || undefined}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => { if (!pending) { setDeleting(null); setDeleteError(""); } }}
+      />
     </>
   );
 }

@@ -1,8 +1,19 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { Pairing, Player } from "@/domain/tournament/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/** Flatten a player into one searchable string (code, name, school) for table filtering. */
+export function playerSearchText(player: Player | undefined) {
+  return player ? `${player.id} ${player.firstName} ${player.lastName} ${player.school}` : "";
+}
+
+/** Flatten a pairing (table number + both players) into one searchable string. */
+export function pairingSearchText(pairing: Pairing, players: Map<string, Player>) {
+  return `คู่ ${pairing.tableNumber} ${playerSearchText(players.get(pairing.playerOneId))} ${playerSearchText(players.get(pairing.playerTwoId))}`;
 }
 
 export function formatDateTime(value: string) {

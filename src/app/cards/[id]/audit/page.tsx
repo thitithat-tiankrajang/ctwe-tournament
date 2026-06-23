@@ -5,6 +5,7 @@ import { FileClock, LockKeyhole } from "lucide-react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { EmptyState, PageHeader } from "@/ui/components/page";
+import { SearchableTable } from "@/ui/components/table-search";
 
 function compactDateTime(value: string) {
   return new Intl.DateTimeFormat("th-TH", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value));
@@ -24,9 +25,16 @@ export default function AuditPage() {
     <>
       <PageHeader eyebrow={card.name} title="บันทึกกิจกรรม" description={`${entries.length.toLocaleString("th-TH")} รายการ · ล่าสุดก่อน`} />
       {entries.length === 0 ? <div className="panel"><EmptyState icon={<FileClock size={25} />} title="ยังไม่มีบันทึกกิจกรรม" description="การเปลี่ยนแปลงข้อมูลจะปรากฏที่นี่" /></div> : (
-        <div className="dense-table-wrap audit-table-wrap">
-          <table className="data-table audit-table"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>กิจกรรม</th><th>การเปลี่ยนแปลง</th></tr></thead><tbody>{entries.map((entry) => <tr key={entry.id}><td className="mono">{compactDateTime(entry.timestamp)}</td><td>{entry.user}</td><td><strong>{entry.action}</strong></td><td><span className="audit-old">{entry.oldValue}</span><span className="audit-arrow">→</span><span>{entry.newValue}</span></td></tr>)}</tbody></table>
-        </div>
+        <SearchableTable
+          items={entries}
+          toText={(entry) => `${compactDateTime(entry.timestamp)} ${entry.user} ${entry.action} ${entry.oldValue} ${entry.newValue}`}
+          placeholder="ค้นหาเวลา ผู้ใช้ กิจกรรม หรือการเปลี่ยนแปลง"
+          unit="รายการ"
+          wrapClassName="audit-table-wrap"
+          tableClassName="audit-table"
+          columns={[{ label: "เวลา" }, { label: "ผู้ใช้" }, { label: "กิจกรรม" }, { label: "การเปลี่ยนแปลง" }]}
+          renderRow={(entry) => <tr key={entry.id}><td className="mono">{compactDateTime(entry.timestamp)}</td><td>{entry.user}</td><td><strong>{entry.action}</strong></td><td><span className="audit-old">{entry.oldValue}</span><span className="audit-arrow">→</span><span>{entry.newValue}</span></td></tr>}
+        />
       )}
     </>
   );

@@ -13,6 +13,8 @@ import type { Player } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
+import { DataGrid, type DataColumn } from "@/ui/components/data-grid";
+import { rankingFilters } from "@/ui/components/grid-filters";
 import { GameFlow } from "@/ui/components/game-flow";
 import { InstitutionCombobox } from "@/ui/components/institution-combobox";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
@@ -56,8 +58,19 @@ export default function PlayersPage() {
   const ranked = selectedRankingGame > 0 ? rankingAfterGame({ ...card, snapshots: publishedSnapshots }, selectedRankingGame) : rankPlayers(card.players);
   const rankingCard = { ...card, snapshots: publishedSnapshots };
   const filtered = ranked.filter((player) => `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLowerCase().includes(query.toLowerCase()));
+  const rankIndex = new Map(ranked.map((player, index) => [player.id, index + 1]));
   const nextCode = `P${String(Math.max(0, ...card.players.map((player) => Number(player.id.match(/^P(\d+)$/)?.[1] ?? 0))) + 1).padStart(4, "0")}`;
   const busy = pending !== null || isSubmitting;
+
+  const rankingColumns: DataColumn<{ player: Player; rank: number }>[] = [
+    { key: "rank", label: "#", min: 42, width: 56, align: "right", render: ({ rank }) => <strong>{rank}</strong> },
+    { key: "id", label: "รหัสผู้เล่น", min: 80, width: 120, cellClassName: "cell-id", render: ({ player }) => player.id },
+    { key: "name", label: "ชื่อ-นามสกุล", min: 130, width: 210, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
+    { key: "school", label: "โรงเรียน/สถาบัน", min: 120, width: 200, render: ({ player }) => <span title={player.school}>{player.school}</span> },
+    { key: "wp", label: "คะแนนชัยชนะ", min: 90, width: 124, align: "right", render: ({ player }) => <strong>{player.winPoints}</strong> },
+    { key: "diff", label: "ผลต่างสะสม", min: 90, width: 124, align: "right", render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
+    { key: "wdl", label: "ชนะ / เสมอ / แพ้", min: 100, width: 142, align: "center", render: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}` },
+  ];
 
   const onAdd = async (values: PlayerForm) => {
     const normalized = `${values.firstName} ${values.lastName}`.trim().toLocaleLowerCase("th");
@@ -162,23 +175,40 @@ export default function PlayersPage() {
         </Panel>
       )}
 
-      <section className="player-filter-bar" style={{ gridTemplateColumns: "minmax(240px, 1fr) auto" }} aria-label="ค้นหาผู้เล่น">
-        <div className="compact-field"><label htmlFor="player-search">ค้นหารหัส ชื่อ หรือโรงเรียน</label><input id="player-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="เช่น P0042 หรือชื่อโรงเรียน" /></div>
-        <Button className="filter-reset" variant="secondary" size="sm" onClick={() => setQuery("")}><FilterX size={14} />ล้าง</Button>
-      </section>
-      <div className="dense-table-meta"><strong>{filtered.length.toLocaleString("th-TH")}</strong> จาก {card.players.length.toLocaleString("th-TH")} คน · {selectedRankingGame > 0 ? `Ranking หลังเกม ${selectedRankingGame}` : "รายชื่อก่อนเริ่มการแข่งขัน"}</div>
-      {filtered.length === 0 ? <div className="panel"><EmptyState icon={<Users size={24} />} title="ยังไม่มีผู้เล่น" description={registrationOpen ? "เพิ่มผู้เล่นคนแรกจากฟอร์มด้านบน" : "ไม่พบผู้เล่นตามคำค้น"} /></div> : (
-        <div className="dense-table-wrap player-review-table"><table className="data-table dense-player-table"><thead><tr><th className="numeric">#</th><th>รหัส</th><th>ชื่อ-นามสกุล</th><th>โรงเรียน/สถาบัน</th><th className="numeric">WP</th><th className="numeric">ชนะ</th><th className="numeric">เสมอ</th><th className="numeric">แพ้</th><th className="numeric">Difference</th>{registrationOpen && <th>จัดการ</th>}</tr></thead><tbody>{filtered.map((player) => {
-          const editing = editingId === player.id;
-          return <tr key={player.id} className={editing ? "player-row--editing" : undefined}>
-            <td className="numeric rank-cell">{ranked.findIndex((item) => item.id === player.id) + 1}</td>
-            <td className="mono">{player.id}</td>
-            <td className="cell-primary">{editing ? <div className="inline-name-fields"><input className="input" aria-label={`ชื่อ ${player.id}`} value={editDraft.firstName} disabled={busy} onChange={(event) => setEditDraft((draft) => ({ ...draft, firstName: event.target.value }))} /><input className="input" aria-label={`นามสกุล ${player.id}`} value={editDraft.lastName} disabled={busy} onChange={(event) => setEditDraft((draft) => ({ ...draft, lastName: event.target.value }))} />{rowError && <span className="form-error">{rowError}</span>}</div> : `${player.firstName} ${player.lastName}`}</td>
-            <td>{editing ? <InstitutionCombobox id={`school-${player.id}`} value={editDraft.school} onChange={(school) => setEditDraft((draft) => ({ ...draft, school }))} options={schools} disabled={busy} /> : player.school}</td>
-            <td className="numeric"><strong>{player.winPoints}</strong></td><td className="numeric">{player.wins}</td><td className="numeric">{player.draws}</td><td className="numeric">{player.losses}</td><td className="numeric">{player.diff}</td>
-            {registrationOpen && <td><div className="row-actions">{editing ? <><Button aria-label={`บันทึก ${player.id}`} size="sm" disabled={busy} onClick={() => requestUpdate(player)}><Save size={14} />ยืนยันแก้ไข</Button><Button aria-label={`ยกเลิกแก้ไข ${player.id}`} variant="secondary" size="sm" disabled={busy} onClick={() => { setEditingId(null); setRowError(""); }}><X size={14} /></Button></> : <><Button aria-label={`แก้ไข ${player.id}`} variant="secondary" size="sm" disabled={busy} onClick={() => startEdit(player)}><Pencil size={14} />Edit</Button><Button aria-label={`ลบ ${player.id}`} variant="danger" size="sm" disabled={busy} onClick={() => { setOperationError(""); setConfirmation({ kind: "delete", player }); }}><Trash2 size={14} /></Button></>}</div></td>}
-          </tr>;
-        })}</tbody></table></div>
+      {registrationOpen ? (
+        <>
+          <section className="player-filter-bar" style={{ gridTemplateColumns: "minmax(240px, 1fr) auto" }} aria-label="ค้นหาผู้เล่น">
+            <div className="compact-field"><label htmlFor="player-search">ค้นหารหัส ชื่อ หรือโรงเรียน</label><input id="player-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="เช่น P0042 หรือชื่อโรงเรียน" /></div>
+            <Button className="filter-reset" variant="secondary" size="sm" onClick={() => setQuery("")}><FilterX size={14} />ล้าง</Button>
+          </section>
+          <div className="dense-table-meta"><strong>{filtered.length.toLocaleString("th-TH")}</strong> จาก {card.players.length.toLocaleString("th-TH")} คน · รายชื่อก่อนเริ่มการแข่งขัน</div>
+          {filtered.length === 0 ? <div className="panel"><EmptyState icon={<Users size={24} />} title="ยังไม่มีผู้เล่น" description="เพิ่มผู้เล่นคนแรกจากฟอร์มด้านบน" /></div> : (
+            <div className="dense-table-wrap player-review-table"><table className="data-table dense-player-table"><thead><tr><th className="numeric">#</th><th>รหัส</th><th>ชื่อ-นามสกุล</th><th>โรงเรียน/สถาบัน</th><th className="numeric">WP</th><th className="numeric">ชนะ</th><th className="numeric">เสมอ</th><th className="numeric">แพ้</th><th className="numeric">Difference</th><th>จัดการ</th></tr></thead><tbody>{filtered.map((player) => {
+              const editing = editingId === player.id;
+              return <tr key={player.id} className={editing ? "player-row--editing" : undefined}>
+                <td className="numeric rank-cell">{rankIndex.get(player.id)}</td>
+                <td className="mono">{player.id}</td>
+                <td className="cell-primary">{editing ? <div className="inline-name-fields"><input className="input" aria-label={`ชื่อ ${player.id}`} value={editDraft.firstName} disabled={busy} onChange={(event) => setEditDraft((draft) => ({ ...draft, firstName: event.target.value }))} /><input className="input" aria-label={`นามสกุล ${player.id}`} value={editDraft.lastName} disabled={busy} onChange={(event) => setEditDraft((draft) => ({ ...draft, lastName: event.target.value }))} />{rowError && <span className="form-error">{rowError}</span>}</div> : `${player.firstName} ${player.lastName}`}</td>
+                <td>{editing ? <InstitutionCombobox id={`school-${player.id}`} value={editDraft.school} onChange={(school) => setEditDraft((draft) => ({ ...draft, school }))} options={schools} disabled={busy} /> : player.school}</td>
+                <td className="numeric"><strong>{player.winPoints}</strong></td><td className="numeric">{player.wins}</td><td className="numeric">{player.draws}</td><td className="numeric">{player.losses}</td><td className="numeric">{player.diff}</td>
+                <td><div className="row-actions">{editing ? <><Button aria-label={`บันทึก ${player.id}`} size="sm" disabled={busy} onClick={() => requestUpdate(player)}><Save size={14} />ยืนยันแก้ไข</Button><Button aria-label={`ยกเลิกแก้ไข ${player.id}`} variant="secondary" size="sm" disabled={busy} onClick={() => { setEditingId(null); setRowError(""); }}><X size={14} /></Button></> : <><Button aria-label={`แก้ไข ${player.id}`} variant="secondary" size="sm" disabled={busy} onClick={() => startEdit(player)}><Pencil size={14} />Edit</Button><Button aria-label={`ลบ ${player.id}`} variant="danger" size="sm" disabled={busy} onClick={() => { setOperationError(""); setConfirmation({ kind: "delete", player }); }}><Trash2 size={14} /></Button></>}</div></td>
+              </tr>;
+            })}</tbody></table></div>
+          )}
+        </>
+      ) : ranked.length === 0 ? (
+        <div className="panel"><EmptyState icon={<Users size={24} />} title="ยังไม่มีผู้เล่น" description="รายชื่อจะปรากฏหลังเจ้าหน้าที่เพิ่มผู้เล่น" /></div>
+      ) : (
+        <DataGrid
+          columns={rankingColumns}
+          rows={ranked.map((player, index) => ({ player, rank: index + 1 }))}
+          getRowKey={(row) => row.player.id}
+          storageKey={`${id}:players`}
+          resetKey={String(selectedRankingGame)}
+          emptyText="ไม่พบผู้เล่นตามตัวกรอง"
+          unit="คน"
+          filters={rankingFilters()}
+        />
       )}
 
       <ConfirmDialog

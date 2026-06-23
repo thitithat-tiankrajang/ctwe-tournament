@@ -66,7 +66,9 @@ public class TournamentCardService {
                 "เกม " + rs.getInt("game_number"), rs.getString("status"), rs.getInt("max_diff")), cardId);
         var rules = jdbc.query("SELECT from_game, to_game, rule_type FROM pairing_rules WHERE card_id = ? ORDER BY from_game",
             (rs, row) -> new CardDtos.RuleResponse(rs.getInt("from_game"), rs.getInt("to_game"), PairingRuleType.valueOf(rs.getString("rule_type"))), cardId);
-        var players = jdbc.query("""
+        List<CardDtos.PlayerResponse> players = !staffView && card.runtimeStage() == RuntimeStage.PLAYER_REGISTRATION
+            ? List.of()
+            : jdbc.query("""
             SELECT p.external_id, p.first_name, p.last_name, p.school, p.division,
                    COALESCE(s.wins, 0) wins, COALESCE(s.draws, 0) draws, COALESCE(s.losses, 0) losses,
                    COALESCE(s.win_points, 0) win_points, COALESCE(s.diff, 0) diff
@@ -196,6 +198,8 @@ public class TournamentCardService {
         long players = count("SELECT COUNT(*) FROM players WHERE card_id = ?", cardId);
         if (players < 2) throw new IllegalArgumentException("ต้องมีผู้เล่นอย่างน้อย 2 คน");
         if (players % 2 != 0) throw new IllegalArgumentException("จำนวนผู้เล่นต้องเป็นเลขคู่ก่อนจบการลงทะเบียน");
+        if (hasPairResultRule(cardId) && players % 4 != 0)
+            throw new IllegalArgumentException("การแข่งขันที่ใช้แพ้เจอแพ้/ชนะเจอชนะต้องมีจำนวนผู้เล่นหาร 4 ลงตัว");
         jdbc.update("UPDATE tournament_cards SET status = 'READY', runtime_stage = 'TABLE_PAIRING', version = version + 1 WHERE id = ?", cardId);
         audit(cardId, actor, "FINISH_PLAYER_REGISTRATION", players + " players", "ready for game 1 pairing");
         return get(cardId, true);
@@ -324,9 +328,15 @@ public class TournamentCardService {
         if (card.currentGame() == 1) createMatchesFromInitialTables(cardId);
         if (count("SELECT COUNT(*) FROM matches m JOIN games g ON g.id = m.game_id WHERE m.card_id = ? AND g.game_number = ?", cardId, card.currentGame()) == 0)
             throw new IllegalArgumentException("ไม่พบ pairing สำหรับเกมปัจจุบัน");
+        jdbc.update("UPDATE matches m SET pairing_published_at = COALESCE(m.pairing_published_at, now()) FROM games g WHERE m.game_id = g.id AND m.card_id = ? AND g.game_number = ?",
+            cardId, card.currentGame());
         jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number = ?", cardId, card.currentGame());
         jdbc.update("UPDATE tournament_cards SET status = 'RUNNING', runtime_stage = 'RESULT_COLLECTION', version = version + 1 WHERE id = ?", cardId);
-        audit(cardId, actor, "CONFIRM_PAIRING", "preview", "game " + card.currentGame() + " result collection");
+        List<Integer> resultGames = activeResultGames(card);
+        audit(cardId, actor, "CONFIRM_PAIRING", "preview", Map.of(
+            "publishedPairingGame", card.currentGame(),
+            "resultCollectionGames", resultGames
+        ));
         return get(cardId, true);
     }
 
@@ -339,18 +349,20 @@ public class TournamentCardService {
         try {
             match = jdbc.queryForObject("""
                 SELECT m.player_one_id, m.player_two_id, p1.external_id one_external, p2.external_id two_external,
-                       m.snapshot_id, g.game_number, g.max_diff
+                       m.snapshot_id, g.game_number, g.max_diff, m.table_number
                 FROM matches m JOIN games g ON g.id = m.game_id
                 JOIN players p1 ON p1.id = m.player_one_id JOIN players p2 ON p2.id = m.player_two_id
                 WHERE m.id = ? AND m.card_id = ?
                 """, (rs, row) -> new MatchPlayers(rs.getObject("player_one_id", UUID.class), rs.getObject("player_two_id", UUID.class),
                 rs.getString("one_external"), rs.getString("two_external"), rs.getObject("snapshot_id", UUID.class),
-                rs.getInt("game_number"), rs.getInt("max_diff")), matchId, cardId);
+                rs.getInt("game_number"), rs.getInt("max_diff"), rs.getInt("table_number")), matchId, cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Match not found");
         }
         if (match.snapshotId() != null) throw new IllegalArgumentException("Confirmed results are immutable");
-        if (match.gameNumber() != card.currentGame()) throw new IllegalArgumentException("แก้ผลได้เฉพาะเกมปัจจุบัน");
+        List<Integer> activeGames = activeResultGames(card);
+        if (!activeGames.contains(match.gameNumber()))
+            throw new IllegalArgumentException("แก้ผลได้เฉพาะเกมใน Result block ปัจจุบัน " + activeGames);
         boolean existing = count("SELECT COUNT(*) FROM match_results WHERE match_id = ?", matchId) > 0;
         if (existing && !request.editExisting()) throw new IllegalArgumentException("กรุณากด Edit ก่อนแก้ไขผลที่บันทึกแล้ว");
         Object previousResult = existing ? jdbc.queryForMap("""
@@ -382,21 +394,29 @@ public class TournamentCardService {
         calculatedResult.put("calculatedDiff", calculatedDiff);
         calculatedResult.put("maxDiff", match.maxDiff());
         audit(cardId, actor, existing ? "EDIT_RESULT" : "SUBMIT_RESULT", previousResult, calculatedResult);
+        if (match.gameNumber() == card.currentGame() && isOutgoingPairResult(cardId, card.currentGame()))
+            syncPairResultGroup(cardId, card.currentGame(), match.tableNumber());
         return get(cardId, true);
     }
 
     @Transactional
     public CardDtos.CardResponse reviewResults(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
-        long total = count("SELECT COUNT(*) FROM matches m JOIN games g ON g.id = m.game_id WHERE m.card_id = ? AND g.game_number = ? AND m.snapshot_id IS NULL", cardId, card.currentGame());
+        List<Integer> games = activeResultGames(card);
+        int firstGame = games.get(0);
+        int lastGame = games.get(games.size() - 1);
+        long expected = count("SELECT COUNT(*) FROM players WHERE card_id = ?", cardId) / 2 * games.size();
+        long total = count("SELECT COUNT(*) FROM matches m JOIN games g ON g.id = m.game_id WHERE m.card_id = ? AND g.game_number BETWEEN ? AND ? AND m.snapshot_id IS NULL",
+            cardId, firstGame, lastGame);
         long completed = count("""
             SELECT COUNT(*) FROM matches m JOIN games g ON g.id = m.game_id JOIN match_results r ON r.match_id = m.id
-            WHERE m.card_id = ? AND g.game_number = ? AND m.snapshot_id IS NULL
+            WHERE m.card_id = ? AND g.game_number BETWEEN ? AND ? AND m.snapshot_id IS NULL
               AND r.result_type IN ('WIN', 'DRAW') AND r.calculated_diff IS NOT NULL
-            """, cardId, card.currentGame());
-        if (total == 0 || total != completed) throw new IllegalArgumentException("ต้องบันทึกผลให้ครบทุกคู่ก่อน Review");
+            """, cardId, firstGame, lastGame);
+        if (total != expected || completed != expected)
+            throw new IllegalArgumentException("ต้องบันทึกผลให้ครบทุกคู่ของเกม " + games + " ก่อน Review (" + completed + "/" + expected + ")");
         jdbc.update("UPDATE tournament_cards SET runtime_stage = 'RESULT_REVIEW', version = version + 1 WHERE id = ?", cardId);
-        audit(cardId, actor, "REVIEW_RESULTS", completed + " results", "ready to publish game " + card.currentGame());
+        audit(cardId, actor, "REVIEW_RESULTS", completed + " results", "ready to publish games " + games);
         return get(cardId, true);
     }
 
@@ -412,12 +432,20 @@ public class TournamentCardService {
     public CardDtos.CardResponse publishResults(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_REVIEW);
         var rows = pairingRows(cardId, true);
-        var current = rows.stream().filter(row -> row.gameNumber() == card.currentGame()).toList();
+        List<Integer> gameNumbers = activeResultGames(card);
+        var current = rows.stream().filter(row -> gameNumbers.contains(row.gameNumber())).toList();
         if (current.isEmpty()) throw new IllegalArgumentException("No pairing preview exists for the current game");
-        List<Integer> gameNumbers = List.of(card.currentGame());
-        var bundleRows = rows.stream().filter(row -> row.snapshotId() == null && row.gameNumber() == card.currentGame()).toList();
+        var bundleRows = rows.stream().filter(row -> row.snapshotId() == null && gameNumbers.contains(row.gameNumber())).toList();
+        long expected = count("SELECT COUNT(*) FROM players WHERE card_id = ?", cardId) / 2 * gameNumbers.size();
+        if (bundleRows.size() != expected)
+            throw new IllegalArgumentException("Pairing block ไม่ครบ: พบ " + bundleRows.size() + " จาก " + expected + " คู่");
         if (bundleRows.stream().anyMatch(row -> row.scoreOne() == null || row.scoreTwo() == null || row.resultType() == null))
             throw new IllegalArgumentException("Every match requires a calculated result before confirmation");
+
+        jdbc.update("""
+            UPDATE matches m SET pairing_published_at = COALESCE(m.pairing_published_at, now())
+            FROM games g WHERE m.game_id = g.id AND m.card_id = ? AND g.game_number BETWEEN ? AND ?
+            """, cardId, gameNumbers.get(0), gameNumbers.get(gameNumbers.size() - 1));
 
         UUID snapshotId = UUID.randomUUID();
         UUID bundleKey = UUID.randomUUID();
@@ -461,6 +489,23 @@ public class TournamentCardService {
         return get(cardId, true);
     }
 
+    /** Permanently removes a card and every row tied to it (players, pairings, results, standings, audit logs). */
+    @Transactional
+    public void delete(UUID cardId) {
+        cardRow(cardId); // 404 + row lock if the card does not exist
+        jdbc.update("DELETE FROM match_results WHERE match_id IN (SELECT id FROM matches WHERE card_id = ?)", cardId);
+        jdbc.update("DELETE FROM matches WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM standings WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM table_players WHERE table_id IN (SELECT id FROM competition_tables WHERE card_id = ?)", cardId);
+        jdbc.update("DELETE FROM competition_tables WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM pairing_snapshots WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM players WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM pairing_rules WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM games WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM audit_logs WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM tournament_cards WHERE id = ?", cardId);
+    }
+
     @Transactional
     public CardDtos.CardResponse generateTestPlayers(UUID cardId, int amount, String actor) {
         if (amount != 300 && amount != 1000) throw new IllegalArgumentException("Test player count must be 300 or 1000");
@@ -494,21 +539,25 @@ public class TournamentCardService {
     @Transactional
     public CardDtos.CardResponse autoResults(UUID cardId, String actor) {
         CardRow card = cardRow(cardId);
-        var open = jdbc.query("""
-            SELECT m.id, p1.external_id one_id, p2.external_id two_id, m.table_number
-            FROM matches m JOIN games g ON g.id = m.game_id
-            JOIN players p1 ON p1.id = m.player_one_id JOIN players p2 ON p2.id = m.player_two_id
-            LEFT JOIN match_results r ON r.match_id = m.id
-            WHERE m.card_id = ? AND g.game_number = ? AND m.snapshot_id IS NULL AND r.id IS NULL
-            ORDER BY m.table_number
-            """, (rs, row) -> new AutoMatch(rs.getObject("id", UUID.class), rs.getString("one_id"), rs.getString("two_id"), rs.getInt("table_number")),
-            cardId, card.currentGame());
-        if (open.isEmpty()) throw new IllegalArgumentException("Open the current game before generating results");
-        for (AutoMatch match : open) {
+        List<Integer> games = activeResultGames(card);
+        int generated = 0;
+        while (true) {
+            AutoMatch match = jdbc.query("""
+                SELECT m.id, p1.external_id one_id, p2.external_id two_id, m.table_number
+                FROM matches m JOIN games g ON g.id = m.game_id
+                JOIN players p1 ON p1.id = m.player_one_id JOIN players p2 ON p2.id = m.player_two_id
+                LEFT JOIN match_results r ON r.match_id = m.id
+                WHERE m.card_id = ? AND g.game_number BETWEEN ? AND ? AND m.snapshot_id IS NULL AND r.id IS NULL
+                ORDER BY g.game_number, m.table_number LIMIT 1
+                """, (rs, row) -> new AutoMatch(rs.getObject("id", UUID.class), rs.getString("one_id"), rs.getString("two_id"), rs.getInt("table_number")),
+                cardId, games.get(0), games.get(games.size() - 1)).stream().findFirst().orElse(null);
+            if (match == null) break;
             boolean firstWins = match.tableNumber() % 2 == 1;
             submitResult(cardId, match.id(), new CardDtos.ResultRequest(
                 firstWins ? 100 : 72, firstWins ? 72 : 100, false), actor);
+            generated++;
         }
+        if (generated == 0) throw new IllegalArgumentException("Open the current result block before generating results");
         return get(cardId, true);
     }
 
@@ -522,16 +571,7 @@ public class TournamentCardService {
         while (cardRow(cardId).status() != CardStatus.FINISHED) {
             generatePairingPreview(cardId, actor);
             confirmPairingPreview(cardId, actor);
-            var matches = jdbc.query("""
-                SELECT m.id, p1.external_id one_id, p2.external_id two_id, m.table_number
-                FROM matches m JOIN players p1 ON p1.id = m.player_one_id JOIN players p2 ON p2.id = m.player_two_id
-                WHERE m.card_id = ? AND m.snapshot_id IS NULL ORDER BY m.table_number
-                """, (rs, row) -> new AutoMatch(rs.getObject("id", UUID.class), rs.getString("one_id"), rs.getString("two_id"), rs.getInt("table_number")), cardId);
-            for (AutoMatch match : matches) {
-                boolean firstWins = match.tableNumber() % 2 == 1;
-                submitResult(cardId, match.id(), new CardDtos.ResultRequest(
-                    firstWins ? 100 : 72, firstWins ? 72 : 100, false), actor);
-            }
+            autoResults(cardId, actor);
             reviewResults(cardId, actor);
             publishResults(cardId, actor);
         }
@@ -552,6 +592,75 @@ public class TournamentCardService {
         if (writeAudit) audit(cardId, actor, "RESET_CARD", null, "runtime reset");
     }
 
+    private List<Integer> activeResultGames(CardRow card) {
+        if (card.currentGame() < card.numberOfGames() && isOutgoingPairResult(card.id(), card.currentGame()))
+            return List.of(card.currentGame(), card.currentGame() + 1);
+        return List.of(card.currentGame());
+    }
+
+    private boolean hasPairResultRule(UUID cardId) {
+        return count("SELECT COUNT(*) FROM pairing_rules WHERE card_id = ? AND rule_type = 'PAIR_RESULT'", cardId) > 0;
+    }
+
+    private boolean isOutgoingPairResult(UUID cardId, int sourceGame) {
+        return count("SELECT COUNT(*) FROM pairing_rules WHERE card_id = ? AND from_game = ? AND rule_type = 'PAIR_RESULT'", cardId, sourceGame) > 0;
+    }
+
+    private void syncPairResultGroup(UUID cardId, int sourceGame, int sourceTableNumber) {
+        int groupStart = ((sourceTableNumber - 1) / 2) * 2 + 1;
+        List<PairResultSource> sources = jdbc.query("""
+            SELECT m.table_number, m.player_one_id, m.player_two_id, r.winner_id, r.result_type
+            FROM matches m JOIN games g ON g.id = m.game_id
+            LEFT JOIN match_results r ON r.match_id = m.id
+            WHERE m.card_id = ? AND g.game_number = ? AND m.table_number BETWEEN ? AND ?
+            ORDER BY m.table_number
+            """, (rs, row) -> new PairResultSource(
+                rs.getInt("table_number"), rs.getObject("player_one_id", UUID.class), rs.getObject("player_two_id", UUID.class),
+                rs.getObject("winner_id", UUID.class), rs.getString("result_type")
+            ), cardId, sourceGame, groupStart, groupStart + 1);
+        if (sources.size() != 2 || sources.stream().anyMatch(source -> source.resultType() == null)) return;
+
+        PairResultSlots first = pairResultSlots(sources.get(0));
+        PairResultSlots second = pairResultSlots(sources.get(1));
+        int destinationGame = sourceGame + 1;
+        UUID destinationGameId = gameId(cardId, destinationGame);
+        syncPairResultMatch(cardId, destinationGameId, groupStart, first.upper(), second.upper());
+        syncPairResultMatch(cardId, destinationGameId, groupStart + 1, first.lower(), second.lower());
+        jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number = ?", cardId, destinationGame);
+        audit(cardId, "system", "MATERIALIZE_PAIR_RESULT_GROUP", null, Map.of(
+            "sourceGame", sourceGame,
+            "destinationGame", destinationGame,
+            "sourcePairs", List.of(groupStart, groupStart + 1)
+        ));
+    }
+
+    private PairResultSlots pairResultSlots(PairResultSource source) {
+        UUID upper = source.winnerId() != null ? source.winnerId() : source.oneId();
+        UUID lower = upper.equals(source.oneId()) ? source.twoId() : source.oneId();
+        return new PairResultSlots(upper, lower);
+    }
+
+    private void syncPairResultMatch(UUID cardId, UUID gameId, int tableNumber, UUID one, UUID two) {
+        PairResultDestination existing = jdbc.query("""
+            SELECT m.id, m.player_one_id, m.player_two_id, (r.id IS NOT NULL) has_result
+            FROM matches m LEFT JOIN match_results r ON r.match_id = m.id
+            WHERE m.game_id = ? AND m.table_number = ?
+            """, (rs, row) -> new PairResultDestination(
+                rs.getObject("id", UUID.class), rs.getObject("player_one_id", UUID.class), rs.getObject("player_two_id", UUID.class), rs.getBoolean("has_result")
+            ), gameId, tableNumber).stream().findFirst().orElse(null);
+        if (existing == null) {
+            jdbc.update("""
+                INSERT INTO matches (id, card_id, game_id, table_number, player_one_id, player_two_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), cardId, gameId, tableNumber, one, two);
+            return;
+        }
+        if (existing.oneId().equals(one) && existing.twoId().equals(two)) return;
+        if (existing.hasResult())
+            throw new IllegalArgumentException("ผล Game ถัดไปถูกบันทึกแล้ว จึงเปลี่ยนผู้ชนะ/ผู้แพ้ของ Game ต้นทางไม่ได้");
+        jdbc.update("UPDATE matches SET player_one_id = ?, player_two_id = ? WHERE id = ?", one, two, existing.id());
+    }
+
     private PairingRuleType generateSystemMatches(UUID cardId, int gameNumber) {
         if (count("SELECT COUNT(*) FROM matches m JOIN games g ON g.id = m.game_id WHERE m.card_id = ? AND g.game_number = ?", cardId, gameNumber) > 0)
             throw new IllegalArgumentException("มี pairing ของเกมนี้อยู่แล้ว");
@@ -559,6 +668,8 @@ public class TournamentCardService {
         var history = jdbc.query("SELECT player_one_id, player_two_id FROM matches WHERE card_id = ?",
             (rs, row) -> new PairingStrategy.Pair(rs.getObject("player_one_id", UUID.class).toString(), rs.getObject("player_two_id", UUID.class).toString()), cardId);
         PairingRuleType appliedRule = ruleForGame(cardId, gameNumber);
+        if (appliedRule == PairingRuleType.PAIR_RESULT)
+            throw new IllegalArgumentException("เกมแบบแพ้เจอแพ้/ชนะเจอชนะต้องถูกสร้างจากผลของเกมก่อนหน้าโดยอัตโนมัติ");
         var pairs = strategies.resolve(appliedRule).generate(scores, new PairingStrategy.PairingContext(gameNumber, history));
         UUID gameId = gameId(cardId, gameNumber);
         for (int index = 0; index < pairs.size(); index++) {
@@ -627,11 +738,11 @@ public class TournamentCardService {
             group.get(0).number(), group.stream().map(TablePlayerRow::externalId).filter(Objects::nonNull).toList())).toList();
     }
 
-    private List<CardDtos.SnapshotResponse> loadSnapshots(UUID cardId, boolean includePreview) {
+    private List<CardDtos.SnapshotResponse> loadSnapshots(UUID cardId, boolean staffView) {
         var rows = pairingRows(cardId, false);
         Map<String, List<PairingRow>> grouped = new LinkedHashMap<>();
         for (PairingRow row : rows) {
-            if (!includePreview && row.snapshotId() == null) continue;
+            if (!staffView && row.snapshotId() == null && row.pairingPublishedAt() == null) continue;
             String key = row.snapshotId() == null ? "preview" : row.snapshotId().toString();
             grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(row);
         }
@@ -640,7 +751,8 @@ public class TournamentCardService {
             List<Integer> games = group.stream().map(PairingRow::gameNumber).distinct().sorted().toList();
             String confirmedAt = group.get(0).confirmedAt() == null ? "" : group.get(0).confirmedAt().toInstant().toString();
             String id = entry.getKey().equals("preview") ? "preview-" + games.get(0) : entry.getKey();
-            return new CardDtos.SnapshotResponse(id, games, group.stream().map(this::toPairingResponse).toList(), confirmedAt);
+            return new CardDtos.SnapshotResponse(id, games, group.stream()
+                .map(row -> toPairingResponse(row, staffView || row.snapshotId() != null)).toList(), confirmedAt);
         }).toList();
     }
 
@@ -648,7 +760,7 @@ public class TournamentCardService {
         return jdbc.query("""
             SELECT m.id, g.game_number, m.table_number, p1.external_id player_one, p2.external_id player_two,
                    pw.external_id winner, r.score_one, r.score_two, r.result_type, r.calculated_diff,
-                   m.snapshot_id, s.confirmed_at
+                   m.snapshot_id, m.pairing_published_at, s.confirmed_at
             FROM matches m JOIN games g ON g.id = m.game_id
             JOIN players p1 ON p1.id = m.player_one_id JOIN players p2 ON p2.id = m.player_two_id
             LEFT JOIN match_results r ON r.match_id = m.id LEFT JOIN players pw ON pw.id = r.winner_id
@@ -657,12 +769,20 @@ public class TournamentCardService {
             """, (rs, row) -> new PairingRow(rs.getObject("id", UUID.class), rs.getInt("game_number"), rs.getInt("table_number"),
                 rs.getString("player_one"), rs.getString("player_two"), rs.getString("winner"), nullableInt(rs, "score_one"),
                 nullableInt(rs, "score_two"), rs.getString("result_type"), nullableInt(rs, "calculated_diff"),
-                rs.getObject("snapshot_id", UUID.class), rs.getTimestamp("confirmed_at")), cardId);
+                rs.getObject("snapshot_id", UUID.class), rs.getTimestamp("pairing_published_at"), rs.getTimestamp("confirmed_at")), cardId);
     }
 
     private CardDtos.PairingResponse toPairingResponse(PairingRow row) {
+        return toPairingResponse(row, true);
+    }
+
+    private CardDtos.PairingResponse toPairingResponse(PairingRow row, boolean includeResult) {
         return new CardDtos.PairingResponse(row.id().toString(), row.gameNumber(), row.tableNumber(), row.playerOne(), row.playerTwo(),
-            row.winnerId(), row.scoreOne(), row.scoreTwo(), row.resultType(), row.calculatedDiff());
+            includeResult ? row.winnerId() : null,
+            includeResult ? row.scoreOne() : null,
+            includeResult ? row.scoreTwo() : null,
+            includeResult ? row.resultType() : null,
+            includeResult ? row.calculatedDiff() : null);
     }
 
     private List<PairingStrategy.PlayerScore> loadScores(UUID cardId) {
@@ -796,11 +916,14 @@ public class TournamentCardService {
     private record InitialPair(SeatPlayer one, SeatPlayer two) {}
     private record Seat(UUID tableId, UUID playerId, int seatNumber) {}
     private record TablePlayerRow(UUID tableId, int number, String externalId) {}
-    private record MatchPlayers(UUID oneId, UUID twoId, String oneExternal, String twoExternal, UUID snapshotId, int gameNumber, int maxDiff) {}
+    private record MatchPlayers(UUID oneId, UUID twoId, String oneExternal, String twoExternal, UUID snapshotId, int gameNumber, int maxDiff, int tableNumber) {}
     private record TableSeat(int tableNumber, int seatNumber, UUID playerId, String school) {}
     private record PairingRow(UUID id, int gameNumber, int tableNumber, String playerOne, String playerTwo, String winnerId,
                               Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
-                              UUID snapshotId, Timestamp confirmedAt) {}
+                              UUID snapshotId, Timestamp pairingPublishedAt, Timestamp confirmedAt) {}
+    private record PairResultSource(int tableNumber, UUID oneId, UUID twoId, UUID winnerId, String resultType) {}
+    private record PairResultSlots(UUID upper, UUID lower) {}
+    private record PairResultDestination(UUID id, UUID oneId, UUID twoId, boolean hasResult) {}
     private record ScoreRow(UUID one, UUID two, UUID winner, String resultType, int calculatedDiff) {}
     private record AutoMatch(UUID id, String one, String two, int tableNumber) {}
 }

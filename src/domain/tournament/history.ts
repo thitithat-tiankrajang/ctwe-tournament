@@ -1,7 +1,44 @@
-import type { PairingSnapshot, Player, TournamentCard } from "./types";
+import type { Pairing, PairingSnapshot, Player, TournamentCard } from "./types";
 
 export function snapshotForGame(snapshots: PairingSnapshot[], gameNumber: number) {
   return snapshots.find((snapshot) => snapshot.gameNumbers.includes(gameNumber));
+}
+
+export interface PlayerHistoryRow {
+  game: number;
+  table: number;
+  result: "W" | "T" | "L";
+  cumulativeWinPoints: number;
+  ownScore: number;
+  opponentScore: number;
+  diff: number;
+  cumulativeDiff: number;
+  opponentId: string;
+}
+
+/** Per-game play history for one player across all published results, with running totals. */
+export function playerHistory(card: TournamentCard, playerId: string): PlayerHistoryRow[] {
+  const entries: { game: number; pairing: Pairing }[] = [];
+  card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt)).forEach((snapshot) => {
+    snapshot.pairings.forEach((pairing) => {
+      const recorded = pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
+      if (!recorded || (pairing.playerOneId !== playerId && pairing.playerTwoId !== playerId)) return;
+      entries.push({ game: pairing.gameNumber ?? Math.min(...snapshot.gameNumbers), pairing });
+    });
+  });
+  entries.sort((a, b) => a.game - b.game);
+
+  let cumulativeWinPoints = 0; let cumulativeDiff = 0;
+  return entries.map(({ game, pairing }) => {
+    const isOne = pairing.playerOneId === playerId;
+    const ownScore = (isOne ? pairing.scoreOne : pairing.scoreTwo) ?? 0;
+    const opponentScore = (isOne ? pairing.scoreTwo : pairing.scoreOne) ?? 0;
+    const result: "W" | "T" | "L" = pairing.resultType === "DRAW" ? "T" : pairing.winnerId === playerId ? "W" : "L";
+    cumulativeWinPoints += result === "W" ? 2 : result === "T" ? 1 : 0;
+    const diff = ownScore - opponentScore;
+    cumulativeDiff += diff;
+    return { game, table: pairing.tableNumber, result, cumulativeWinPoints, ownScore, opponentScore, diff, cumulativeDiff, opponentId: isOne ? pairing.playerTwoId : pairing.playerOneId };
+  });
 }
 
 export function rankingAfterGame(card: TournamentCard, gameNumber: number): Player[] {

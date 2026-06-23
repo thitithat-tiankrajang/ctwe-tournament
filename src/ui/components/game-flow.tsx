@@ -5,7 +5,7 @@ import { Check, LockKeyhole } from "lucide-react";
 import type { PairingRuleType, TournamentCard } from "@/domain/tournament/types";
 
 const ruleLabels: Record<PairingRuleType, string> = {
-  PAIR_RESULT: "Pair Result",
+  PAIR_RESULT: "แพ้เจอแพ้ / ชนะเจอชนะ",
   SWISS: "Swiss",
   KING_OF_THE_HILL: "King of the Hill",
 };
@@ -44,7 +44,7 @@ export function GameFlow({
           <>
             <span className="game-flow__number">เกม {game.number}</span>
             <strong>{mode === "pairing" || mode === "overview" ? pairingRuleForGame(card, game.number) : mode === "ranking" ? "อันดับหลังเกม" : `${resultCount}/${pairingCount || "—"} ผล`}</strong>
-            <small>{game.status === "COMPLETED" ? <><Check size={11} /> เสร็จสิ้น</> : snapshot?.confirmedAt ? <><LockKeyhole size={11} /> ยืนยันแล้ว</> : game.status}</small>
+            <small>{game.status === "COMPLETED" ? <><Check size={11} /> ผลเผยแพร่แล้ว</> : snapshot?.confirmedAt ? <><LockKeyhole size={11} /> ผลเผยแพร่แล้ว</> : snapshot ? <><LockKeyhole size={11} /> Pairing เผยแพร่แล้ว</> : game.status}</small>
           </>
         );
         if (linkTo && available) return <Link key={game.id} className={className} href={`/cards/${card.id}/${linkTo}?game=${game.number}`}>{content}</Link>;

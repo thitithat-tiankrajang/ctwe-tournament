@@ -39,6 +39,12 @@ public class CardController {
         return service.close(cardId, authentication.getName());
     }
 
+    @DeleteMapping("/{cardId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable UUID cardId) {
+        service.delete(cardId);
+    }
+
     @PostMapping("/{cardId}/players")
     @ResponseStatus(HttpStatus.CREATED)
     public CardDtos.CardResponse addPlayer(@PathVariable UUID cardId, @RequestHeader("If-Match") String ifMatch, @Valid @RequestBody CardDtos.PlayerRequest request, Authentication authentication) {

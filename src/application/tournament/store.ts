@@ -34,6 +34,7 @@ interface TournamentState {
   reopenResults: (cardId: string) => Promise<void>;
   publishResults: (cardId: string) => Promise<void>;
   closeCard: (cardId: string) => Promise<void>;
+  deleteCard: (cardId: string) => Promise<void>;
   simulateTournament: (cardId: string) => Promise<void>;
   resetCard: (cardId: string) => Promise<void>;
 }
@@ -189,6 +190,10 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async closeCard(cardId) {
       await mutateCard(`/api/cards/${cardId}/close`, cardId, { method: "POST" });
+    },
+    async deleteCard(cardId) {
+      await request(`/api/cards/${cardId}`, { method: "DELETE" });
+      set((state) => ({ cards: state.cards.filter((card) => card.id !== cardId), error: null }));
     },
     async simulateTournament(cardId) {
       await mutateCard(`/api/dev/cards/${cardId}/simulate`, cardId, { method: "POST" });

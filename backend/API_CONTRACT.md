@@ -17,6 +17,7 @@ Base path: `/api`
 - `POST /cards` — create a card and all consecutive game/rule edges atomically.
 - `GET /cards/{cardId}` — card summary and runtime state.
 - `POST /cards/{cardId}/close` — close and lock a card.
+- `DELETE /cards/{cardId}` — permanently delete a card and every related row (players, tables, pairings, matches, results, standings, audit logs); returns `204`. No version header required and not recoverable.
 - `GET /cards/{cardId}/export?format=csv|xlsx|json` — immutable export.
 
 Create body:
@@ -26,9 +27,12 @@ Create body:
   "name": "A-Math Championship",
   "division": "Primary",
   "numberOfGames": 4,
-  "rules": ["SWISS", "SWISS", "KING_OF_THE_HILL"]
+  "rules": ["PAIR_RESULT", "SWISS", "KING_OF_THE_HILL"],
+  "gameMaxDiffs": [350, 350, 300, 250]
 }
 ```
+
+`PAIR_RESULT` consumes its source and destination games as one result block. The player count must be divisible by four, consecutive `PAIR_RESULT` edges are rejected, and the next standalone pairing starts after both games are reviewed and published.
 
 ## Players and seating
 
@@ -44,10 +48,10 @@ Create body:
 
 - `GET /cards/{cardId}/games/{gameNumber}/pairings`
 - `PUT /cards/{cardId}/matches/{matchId}/result`
-- `POST /cards/{cardId}/pairings/confirm` — locks the pairing and opens result collection.
-- `POST /cards/{cardId}/results/review` — requires every current-game match to have a result.
+- `POST /cards/{cardId}/pairings/confirm` — publishes the pairing (without scores) and opens result collection.
+- `POST /cards/{cardId}/results/review` — requires every match in the active result block to have a result.
 - `POST /cards/{cardId}/results/reopen` — returns a review to result editing.
-- `POST /cards/{cardId}/results/publish` — stores an append-only snapshot and exposes the game on public overview.
+- `POST /cards/{cardId}/results/publish` — stores an append-only snapshot and exposes all results in the active block on public overview.
 - `GET /cards/{cardId}/snapshots`
 
 Mutating endpoints require `If-Match` with the current entity version. A stale version returns `409 Conflict`.
@@ -62,3 +66,10 @@ Mutating endpoints require `If-Match` with the current entity version. A stale v
 - `POST /dev/cards/{cardId}/reset`
 
 Every successful mutation emits one or more `audit_logs` rows in the same transaction.
+
+## Public publication milestones
+
+- During `PLAYER_REGISTRATION`, public responses do not contain player records.
+- After registration is finished, public responses contain the initial ranking/player list.
+- After pairing confirmation, public responses contain that pairing but omit every result field.
+- After result publication, public responses contain scores, outcome, winner, and capped difference.
