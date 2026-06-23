@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: ctwe-tournament-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /actuator/health
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_USER
+        sync: false
+      - key: DATABASE_PASSWORD
+        sync: false
+      - key: STAFF_USERNAME
+        sync: false
+      - key: STAFF_PASSWORD_HASH
+        sync: false
+      - key: PORT
+        value: "10000"
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: DEV_TOOLS_ENABLED
+        value: "false"
+      - key: DB_POOL_MAX_SIZE
+        value: "5"
+      - key: DB_POOL_MIN_IDLE
+        value: "0"

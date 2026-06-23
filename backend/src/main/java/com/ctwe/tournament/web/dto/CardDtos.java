@@ -1,0 +1,69 @@
+package com.ctwe.tournament.web.dto;
+
+import com.ctwe.tournament.domain.model.CardStatus;
+import com.ctwe.tournament.domain.model.PairingRuleType;
+import com.ctwe.tournament.domain.model.RuntimeStage;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+public final class CardDtos {
+    private CardDtos() {}
+
+    public record CreateCardRequest(
+        @NotBlank @Size(max = 180) String name,
+        @NotBlank @Size(max = 180) String division,
+        @Min(2) @Max(12) int numberOfGames,
+        @NotNull @Size(min = 1, max = 11) List<PairingRuleType> rules,
+        @NotNull @Size(min = 2, max = 12) List<@NotNull @Min(1) @Max(1000000) Integer> gameMaxDiffs
+    ) {}
+
+    public record PlayerRequest(
+        @Size(max = 64) @Pattern(regexp = "[A-Za-z0-9_-]+") String id,
+        @NotBlank @Size(max = 120) String firstName,
+        @NotBlank @Size(max = 120) String lastName,
+        @NotBlank @Size(max = 200) String school
+    ) {}
+
+    public record ResultRequest(
+        @NotNull @Min(0) @Max(1000000000) Integer scoreOne,
+        @NotNull @Min(0) @Max(1000000000) Integer scoreTwo,
+        boolean editExisting
+    ) {}
+
+    public record SwapRequest(@NotBlank String firstPlayerId, @NotBlank String secondPlayerId, boolean confirmSchoolConflict) {}
+
+    public record GameResponse(String id, int number, String name, String status, int maxDiff) {}
+    public record RuleResponse(int fromGame, int toGame, PairingRuleType type) {}
+    public record PlayerResponse(String id, String firstName, String lastName, String school, String division,
+                                 int wins, int draws, int losses, int winPoints, int diff) {}
+    public record TableResponse(String id, int number, List<String> playerIds) {}
+    public record PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
+                                  String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff) {}
+    public record SnapshotResponse(String id, List<Integer> gameNumbers, List<PairingResponse> pairings, String confirmedAt) {}
+    public record AuditResponse(String id, String timestamp, String user, String action, String oldValue, String newValue) {}
+
+    public record CardResponse(
+        UUID id,
+        String name,
+        String division,
+        CardStatus status,
+        RuntimeStage runtimeStage,
+        int currentGame,
+        long version,
+        List<GameResponse> games,
+        List<RuleResponse> rules,
+        List<PlayerResponse> players,
+        List<TableResponse> tables,
+        List<SnapshotResponse> snapshots,
+        List<AuditResponse> audit,
+        Instant createdAt
+    ) {}
+}

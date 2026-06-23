@@ -1,0 +1,43 @@
+spring:
+  application:
+    name: tournament-api
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/tournament}
+    username: ${DATABASE_USER:tournament_app}
+    password: ${DATABASE_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: 5000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  jackson:
+    default-property-inclusion: non_null
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        secure: ${SESSION_COOKIE_SECURE:true}
+        same-site: strict
+  error:
+    include-message: never
+    include-stacktrace: never
+security:
+  staff:
+    username: ${STAFF_USERNAME}
+    password-hash: ${STAFF_PASSWORD_HASH}
+app:
+  dev-tools-enabled: ${DEV_TOOLS_ENABLED:false}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
