@@ -351,7 +351,7 @@ public class TournamentCardService {
                 SELECT m.player_one_id, m.player_two_id, p1.external_id one_external, p2.external_id two_external,
                        m.snapshot_id, g.game_number, g.max_diff, m.table_number
                 FROM matches m JOIN games g ON g.id = m.game_id
-                JOIN players p1 ON p1.id = m.player_one_id JOIN players p2 ON p2.id = m.player_two_id
+                LEFT JOIN players p1 ON p1.id = m.player_one_id LEFT JOIN players p2 ON p2.id = m.player_two_id
                 WHERE m.id = ? AND m.card_id = ?
                 """, (rs, row) -> new MatchPlayers(rs.getObject("player_one_id", UUID.class), rs.getObject("player_two_id", UUID.class),
                 rs.getString("one_external"), rs.getString("two_external"), rs.getObject("snapshot_id", UUID.class),
@@ -359,6 +359,8 @@ public class TournamentCardService {
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Match not found");
         }
+        if (match.oneId() == null || match.twoId() == null)
+            throw new IllegalArgumentException("คู่แข่งขันของเกมนี้ยังไม่ครบ รอผลจาก Game ต้นทางก่อน");
         if (match.snapshotId() != null) throw new IllegalArgumentException("Confirmed results are immutable");
         List<Integer> activeGames = activeResultGames(card);
         if (!activeGames.contains(match.gameNumber()))
@@ -395,7 +397,7 @@ public class TournamentCardService {
         calculatedResult.put("maxDiff", match.maxDiff());
         audit(cardId, actor, existing ? "EDIT_RESULT" : "SUBMIT_RESULT", previousResult, calculatedResult);
         if (match.gameNumber() == card.currentGame() && isOutgoingPairResult(cardId, card.currentGame()))
-            syncPairResultGroup(cardId, card.currentGame(), match.tableNumber());
+            syncPairResultSource(cardId, card.currentGame(), match.tableNumber());
         return get(cardId, true);
     }
 
@@ -606,32 +608,34 @@ public class TournamentCardService {
         return count("SELECT COUNT(*) FROM pairing_rules WHERE card_id = ? AND from_game = ? AND rule_type = 'PAIR_RESULT'", cardId, sourceGame) > 0;
     }
 
-    private void syncPairResultGroup(UUID cardId, int sourceGame, int sourceTableNumber) {
+    private void syncPairResultSource(UUID cardId, int sourceGame, int sourceTableNumber) {
         int groupStart = ((sourceTableNumber - 1) / 2) * 2 + 1;
-        List<PairResultSource> sources = jdbc.query("""
+        PairResultSource source = jdbc.query("""
             SELECT m.table_number, m.player_one_id, m.player_two_id, r.winner_id, r.result_type
             FROM matches m JOIN games g ON g.id = m.game_id
-            LEFT JOIN match_results r ON r.match_id = m.id
-            WHERE m.card_id = ? AND g.game_number = ? AND m.table_number BETWEEN ? AND ?
-            ORDER BY m.table_number
+            JOIN match_results r ON r.match_id = m.id
+            WHERE m.card_id = ? AND g.game_number = ? AND m.table_number = ?
             """, (rs, row) -> new PairResultSource(
                 rs.getInt("table_number"), rs.getObject("player_one_id", UUID.class), rs.getObject("player_two_id", UUID.class),
                 rs.getObject("winner_id", UUID.class), rs.getString("result_type")
-            ), cardId, sourceGame, groupStart, groupStart + 1);
-        if (sources.size() != 2 || sources.stream().anyMatch(source -> source.resultType() == null)) return;
+            ), cardId, sourceGame, sourceTableNumber).stream().findFirst().orElse(null);
+        if (source == null || source.resultType() == null) return;
 
-        PairResultSlots first = pairResultSlots(sources.get(0));
-        PairResultSlots second = pairResultSlots(sources.get(1));
+        PairResultSlots slots = pairResultSlots(source);
         int destinationGame = sourceGame + 1;
         UUID destinationGameId = gameId(cardId, destinationGame);
-        syncPairResultMatch(cardId, destinationGameId, groupStart, first.upper(), second.upper());
-        syncPairResultMatch(cardId, destinationGameId, groupStart + 1, first.lower(), second.lower());
+        int slotNumber = source.tableNumber() == groupStart ? 1 : 2;
+        boolean upperChanged = syncPairResultSlot(cardId, destinationGameId, groupStart, slotNumber, slots.upper());
+        boolean lowerChanged = syncPairResultSlot(cardId, destinationGameId, groupStart + 1, slotNumber, slots.lower());
         jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number = ?", cardId, destinationGame);
-        audit(cardId, "system", "MATERIALIZE_PAIR_RESULT_GROUP", null, Map.of(
-            "sourceGame", sourceGame,
-            "destinationGame", destinationGame,
-            "sourcePairs", List.of(groupStart, groupStart + 1)
-        ));
+        if (upperChanged || lowerChanged)
+            audit(cardId, "system", "MATERIALIZE_PAIR_RESULT_SOURCE", null, Map.of(
+                "sourceGame", sourceGame,
+                "sourceTable", source.tableNumber(),
+                "destinationGame", destinationGame,
+                "destinationTables", List.of(groupStart, groupStart + 1),
+                "slot", slotNumber
+            ));
     }
 
     private PairResultSlots pairResultSlots(PairResultSource source) {
@@ -640,7 +644,7 @@ public class TournamentCardService {
         return new PairResultSlots(upper, lower);
     }
 
-    private void syncPairResultMatch(UUID cardId, UUID gameId, int tableNumber, UUID one, UUID two) {
+    private boolean syncPairResultSlot(UUID cardId, UUID gameId, int tableNumber, int slotNumber, UUID playerId) {
         PairResultDestination existing = jdbc.query("""
             SELECT m.id, m.player_one_id, m.player_two_id, (r.id IS NOT NULL) has_result
             FROM matches m LEFT JOIN match_results r ON r.match_id = m.id
@@ -649,23 +653,31 @@ public class TournamentCardService {
                 rs.getObject("id", UUID.class), rs.getObject("player_one_id", UUID.class), rs.getObject("player_two_id", UUID.class), rs.getBoolean("has_result")
             ), gameId, tableNumber).stream().findFirst().orElse(null);
         if (existing == null) {
+            UUID one = slotNumber == 1 ? playerId : null;
+            UUID two = slotNumber == 2 ? playerId : null;
             jdbc.update("""
                 INSERT INTO matches (id, card_id, game_id, table_number, player_one_id, player_two_id)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """, UUID.randomUUID(), cardId, gameId, tableNumber, one, two);
-            return;
+            return true;
         }
-        if (existing.oneId().equals(one) && existing.twoId().equals(two)) return;
+        UUID current = slotNumber == 1 ? existing.oneId() : existing.twoId();
+        UUID other = slotNumber == 1 ? existing.twoId() : existing.oneId();
+        if (Objects.equals(current, playerId)) return false;
         if (existing.hasResult())
             throw new IllegalArgumentException("ผล Game ถัดไปถูกบันทึกแล้ว จึงเปลี่ยนผู้ชนะ/ผู้แพ้ของ Game ต้นทางไม่ได้");
-        jdbc.update("UPDATE matches SET player_one_id = ?, player_two_id = ? WHERE id = ?", one, two, existing.id());
+        if (Objects.equals(other, playerId))
+            throw new IllegalArgumentException("PAIR_RESULT ทำให้ผู้เล่นคนเดียวกันอยู่สองฝั่งในคู่เดียวกัน กรุณาตรวจ Game ต้นทาง");
+        if (slotNumber == 1) jdbc.update("UPDATE matches SET player_one_id = ? WHERE id = ?", playerId, existing.id());
+        else jdbc.update("UPDATE matches SET player_two_id = ? WHERE id = ?", playerId, existing.id());
+        return true;
     }
 
     private PairingRuleType generateSystemMatches(UUID cardId, int gameNumber) {
         if (count("SELECT COUNT(*) FROM matches m JOIN games g ON g.id = m.game_id WHERE m.card_id = ? AND g.game_number = ?", cardId, gameNumber) > 0)
             throw new IllegalArgumentException("มี pairing ของเกมนี้อยู่แล้ว");
         var scores = loadScores(cardId);
-        var history = jdbc.query("SELECT player_one_id, player_two_id FROM matches WHERE card_id = ?",
+        var history = jdbc.query("SELECT player_one_id, player_two_id FROM matches WHERE card_id = ? AND player_one_id IS NOT NULL AND player_two_id IS NOT NULL",
             (rs, row) -> new PairingStrategy.Pair(rs.getObject("player_one_id", UUID.class).toString(), rs.getObject("player_two_id", UUID.class).toString()), cardId);
         PairingRuleType appliedRule = ruleForGame(cardId, gameNumber);
         if (appliedRule == PairingRuleType.PAIR_RESULT)
@@ -762,7 +774,7 @@ public class TournamentCardService {
                    pw.external_id winner, r.score_one, r.score_two, r.result_type, r.calculated_diff,
                    m.snapshot_id, m.pairing_published_at, s.confirmed_at
             FROM matches m JOIN games g ON g.id = m.game_id
-            JOIN players p1 ON p1.id = m.player_one_id JOIN players p2 ON p2.id = m.player_two_id
+            LEFT JOIN players p1 ON p1.id = m.player_one_id LEFT JOIN players p2 ON p2.id = m.player_two_id
             LEFT JOIN match_results r ON r.match_id = m.id LEFT JOIN players pw ON pw.id = r.winner_id
             LEFT JOIN pairing_snapshots s ON s.id = m.snapshot_id
             WHERE m.card_id = ? ORDER BY g.game_number, m.table_number
