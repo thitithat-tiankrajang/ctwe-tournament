@@ -45,8 +45,8 @@ export interface Pairing {
   id: string;
   gameNumber?: number;
   tableNumber: number;
-  playerOneId: string;
-  playerTwoId: string;
+  playerOneId: string | null;
+  playerTwoId: string | null;
   winnerId?: string;
   scoreOne?: number;
   scoreTwo?: number;

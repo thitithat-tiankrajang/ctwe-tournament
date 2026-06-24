@@ -52,16 +52,17 @@ function RankingTable({ players }: { players: ReturnType<typeof rankingAfterGame
 }
 
 function PairingGrid({ pairings, players }: { pairings: Pairing[]; players: Map<string, Player> }) {
-  const fullName = (playerId: string) => { const player = players.get(playerId); return `${player?.firstName ?? ""} ${player?.lastName ?? ""}`.trim(); };
+  const playerOf = (playerId: string | null) => playerId ? players.get(playerId) : undefined;
+  const fullName = (playerId: string | null) => { const player = playerOf(playerId); return `${player?.firstName ?? ""} ${player?.lastName ?? ""}`.trim() || "รอคู่แข่ง"; };
   const columns: DataColumn<Pairing>[] = [
     { key: "pair", label: "คู่", min: 44, width: 60, align: "right", render: (pairing) => <strong>{pairing.tableNumber}</strong> },
-    { key: "id1", label: "รหัสฝ่ายที่ 1", min: 80, width: 118, cellClassName: "cell-id", render: (pairing) => players.get(pairing.playerOneId)?.id },
+    { key: "id1", label: "รหัสฝ่ายที่ 1", min: 80, width: 118, cellClassName: "cell-id", render: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—" },
     { key: "name1", label: "ชื่อ - นามสกุล", min: 120, width: 190, render: (pairing) => <span title={fullName(pairing.playerOneId)}>{fullName(pairing.playerOneId)}</span> },
-    { key: "school1", label: "โรงเรียน/สถาบัน", min: 110, width: 180, render: (pairing) => <span title={players.get(pairing.playerOneId)?.school}>{players.get(pairing.playerOneId)?.school}</span> },
+    { key: "school1", label: "โรงเรียน/สถาบัน", min: 110, width: 180, render: (pairing) => <span title={playerOf(pairing.playerOneId)?.school}>{playerOf(pairing.playerOneId)?.school ?? "—"}</span> },
     { key: "vs", label: "", min: 60, width: 78, align: "center", cellClassName: "cell-vs", render: () => "พบกับ" },
-    { key: "id2", label: "รหัสฝ่ายที่ 2", min: 80, width: 118, cellClassName: "cell-id", render: (pairing) => players.get(pairing.playerTwoId)?.id },
+    { key: "id2", label: "รหัสฝ่ายที่ 2", min: 80, width: 118, cellClassName: "cell-id", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
     { key: "name2", label: "ชื่อ - นามสกุล", min: 120, width: 190, render: (pairing) => <span title={fullName(pairing.playerTwoId)}>{fullName(pairing.playerTwoId)}</span> },
-    { key: "school2", label: "โรงเรียน/สถาบัน", min: 110, width: 180, render: (pairing) => <span title={players.get(pairing.playerTwoId)?.school}>{players.get(pairing.playerTwoId)?.school}</span> },
+    { key: "school2", label: "โรงเรียน/สถาบัน", min: 110, width: 180, render: (pairing) => <span title={playerOf(pairing.playerTwoId)?.school}>{playerOf(pairing.playerTwoId)?.school ?? "—"}</span> },
   ];
   return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" filters={pairingFilters(players)} />;
 }

@@ -112,7 +112,7 @@ export default function GamesPage() {
           const completed = gamePairings.filter(isRecorded).length;
           if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`Game ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยัน pairing เกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
           return <Panel key={gameNumber} title={`กรอกผล Game ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === slots.length ? "success" : "warning"}>{completed}/{slots.length} คู่</Badge>}>
-            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} pendingNote={isDestination ? `คู่ที่ยังว่างจะแสดงผู้เล่นและกรอกได้อัตโนมัติ เมื่อบันทึกผล Game ${activeGames[0]} ครบทั้งสองคู่ในกลุ่มนั้น (ผู้ชนะขึ้นคู่บน ผู้แพ้ลงคู่ล่าง)` : undefined} onSubmit={saveResult} />
+            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} pendingNote={isDestination ? `เมื่อบันทึกผลแต่ละ row ของ Game ${activeGames[0]} ระบบจะเติมผู้ชนะไว้คู่บน และผู้แพ้ไว้คู่ล่างทันที; row ปลายทางจะกรอกคะแนนได้เมื่อมีคู่แข่งครบสองฝั่ง` : undefined} onSubmit={saveResult} />
           </Panel>;
         })}
       </> : (

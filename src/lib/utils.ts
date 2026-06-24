@@ -13,7 +13,9 @@ export function playerSearchText(player: Player | undefined) {
 
 /** Flatten a pairing (table number + both players) into one searchable string. */
 export function pairingSearchText(pairing: Pairing, players: Map<string, Player>) {
-  return `คู่ ${pairing.tableNumber} ${playerSearchText(players.get(pairing.playerOneId))} ${playerSearchText(players.get(pairing.playerTwoId))}`;
+  const playerOne = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
+  const playerTwo = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
+  return `คู่ ${pairing.tableNumber} ${playerSearchText(playerOne)} ${playerSearchText(playerTwo)}`;
 }
 
 export function formatDateTime(value: string) {

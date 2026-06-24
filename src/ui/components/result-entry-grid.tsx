@@ -56,6 +56,12 @@ function isRecorded(pairing: Pairing) {
   return pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
 }
 
+type CompletePairing = Pairing & { playerOneId: string; playerTwoId: string };
+
+function isCompletePairing(pairing: Pairing | undefined): pairing is CompletePairing {
+  return Boolean(pairing?.playerOneId && pairing?.playerTwoId);
+}
+
 interface Outcome { resultType: "WIN" | "DRAW"; winnerId?: string; diff: number; }
 
 function calcOutcome(one: string, two: string, maxDiff: number, p1: string, p2: string): Outcome | null {
@@ -97,7 +103,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
 
   const rows = useMemo(() => slots.map((slot) => {
     const pairing = slot.pairing;
-    if (!pairing) return { slot, status: "pending" as RowStatus };
+    if (!isCompletePairing(pairing)) return { slot, pairing, status: "pending" as RowStatus };
     const draft = drafts[pairing.id];
     const one = draft?.one ?? pairing.scoreOne?.toString() ?? "";
     const two = draft?.two ?? pairing.scoreTwo?.toString() ?? "";
@@ -111,8 +117,8 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   const filtered = useMemo(() => rows.filter((row) => {
     if (status !== "all" && row.status !== status) return false;
     if (fPair.trim() && !`${row.slot.tableNumber}`.includes(fPair.trim())) return false;
-    const p1 = row.pairing ? players.get(row.pairing.playerOneId) : undefined;
-    const p2 = row.pairing ? players.get(row.pairing.playerTwoId) : undefined;
+    const p1 = row.pairing?.playerOneId ? players.get(row.pairing.playerOneId) : undefined;
+    const p2 = row.pairing?.playerTwoId ? players.get(row.pairing.playerTwoId) : undefined;
     const idText = `${p1?.id ?? ""} ${p2?.id ?? ""}`.toLocaleLowerCase("th");
     const schoolText = `${p1?.school ?? ""} ${p2?.school ?? ""}`.toLocaleLowerCase("th");
     const nameText = `${p1?.firstName ?? ""} ${p1?.lastName ?? ""} ${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`.toLocaleLowerCase("th");
@@ -131,7 +137,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   const filtersActive = Boolean(fPair || fId || fSchool || fName) || status !== "all";
   const savedCount = rows.filter((row) => row.status === "saved").length;
   const dirtyCount = rows.filter((row) => row.status === "dirty").length;
-  const filteredSavable = filtered.filter((row) => row.pairing && row.status === "dirty" && calcOutcome(row.one ?? "", row.two ?? "", maxDiff, row.pairing.playerOneId, row.pairing.playerTwoId));
+  const filteredSavable = filtered.filter((row) => isCompletePairing(row.pairing) && row.status === "dirty" && calcOutcome(row.one ?? "", row.two ?? "", maxDiff, row.pairing.playerOneId, row.pairing.playerTwoId));
 
   const setDraft = (id: string, field: "one" | "two", value: string, base: { one: string; two: string }) => {
     setFailedIds((prev) => { if (!prev.has(id)) return prev; const next = new Set(prev); next.delete(id); return next; });
@@ -139,6 +145,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   };
 
   const saveRow = async (pairing: Pairing): Promise<boolean> => {
+    if (!isCompletePairing(pairing)) return false;
     const { one, two } = valueOf(pairing);
     const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
     if (!outcome) return false;
@@ -217,15 +224,22 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
               <tr><td className="egrid-empty" colSpan={EDIT_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
             ) : pageRows.map((row) => {
               const { slot, pairing } = row;
-              if (!pairing) {
-                return <tr key={`pending-${slot.tableNumber}`} className="egrid-row egrid-row--pending">
+              if (!isCompletePairing(pairing)) {
+                const p1 = pairing?.playerOneId ? players.get(pairing.playerOneId) : undefined;
+                const p2 = pairing?.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
+                const waitingText = pairing ? "รอคู่แข่งจากอีก row" : "รอผลจากเกมก่อนหน้า";
+                return <tr key={pairing?.id ?? `pending-${slot.tableNumber}`} className="egrid-row egrid-row--pending">
                   <td className="egrid-td numeric cell-pair">{slot.tableNumber}</td>
-                  <td className="egrid-td cell-id">—</td><td className="egrid-td">รอผลจากเกมก่อนหน้า</td><td className="egrid-td">—</td>
-                  <td className="egrid-td cell-id">—</td><td className="egrid-td">รอผลจากเกมก่อนหน้า</td><td className="egrid-td">—</td>
+                  <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
+                  <td className="egrid-td" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : waitingText}</td>
+                  <td className="egrid-td" title={p1?.school}>{p1?.school ?? "—"}</td>
+                  <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
+                  <td className="egrid-td" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : waitingText}</td>
+                  <td className="egrid-td" title={p2?.school}>{p2?.school ?? "—"}</td>
                   <td className="egrid-td"><input className="egrid-score" disabled placeholder="—" /></td>
                   <td className="egrid-td"><input className="egrid-score" disabled placeholder="—" /></td>
                   <td className="egrid-td cell-diff">—</td>
-                  <td className="egrid-td cell-action"><Badge tone="neutral">รอข้อมูล</Badge></td>
+                  <td className="egrid-td cell-action"><Badge tone="neutral">{pairing ? "รออีกฝั่ง" : "รอข้อมูล"}</Badge></td>
                 </tr>;
               }
               const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
@@ -284,7 +298,8 @@ export function ResultViewGrid({ pairings, players, storageKey }: {
 
   const filtered = useMemo(() => pairings.filter((pairing) => {
     if (fPair.trim() && !`${pairing.tableNumber}`.includes(fPair.trim())) return false;
-    const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
+    const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
+    const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
     const idText = `${p1?.id ?? ""} ${p2?.id ?? ""}`.toLocaleLowerCase("th");
     const schoolText = `${p1?.school ?? ""} ${p2?.school ?? ""}`.toLocaleLowerCase("th");
     const nameText = `${p1?.firstName ?? ""} ${p1?.lastName ?? ""} ${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`.toLocaleLowerCase("th");
@@ -329,18 +344,19 @@ export function ResultViewGrid({ pairings, players, storageKey }: {
             {pageRows.length === 0 ? (
               <tr><td className="egrid-empty" colSpan={VIEW_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
             ) : pageRows.map((pairing) => {
-              const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
+              const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
+              const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
               const recorded = isRecorded(pairing);
               const draw = pairing.resultType === "DRAW";
               const diff = recordedDiff(pairing);
               return <tr key={pairing.id} className="egrid-row">
                 <td className="egrid-td numeric cell-pair">{pairing.tableNumber}</td>
-                <td className="egrid-td cell-id">{p1?.id}</td>
-                <td className="egrid-td" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1?.firstName} {p1?.lastName}</td>
-                <td className="egrid-td" title={p1?.school}>{p1?.school}</td>
-                <td className="egrid-td cell-id">{p2?.id}</td>
-                <td className="egrid-td" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2?.firstName} {p2?.lastName}</td>
-                <td className="egrid-td" title={p2?.school}>{p2?.school}</td>
+                <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
+                <td className="egrid-td" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : "รอคู่แข่ง"}</td>
+                <td className="egrid-td" title={p1?.school}>{p1?.school ?? "—"}</td>
+                <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
+                <td className="egrid-td" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : "รอคู่แข่ง"}</td>
+                <td className="egrid-td" title={p2?.school}>{p2?.school ?? "—"}</td>
                 <td className="egrid-td numeric cell-score">{pairing.scoreOne ?? "—"}</td>
                 <td className="egrid-td numeric cell-score">{pairing.scoreTwo ?? "—"}</td>
                 <td className={`egrid-td numeric cell-diff cell-diff--${!recorded ? "pending" : draw ? "draw" : "win"}`}>{!recorded ? "—" : draw ? "0" : `±${diff}`}</td>

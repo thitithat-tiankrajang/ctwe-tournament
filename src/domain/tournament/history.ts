@@ -16,12 +16,17 @@ export interface PlayerHistoryRow {
   opponentId: string;
 }
 
+function hasTwoPlayers(pairing: Pairing): pairing is Pairing & { playerOneId: string; playerTwoId: string } {
+  return Boolean(pairing.playerOneId && pairing.playerTwoId);
+}
+type CompletePairing = Pairing & { playerOneId: string; playerTwoId: string };
+
 /** Per-game play history for one player across all published results, with running totals. */
 export function playerHistory(card: TournamentCard, playerId: string): PlayerHistoryRow[] {
-  const entries: { game: number; pairing: Pairing }[] = [];
+  const entries: { game: number; pairing: CompletePairing }[] = [];
   card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt)).forEach((snapshot) => {
     snapshot.pairings.forEach((pairing) => {
-      const recorded = pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
+      const recorded = hasTwoPlayers(pairing) && pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
       if (!recorded || (pairing.playerOneId !== playerId && pairing.playerTwoId !== playerId)) return;
       entries.push({ game: pairing.gameNumber ?? Math.min(...snapshot.gameNumbers), pairing });
     });
@@ -55,7 +60,7 @@ export function rankingAfterGame(card: TournamentCard, gameNumber: number): Play
     .sort((a, b) => Math.min(...a.gameNumbers) - Math.min(...b.gameNumbers));
 
   snapshots.forEach((snapshot) => snapshot.pairings.forEach((pairing) => {
-    if ((pairing.gameNumber ?? snapshot.gameNumbers[0]) > gameNumber || pairing.scoreOne === undefined || pairing.scoreTwo === undefined) return;
+    if (!hasTwoPlayers(pairing) || (pairing.gameNumber ?? snapshot.gameNumbers[0]) > gameNumber || pairing.scoreOne === undefined || pairing.scoreTwo === undefined) return;
     const one = ranking.get(pairing.playerOneId); const two = ranking.get(pairing.playerTwoId);
     if (!one || !two) return;
     if (pairing.resultType === "DRAW") {
