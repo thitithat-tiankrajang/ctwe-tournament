@@ -99,7 +99,7 @@ export function usePagination(total: number, resetKey: string, initialSize = 20)
   return { pageSize, setPageSize, page: Math.min(page, totalPages), setPage, size, totalPages };
 }
 
-export function GridHead({ columns, colWidths, startResize }: { columns: GridColumnBase[]; colWidths: number[]; startResize: (index: number, clientX: number) => void }) {
+export function GridHead({ columns, colWidths, startResize, columnFilters }: { columns: GridColumnBase[]; colWidths: number[]; startResize: (index: number, clientX: number) => void; columnFilters?: Partial<Record<string, ReactNode>> }) {
   return (
     <>
       <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
@@ -107,6 +107,7 @@ export function GridHead({ columns, colWidths, startResize }: { columns: GridCol
         <tr>{columns.map((column, index) => (
           <th key={column.key} className={`egrid-th egrid-col-${column.key}`}>
             <span className="egrid-th__label">{column.label}</span>
+            {columnFilters?.[column.key] ? <span className="egrid-th__filterwrap">{columnFilters[column.key]}</span> : null}
             <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onMouseDown={(event) => { event.preventDefault(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />
           </th>
         ))}</tr>

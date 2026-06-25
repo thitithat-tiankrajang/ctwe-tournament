@@ -1,7 +1,7 @@
 "use client";
 
-import { Check, LoaderCircle, Pencil, Save, SaveAll, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Pencil, Save, SaveAll, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
@@ -94,7 +94,19 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [savingAll, setSavingAll] = useState(false);
+  // Quick key-in bar (รหัส A → คะแนน A → รหัส B → คะแนน B → save) + result toast/highlight.
+  const [qIdA, setQIdA] = useState(""); const [qScoreA, setQScoreA] = useState("");
+  const [qIdB, setQIdB] = useState(""); const [qScoreB, setQScoreB] = useState("");
+  const [quickSaving, setQuickSaving] = useState(false);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const idARef = useRef<HTMLInputElement>(null); const scoreARef = useRef<HTMLInputElement>(null);
+  const idBRef = useRef<HTMLInputElement>(null); const scoreBRef = useRef<HTMLInputElement>(null);
+  const saveBtnRef = useRef<HTMLButtonElement>(null);
   const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(EDIT_COLUMNS, storageKey);
+
+  // Any "this is the pair" highlight + alert clears when the user closes it or keeps entering.
+  const clearFlash = () => { setToast(null); setHighlightId(null); };
 
   const valueOf = (pairing: Pairing) => {
     const draft = drafts[pairing.id];
@@ -140,15 +152,13 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   const filteredSavable = filtered.filter((row) => isCompletePairing(row.pairing) && row.status === "dirty" && calcOutcome(row.one ?? "", row.two ?? "", maxDiff, row.pairing.playerOneId, row.pairing.playerTwoId));
 
   const setDraft = (id: string, field: "one" | "two", value: string, base: { one: string; two: string }) => {
+    clearFlash();
     setFailedIds((prev) => { if (!prev.has(id)) return prev; const next = new Set(prev); next.delete(id); return next; });
     setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? base), [field]: value } }));
   };
 
-  const saveRow = async (pairing: Pairing): Promise<boolean> => {
-    if (!isCompletePairing(pairing)) return false;
-    const { one, two } = valueOf(pairing);
-    const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
-    if (!outcome) return false;
+  const saveValues = async (pairing: CompletePairing, one: string, two: string): Promise<boolean> => {
+    if (!calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId)) return false;
     setSavingIds((prev) => new Set(prev).add(pairing.id));
     try {
       await onSubmit(pairing, Number(one), Number(two), isRecorded(pairing));
@@ -164,6 +174,12 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
     }
   };
 
+  const saveRow = async (pairing: Pairing): Promise<boolean> => {
+    if (!isCompletePairing(pairing)) return false;
+    const { one, two } = valueOf(pairing);
+    return saveValues(pairing, one, two);
+  };
+
   const saveAll = async () => {
     if (filteredSavable.length === 0) return;
     setSavingAll(true);
@@ -174,6 +190,39 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
     } finally {
       setSavingAll(false);
     }
+  };
+
+  // Quick key-in: validate that A vs B is a real pairing this game (either side), then save + highlight.
+  const quickSave = async () => {
+    const a = qIdA.trim().toUpperCase(); const b = qIdB.trim().toUpperCase();
+    if (!a || !b) { setHighlightId(null); setToast({ type: "error", message: "กรุณากรอกรหัสทั้งสองฝ่ายก่อนบันทึก" }); return; }
+    const match = rows.find((row) => isCompletePairing(row.pairing)
+      && ((row.pairing.playerOneId.toUpperCase() === a && row.pairing.playerTwoId.toUpperCase() === b)
+        || (row.pairing.playerOneId.toUpperCase() === b && row.pairing.playerTwoId.toUpperCase() === a)));
+    if (!match || !isCompletePairing(match.pairing)) {
+      setHighlightId(null);
+      setToast({ type: "error", message: `คู่นี้ไม่เจอกันจริงในเกม ${gameNumber} — รหัส ${a} กับ ${b} ไม่ใช่คู่ที่จับไว้ กรุณาตรวจสอบรหัสอีกครั้ง` });
+      return;
+    }
+    const pairing = match.pairing;
+    const aIsOne = pairing.playerOneId.toUpperCase() === a;
+    const oneScore = aIsOne ? qScoreA : qScoreB;
+    const twoScore = aIsOne ? qScoreB : qScoreA;
+    if (!calcOutcome(oneScore, twoScore, maxDiff, pairing.playerOneId, pairing.playerTwoId)) {
+      setToast({ type: "error", message: "คะแนนไม่ถูกต้อง — กรอกเป็นจำนวนเต็ม ≥ 0 ทั้งสองฝ่าย" });
+      return;
+    }
+    setQuickSaving(true);
+    const ok = await saveValues(pairing, oneScore, twoScore);
+    setQuickSaving(false);
+    if (!ok) { setToast({ type: "error", message: "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง" }); return; }
+    const idx = filtered.findIndex((row) => row.pairing?.id === pairing.id);
+    if (idx >= 0) setPage(Math.floor(idx / size) + 1);
+    setHighlightId(pairing.id);
+    const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
+    setToast({ type: "success", message: `บันทึกคู่ที่ ${pairing.tableNumber} แล้ว · ${p1?.id} ${oneScore} : ${twoScore} ${p2?.id}` });
+    setQIdA(""); setQScoreA(""); setQIdB(""); setQScoreB("");
+    idARef.current?.focus();
   };
 
   const startEdit = (id: string) => setEditing((prev) => new Set(prev).add(id));
@@ -201,24 +250,48 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
 
   return (
     <div className="entry-grid-wrap">
-      <div className="entry-toolbar">
-        <div className="entry-filter"><label htmlFor={`f-pair-${gameNumber}`}>หาคู่ที่</label><input id={`f-pair-${gameNumber}`} inputMode="numeric" value={fPair} placeholder="เลขคู่" onChange={(event) => setFPair(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`f-id-${gameNumber}`}>หารหัส</label><input id={`f-id-${gameNumber}`} value={fId} placeholder="เช่น P0042" onChange={(event) => setFId(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`f-school-${gameNumber}`}>หาโรงเรียน</label><input id={`f-school-${gameNumber}`} value={fSchool} placeholder="ชื่อสถาบัน" onChange={(event) => setFSchool(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`f-name-${gameNumber}`}>หาจากชื่อ</label><input id={`f-name-${gameNumber}`} value={fName} placeholder="ชื่อหรือนามสกุล" onChange={(event) => setFName(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`f-status-${gameNumber}`}>กรองสถานะ</label><select id={`f-status-${gameNumber}`} className="select" value={status} onChange={(event) => setStatus(event.target.value as "all" | RowStatus)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
-        <div className="entry-toolbar__actions">
+      {toast && (
+        <div className={`entry-toast entry-toast--${toast.type}`} role="alert" aria-live="assertive">
+          {toast.type === "success" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+          <span>{toast.message}</span>
+          <button type="button" className="entry-toast__close" aria-label="ปิดการแจ้งเตือน" onClick={clearFlash}><X size={15} /></button>
+        </div>
+      )}
+      <div className="entry-keyin">
+        <span className="entry-keyin__label">คีย์เร็ว</span>
+        <input ref={idARef} className="entry-keyin__id" placeholder="รหัส A" value={qIdA} aria-label="รหัสฝ่าย A"
+          onChange={(event) => { clearFlash(); setQIdA(event.target.value.toUpperCase()); }}
+          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreARef.current?.focus(); scoreARef.current?.select(); } }} />
+        <input ref={scoreARef} type="number" inputMode="numeric" min={0} className="entry-keyin__score" placeholder="คะแนน A" value={qScoreA} aria-label="คะแนนฝ่าย A"
+          onChange={(event) => { clearFlash(); setQScoreA(event.target.value); }} onFocus={(event) => event.target.select()}
+          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); idBRef.current?.focus(); idBRef.current?.select(); } }} />
+        <span className="entry-keyin__vs">พบ</span>
+        <input ref={idBRef} className="entry-keyin__id" placeholder="รหัส B" value={qIdB} aria-label="รหัสฝ่าย B"
+          onChange={(event) => { clearFlash(); setQIdB(event.target.value.toUpperCase()); }}
+          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreBRef.current?.focus(); scoreBRef.current?.select(); } }} />
+        <input ref={scoreBRef} type="number" inputMode="numeric" min={0} className="entry-keyin__score" placeholder="คะแนน B" value={qScoreB} aria-label="คะแนนฝ่าย B"
+          onChange={(event) => { clearFlash(); setQScoreB(event.target.value); }} onFocus={(event) => event.target.select()}
+          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); saveBtnRef.current?.focus(); } }} />
+        <Button ref={saveBtnRef} size="sm" variant="success" disabled={quickSaving} onClick={() => void quickSave()}>{quickSaving ? <LoaderCircle className="loading-spinner" size={14} /> : <Save size={14} />}บันทึกคะแนน</Button>
+      </div>
+      <div className="entry-grid-meta">
+        <span className="entry-grid-meta__tags"><Badge tone="success">เซฟแล้ว {savedCount}</Badge>{dirtyCount > 0 && <Badge tone="warning">ยังไม่เซฟ {dirtyCount}</Badge>}</span>
+        <div className="entry-grid-meta__actions">
+          <label htmlFor={`f-status-${gameNumber}`}>สถานะ</label>
+          <select id={`f-status-${gameNumber}`} className="select" value={status} onChange={(event) => setStatus(event.target.value as "all" | RowStatus)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           <Button variant="secondary" size="sm" disabled={!filtersActive} onClick={() => { setFPair(""); setFId(""); setFSchool(""); setFName(""); setStatus("all"); }}><X size={14} />ล้างตัวกรอง</Button>
           <Button size="sm" variant="success" disabled={savingAll || filteredSavable.length === 0} onClick={() => void saveAll()}>{savingAll ? <LoaderCircle className="loading-spinner" size={14} /> : <SaveAll size={14} />}บันทึกทั้งหมด ({filteredSavable.length})</Button>
         </div>
       </div>
-      <div className="entry-grid-meta">
-        <span className="entry-grid-meta__tags"><Badge tone="success">เซฟแล้ว {savedCount}</Badge>{dirtyCount > 0 && <Badge tone="warning">ยังไม่เซฟ {dirtyCount}</Badge>}</span>
-      </div>
 
       <div className="entry-grid-scroll" ref={scrollRef}>
         <table className="entry-grid" style={{ width: totalWidth }}>
-          <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} />
+          <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} columnFilters={{
+            pair: <input className="egrid-th__filter" inputMode="numeric" value={fPair} placeholder="เลขคู่" aria-label="กรองเลขคู่" onChange={(event) => setFPair(event.target.value)} />,
+            id1: <input className="egrid-th__filter" value={fId} placeholder="ค้นรหัส (ทั้งคู่)" aria-label="กรองรหัส" onChange={(event) => setFId(event.target.value)} />,
+            name1: <input className="egrid-th__filter" value={fName} placeholder="ค้นชื่อ (ทั้งคู่)" aria-label="กรองชื่อ" onChange={(event) => setFName(event.target.value)} />,
+            school1: <input className="egrid-th__filter" value={fSchool} placeholder="ค้นโรงเรียน (ทั้งคู่)" aria-label="กรองโรงเรียน" onChange={(event) => setFSchool(event.target.value)} />,
+          }} />
           <tbody>
             {pageRows.length === 0 ? (
               <tr><td className="egrid-empty" colSpan={EDIT_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
@@ -252,7 +325,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
               const disabled = locked || saving || savingAll;
               const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
               const base = { one, two };
-              return <tr key={pairing.id} className={`egrid-row${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}`}>
+              return <tr key={pairing.id} className={`egrid-row${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}${highlightId === pairing.id ? " egrid-row--flash" : ""}`}>
                 <td className="egrid-td numeric cell-pair">{pairing.tableNumber}</td>
                 <td className="egrid-td cell-id">{p1?.id}</td>
                 <td className="egrid-td" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1?.firstName} {p1?.lastName}</td>
