@@ -36,15 +36,18 @@ export function PairingGrid({ pairings, players, storageKey, resetKey, emptyText
 }) {
   const playerOf = (playerId: string | null) => playerId ? players.get(playerId) : undefined;
   const fullName = (playerId: string | null) => { const player = playerOf(playerId); return `${player?.firstName ?? ""} ${player?.lastName ?? ""}`.trim() || "รอคู่แข่ง"; };
+  const seatOne = (pairing: Pairing) => (pairing.tableNumber - 1) * 2 + 1;
   const columns: DataColumn<Pairing>[] = [
-    { key: "pair", label: "คู่", min: 44, width: 60, align: "right", render: (pairing) => <strong>{pairing.tableNumber}</strong> },
-    { key: "id1", label: "รหัสฝ่ายที่ 1", min: 80, width: 118, cellClassName: "cell-id", render: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—" },
-    { key: "name1", label: "ชื่อ - นามสกุล", min: 120, width: 190, render: (pairing) => <span title={fullName(pairing.playerOneId)}>{fullName(pairing.playerOneId)}</span> },
-    { key: "school1", label: "โรงเรียน/สถาบัน", min: 110, width: 180, render: (pairing) => <span title={playerOf(pairing.playerOneId)?.school}>{playerOf(pairing.playerOneId)?.school ?? "—"}</span> },
-    { key: "vs", label: "", min: 60, width: 78, align: "center", cellClassName: "cell-vs", render: () => "พบกับ" },
-    { key: "id2", label: "รหัสฝ่ายที่ 2", min: 80, width: 118, cellClassName: "cell-id", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
-    { key: "name2", label: "ชื่อ - นามสกุล", min: 120, width: 190, render: (pairing) => <span title={fullName(pairing.playerTwoId)}>{fullName(pairing.playerTwoId)}</span> },
-    { key: "school2", label: "โรงเรียน/สถาบัน", min: 110, width: 180, render: (pairing) => <span title={playerOf(pairing.playerTwoId)?.school}>{playerOf(pairing.playerTwoId)?.school ?? "—"}</span> },
+    { key: "pair", label: "คู่", min: 44, width: 56, align: "right", render: (pairing) => <strong>{pairing.tableNumber}</strong> },
+    { key: "seat1", label: "ที่นั่ง", min: 44, width: 52, align: "right", cellClassName: "cell-seat", render: (pairing) => seatOne(pairing) },
+    { key: "id1", label: "รหัสฝ่ายที่ 1", min: 80, width: 116, cellClassName: "cell-id", render: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—" },
+    { key: "name1", label: "ชื่อ - นามสกุล", min: 120, width: 184, render: (pairing) => <span title={fullName(pairing.playerOneId)}>{fullName(pairing.playerOneId)}</span> },
+    { key: "school1", label: "โรงเรียน/สถาบัน", min: 110, width: 174, render: (pairing) => <span title={playerOf(pairing.playerOneId)?.school}>{playerOf(pairing.playerOneId)?.school ?? "—"}</span> },
+    { key: "vs", label: "", min: 56, width: 74, align: "center", cellClassName: "cell-vs", render: () => "พบกับ" },
+    { key: "seat2", label: "ที่นั่ง", min: 44, width: 52, align: "right", cellClassName: "cell-seat", render: (pairing) => seatOne(pairing) + 1 },
+    { key: "id2", label: "รหัสฝ่ายที่ 2", min: 80, width: 116, cellClassName: "cell-id", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
+    { key: "name2", label: "ชื่อ - นามสกุล", min: 120, width: 184, render: (pairing) => <span title={fullName(pairing.playerTwoId)}>{fullName(pairing.playerTwoId)}</span> },
+    { key: "school2", label: "โรงเรียน/สถาบัน", min: 110, width: 174, render: (pairing) => <span title={playerOf(pairing.playerTwoId)?.school}>{playerOf(pairing.playerTwoId)?.school ?? "—"}</span> },
   ];
   return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={storageKey} resetKey={resetKey} unit="คู่" emptyText={emptyText} filters={pairingFilters(players)} />;
 }

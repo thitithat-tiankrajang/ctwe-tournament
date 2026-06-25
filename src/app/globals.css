@@ -557,6 +557,7 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .cell-score { font-size: 16px; font-weight: 700; }
 .egrid-td--center { text-align: center; }
 .cell-vs { color: var(--muted); font-size: 12px; font-weight: 700; }
+.cell-seat { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 700; }
 .cell-diff { font-weight: 700; }
 .cell-diff--win { color: var(--green-dark); }
 .cell-diff--draw { color: #806000; }

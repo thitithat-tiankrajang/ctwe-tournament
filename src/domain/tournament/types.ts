@@ -70,8 +70,31 @@ export interface AuditEntry {
   newValue: string;
 }
 
+export interface Tournament {
+  id: string;
+  name: string;
+  status: "OPEN" | "CLOSED";
+  createdBy: string | null;
+  createdAt: string;
+  version: number;
+  directors: string[];
+  cardCount: number;
+}
+
+export type ManagedRole = "ROLE_ADMIN" | "ROLE_DIRECTOR" | "ROLE_STAFF";
+
+export interface ManagedUser {
+  username: string;
+  role: ManagedRole;
+  enabled: boolean;
+  createdBy: string | null;
+  createdAt: string;
+  tournamentIds: string[];
+}
+
 export interface TournamentCard {
   id: string;
+  tournamentId: string;
   name: string;
   division: string;
   status: CardStatus;
@@ -88,6 +111,7 @@ export interface TournamentCard {
 }
 
 export interface CreateCardInput {
+  tournamentId: string;
   name: string;
   division: string;
   numberOfGames: number;

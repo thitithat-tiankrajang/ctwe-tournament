@@ -7,6 +7,7 @@ import { ArrowRight, FilterX, LoaderCircle, LockKeyhole, Pencil, Plus, Save, Tra
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { rankPlayers, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { hasStaffAccess } from "@/domain/tournament/roles";
 import { playerSchema, type PlayerForm } from "@/domain/tournament/schemas";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import type { Player } from "@/domain/tournament/types";
@@ -46,7 +47,7 @@ export default function PlayersPage() {
   });
 
   if (loading) return <div className="panel panel-padding loading-state"><LoaderCircle className="loading-spinner" size={18} />กำลังตรวจสอบสิทธิ์…</div>;
-  const isStaff = auth.authenticated && auth.roles.includes("ROLE_STAFF");
+  const isStaff = hasStaffAccess(auth);
   if (!isStaff) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="บุคคลทั่วไปดูผลที่ประกาศแล้วได้จากหน้าภาพรวมของการ์ด" action={<Link href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
   if (!card) return <CardNotFound />;
 

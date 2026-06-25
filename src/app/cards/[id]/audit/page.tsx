@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { FileClock, LockKeyhole } from "lucide-react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { canManageTournament } from "@/domain/tournament/roles";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { EmptyState, PageHeader } from "@/ui/components/page";
 import { SearchableTable } from "@/ui/components/table-search";
@@ -18,7 +19,7 @@ export default function AuditPage() {
   const loading = useTournamentStore((state) => state.loading);
   const card = selectCard(cards, id);
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
-  if (!auth.authenticated || !auth.roles.includes("ROLE_STAFF")) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="Audit log มีข้อมูลการปฏิบัติงานภายในและไม่เปิดเผยต่อบุคคลทั่วไป" /></div>;
+  if (!canManageTournament(auth)) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="Audit log มีข้อมูลการปฏิบัติงานภายในและไม่เปิดเผยต่อบุคคลทั่วไป" /></div>;
   if (!card) return <CardNotFound />;
   const entries = [...card.audit].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   return (

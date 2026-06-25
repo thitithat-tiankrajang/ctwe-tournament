@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Eye, Gamepad2, LockKeyhole, Trophy } from "lucide-react";
 import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import type { Pairing, Player, TournamentCard } from "@/domain/tournament/types";
@@ -22,8 +23,14 @@ function isRecorded(pairing: Pairing) {
 }
 
 /** Non-active view: ranking per game (window-slide); click a player row to see their history. */
-function GamesBrowse({ card, players }: { card: TournamentCard; players: Map<string, Player> }) {
+function GamesBrowse({ card, players, canEdit, onOverride }: {
+  card: TournamentCard;
+  players: Map<string, Player>;
+  canEdit: boolean;
+  onOverride: (matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
+}) {
   const [rankingGame, setRankingGame] = useState<number | null>(null);
+  const [editGame, setEditGame] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const games = [...new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers))].sort((a, b) => a - b);
@@ -45,6 +52,24 @@ function GamesBrowse({ card, players }: { card: TournamentCard; players: Map<str
         <Panel><EmptyState icon={<Gamepad2 size={25} />} title="ยังไม่มีอันดับที่เผยแพร่" description="อันดับและประวัติการเล่นจะปรากฏที่นี่หลังเจ้าหน้าที่ Publish ผลเกมแรก" /></Panel>
       )}
 
+      {canEdit && games.length > 0 && (() => {
+        const target = editGame && games.includes(editGame) ? editGame : selected;
+        const snap = publishedSnapshots.find((s) => s.gameNumbers.includes(target));
+        const editPairings = snap?.pairings.filter((p) => (p.gameNumber ?? target) === target) ?? [];
+        const slots: EntrySlot[] = [...editPairings].sort((a, b) => a.tableNumber - b.tableNumber).map((p) => ({ tableNumber: p.tableNumber, pairing: p }));
+        const maxDiff = card.games.find((g) => g.number === target)?.maxDiff ?? 350;
+        return (
+          <Panel
+            title="แก้ไขผลเกมที่เผยแพร่แล้ว"
+            description="ผู้อำนวยการแก้ผลย้อนหลังได้ทุกเวลา · standing คำนวณใหม่อัตโนมัติ แต่ pairing เดิมไม่ถูกจับใหม่ (ถ้าต้องการจับคู่ใหม่ ใช้ Un-pairing ที่หน้าโต๊ะแข่งขัน)"
+            actions={<div className="overview-game-select"><label htmlFor="override-game">เลือกเกม</label><select id="override-game" className="select" value={target} onChange={(event) => setEditGame(Number(event.target.value))}>{games.map((g) => <option key={g} value={g}>เกม {g}</option>)}</select></div>}
+          >
+            <div className="notice notice--warning" style={{ margin: 18 }}><LockKeyhole size={18} /><p><strong>การแก้ผลที่เผยแพร่แล้วมีผลต่ออันดับทันที</strong><span>ระบบบันทึก audit log ทุกครั้ง · กรอกคะแนนแล้วกด Enter เพื่อบันทึก</span></p></div>
+            <ResultEntryGrid gameNumber={target} slots={slots} players={players} maxDiff={maxDiff} storageKey={`${card.id}:override:${target}`} onSubmit={(pairing, scoreOne, scoreTwo) => onOverride(pairing.id, scoreOne, scoreTwo)} />
+          </Panel>
+        );
+      })()}
+
       {selectedPlayer && (
         <Panel
           title={`ประวัติการเล่น · ${selectedPlayer.id} · ${selectedPlayer.firstName} ${selectedPlayer.lastName}`}
@@ -63,10 +88,11 @@ export default function GamesPage() {
   const cards = useTournamentStore((state) => state.cards); const auth = useTournamentStore((state) => state.auth); const loading = useTournamentStore((state) => state.loading);
   const submitResult = useTournamentStore((state) => state.submitResult); const reviewResults = useTournamentStore((state) => state.reviewResults);
   const reopenResults = useTournamentStore((state) => state.reopenResults); const publishResults = useTournamentStore((state) => state.publishResults);
+  const overrideResult = useTournamentStore((state) => state.overrideResult);
   const card = selectCard(cards, id); const [busy, setBusy] = useState(false);
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
-  const isStaff = auth.authenticated && auth.roles.includes("ROLE_STAFF");
+  const isStaff = hasStaffAccess(auth);
   if (!isStaff) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="บุคคลทั่วไปดูเฉพาะผลที่ publish แล้วจากหน้าภาพรวม" action={<Link href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
   if (!card) return <CardNotFound />;
 
@@ -94,11 +120,11 @@ export default function GamesPage() {
     catch (error) { window.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ"); } finally { setBusy(false); }
   };
 
-  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} /></>;
+  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} canEdit={canManageTournament(auth)} onOverride={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} /></>;
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${blockLabel}`} title={reviewing ? "Review ผลการแข่งขัน" : "กรอกผลการแข่งขัน"} description={reviewing ? "ตรวจคะแนน ผลชนะ/เสมอ และ diff ก่อน Publish" : pairResultBlock ? "กรอก Game ต้นทางก่อน ระบบจะสร้างคู่ผู้ชนะและคู่ผู้แพ้ใน Game ถัดไปให้กรอกต่อในหน้าเดียวกัน" : "พิมพ์คะแนนในตารางแล้วกด Enter เพื่อบันทึกและเลื่อนไปคู่ถัดไปทันที ไม่ต้องกดปุ่มเปิด/บันทึก"} actions={resultCollection ? <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />Review ผล <ArrowRight size={16} /></Button> : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>} />
+      <PageHeader eyebrow={`${card.name} · ${blockLabel}`} title={reviewing ? "Review ผลการแข่งขัน" : "กรอกผลการแข่งขัน"} description={reviewing ? "ตรวจคะแนน ผลชนะ/เสมอ และ diff ก่อน Publish" : pairResultBlock ? "กรอก Game ต้นทางก่อน ระบบจะสร้างคู่ผู้ชนะและคู่ผู้แพ้ใน Game ถัดไปให้กรอกต่อในหน้าเดียวกัน" : "พิมพ์คะแนนในตารางแล้วกด Enter เพื่อบันทึกและเลื่อนไปคู่ถัดไปทันที ไม่ต้องกดปุ่มเปิด/บันทึก"} actions={canManageTournament(auth) && (resultCollection ? <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />Review ผล <ArrowRight size={16} /></Button> : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>)} />
       <div className="notice notice--warning"><LockKeyhole size={18} /><p><strong>ต้องบันทึกผลครบทุกคู่ของ {blockLabel}</strong><span>{completedCount} จาก {expectedCount} คู่บันทึกแล้ว · Pairing และผลจะเผยแพร่ตาม milestone ที่ยืนยัน</span></p></div>
 
       {resultCollection ? <>

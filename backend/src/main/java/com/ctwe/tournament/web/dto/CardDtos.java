@@ -18,6 +18,7 @@ public final class CardDtos {
     private CardDtos() {}
 
     public record CreateCardRequest(
+        @NotNull UUID tournamentId,
         @NotBlank @Size(max = 180) String name,
         @NotBlank @Size(max = 180) String division,
         @Min(2) @Max(12) int numberOfGames,
@@ -52,6 +53,7 @@ public final class CardDtos {
 
     public record CardResponse(
         UUID id,
+        UUID tournamentId,
         String name,
         String division,
         CardStatus status,

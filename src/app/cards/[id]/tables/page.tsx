@@ -2,34 +2,18 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { AlertTriangle, ArrowRight, Filter, LockKeyhole, RefreshCw, Shuffle } from "lucide-react";
+import { ArrowRight, LockKeyhole, RefreshCw, Shuffle, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
-import type { Player, SeatingTable } from "@/domain/tournament/types";
+import { canManageTournament } from "@/domain/tournament/roles";
+import type { Pairing, Player } from "@/domain/tournament/types";
 import { rankingAfterGame } from "@/domain/tournament/history";
-import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { pairingRuleForGame } from "@/ui/components/game-flow";
 import { CustomCombobox } from "@/ui/components/institution-combobox";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
-
-function containsPlayer(table: SeatingTable, players: Map<string, Player>, query: string) {
-  if (!query) return true;
-  const needle = query.toLowerCase();
-  return table.playerIds.some((id) => {
-    const player = players.get(id);
-    return `${id} ${player?.firstName} ${player?.lastName} ${player?.school}`.toLowerCase().includes(needle);
-  });
-}
-
-function sameSchoolPair(table: SeatingTable, players: Map<string, Player>, seatIndex: number) {
-  const opponentIndex = seatIndex % 2 === 0 ? seatIndex + 1 : seatIndex - 1;
-  const player = players.get(table.playerIds[seatIndex]);
-  const opponent = players.get(table.playerIds[opponentIndex]);
-  return Boolean(player && opponent && player.school.toLowerCase() === opponent.school.toLowerCase());
-}
 
 export default function TablesPage() {
   const { id } = useParams<{ id: string }>();
@@ -40,16 +24,16 @@ export default function TablesPage() {
   const generatePairings = useTournamentStore((state) => state.generatePairings);
   const confirmPairing = useTournamentStore((state) => state.confirmPairingPreview);
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
+  const undoPairing = useTournamentStore((state) => state.undoPairing);
   const card = selectCard(cards, id);
-  const [query, setQuery] = useState("");
   const [firstId, setFirstId] = useState("");
   const [secondId, setSecondId] = useState("");
   const [busy, setBusy] = useState(false);
   const [browseGame, setBrowseGame] = useState<number | null>(null);
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
-  const isStaff = auth.authenticated && auth.roles.includes("ROLE_STAFF");
-  if (!isStaff) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="ข้อมูล pairing ที่ยังไม่ publish เป็นข้อมูลภายใน" action={<Link href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
+  // Pairing/tables is operator work (admin/director). Result-entry staff enter results on the games page.
+  if (!canManageTournament(auth)) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้อำนวยการ/ผู้ดูแลระบบเท่านั้น" description="การจับคู่และโต๊ะแข่งขันเป็นงานของผู้อำนวยการ เจ้าหน้าที่กรอกผลทำงานที่หน้าผลการแข่งขัน" action={<Link href={`/cards/${id}/games`}><Button>ไปหน้ากรอกผล</Button></Link>} /></div>;
   if (!card) return <CardNotFound />;
 
   const players = new Map(card.players.map((player) => [player.id, player]));
@@ -63,7 +47,12 @@ export default function TablesPage() {
   const manualGameOne = preview && card.currentGame === 1;
   const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.includes(card.currentGame));
   const currentPairings = currentSnapshot?.pairings.filter((pairing) => pairing.gameNumber === card.currentGame) ?? [];
-  const filteredTables = card.tables.filter((table) => containsPlayer(table, players, query));
+  const gameOnePairs: Pairing[] = manualGameOne
+    ? card.tables
+        .flatMap((table) => { const pairs: { one: string; two: string }[] = []; for (let i = 0; i + 1 < table.playerIds.length; i += 2) pairs.push({ one: table.playerIds[i], two: table.playerIds[i + 1] }); return pairs; })
+        .map((pair, index) => ({ id: `g1-${index + 1}`, gameNumber: 1, tableNumber: index + 1, playerOneId: pair.one, playerTwoId: pair.two }))
+    : [];
+  const previewPairings = manualGameOne ? gameOnePairs : currentPairings;
   const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const latestResultGame = Math.max(0, ...publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
   const latestResultSnapshot = publishedSnapshots.find((snapshot) => snapshot.gameNumbers.includes(latestResultGame));
@@ -104,9 +93,18 @@ export default function TablesPage() {
     finally { setBusy(false); }
   };
 
+  const undo = async () => {
+    if (!window.confirm("ยกเลิกการจับคู่ปัจจุบัน และย้อนกลับไปกรอกผลของเกมก่อนหน้า? ผลที่บันทึกไว้จะยังอยู่และแก้ไขได้ ส่วนคู่ที่จับใหม่จะถูกล้าง")) return;
+    setBusy(true);
+    try { await undoPairing(id); }
+    catch (error) { window.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ"); }
+    finally { setBusy(false); }
+  };
+  const canUndo = canManageTournament(auth) && (preview || latestResultGame > 0 || card.runtimeStage === "TABLE_PAIRING");
+
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ${card.currentGame === 1 ? "เกมแรกปรับตำแหน่งผู้เล่นได้ก่อนยืนยัน" : "ระบบจับคู่ตามกติกาของการ์ดและไม่อนุญาตให้สลับเอง"}`} actions={canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || (manualGameOne ? card.tables.length === 0 : currentPairings.length === 0)}>Finish pairing <ArrowRight size={16} /></Button> : <Link href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>} />
+      <PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing <ArrowRight size={16} /></Button> : <Link href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
 
       {!pairingActive ? (
         browseGames.length === 0 ? (
@@ -129,11 +127,9 @@ export default function TablesPage() {
         <>
       {canGenerate && <Panel><EmptyState icon={<Shuffle size={25} />} title={`พร้อมสร้าง pairing เกม ${card.currentGame}`} description={card.currentGame === 1 ? "ระบบจะจัดกลุ่ม 4 คนต่อโต๊ะและลดการพบผู้เล่นโรงเรียนเดียวกัน" : `ใช้กติกา ${pairingRuleForGame(card, card.currentGame)} จากผลที่ publish แล้ว`} action={<Button onClick={generate} disabled={busy}><Shuffle size={16} />เริ่ม Pairing</Button>} /></Panel>}
 
-      {preview && (manualGameOne ? (
+      {preview && (
         <>
-          <section className="player-filter-bar" style={{ gridTemplateColumns: "minmax(240px, 1fr) auto" }}><div className="compact-field"><label htmlFor="table-filter">ค้นหาโต๊ะด้วยรหัส ชื่อ หรือโรงเรียน</label><input id="table-filter" placeholder="เช่น P0042" value={query} onChange={(event) => setQuery(event.target.value)} /></div><Button variant="secondary" size="sm" onClick={() => setQuery("")}><Filter size={14} />ล้าง filter</Button></section>
-
-          <Panel title="สลับตำแหน่งผู้เล่น" description="เลือกผู้เล่นสองคนเพื่อสลับที่นั่ง ระบบจะเตือนหากทำให้โรงเรียนเดียวกันแข่งกัน">
+          <Panel title="สลับ/ปรับคู่ผู้เล่น" description="เลือกผู้เล่นสองคนเพื่อสลับตำแหน่งกัน · ปรับได้ทุกเกมก่อนยืนยัน ระบบจะเตือนหากทำให้โรงเรียนเดียวกันแข่งกัน">
             <div className="panel-padding swap-controls">
               <div className="form-field">
                 <label className="form-label" htmlFor="swap-first">ผู้เล่นคนที่ 1</label>
@@ -143,19 +139,15 @@ export default function TablesPage() {
                 <label className="form-label" htmlFor="swap-second">ผู้เล่นคนที่ 2</label>
                 <CustomCombobox id="swap-second" value={secondId} onChange={(value) => setSecondId(value.toUpperCase())} options={playerOptions.filter((option) => option.value !== firstId)} disabled={busy} placeholder="ค้นหารหัส ชื่อ หรือสถาบัน" caption="เลือกผู้เล่นคนที่ 2" emptyMessage="ไม่พบผู้เล่น" listLabel="รายชื่อผู้เล่นคนที่ 2" openButtonLabel="เปิดรายชื่อผู้เล่นคนที่ 2" closeButtonLabel="ปิดรายชื่อผู้เล่นคนที่ 2" />
               </div>
-              <Button onClick={swap} disabled={busy || !players.has(firstId) || !players.has(secondId)}><RefreshCw size={16} />สลับที่</Button>
+              <Button onClick={swap} disabled={busy || !players.has(firstId) || !players.has(secondId)}><RefreshCw size={16} />สลับ</Button>
             </div>
           </Panel>
 
-          <Panel title={`Pairing preview · ${filteredTables.length} จาก ${card.tables.length} โต๊ะ`} description="คู่แข่งขันคือที่นั่ง 1–2 และ 3–4 ภายในโต๊ะเดียวกัน">
-            <div className="pairing-table-grid">{filteredTables.map((table) => <section className="physical-table" key={table.id}><header><strong>โต๊ะ {table.number}</strong><span>{table.playerIds.length} คน</span></header>{table.playerIds.map((playerId, index) => { const player = players.get(playerId); const conflict = sameSchoolPair(table, players, index); return <div className={`physical-player ${conflict ? "school-conflict" : ""}`} key={playerId}><span className="physical-player__position">{index + 1}</span><div><strong>{player?.firstName} {player?.lastName}</strong><small>{playerId} · {player?.school}</small></div>{conflict && <Badge tone="warning"><AlertTriangle size={12} />โรงเรียนซ้ำ</Badge>}</div>; })}</section>)}</div>
+          <Panel title={`Pairing preview · ${previewPairings.length} คู่`} description="คู่แข่งขันของเกมนี้ก่อนยืนยัน · เลขที่นั่งนับจากบนลงล่าง (คู่ 1 = ที่นั่ง 1,2)">
+            <PairingGrid pairings={previewPairings} players={players} storageKey={`${id}:tables:preview`} />
           </Panel>
         </>
-      ) : (
-        <Panel title={`System pairing preview · ${currentPairings.length} คู่`} description="ดูได้อย่างเดียว การสลับด้วยมือถูกปิดตั้งแต่เกม 2">
-          <PairingGrid pairings={currentPairings} players={players} storageKey={`${id}:tables:preview`} />
-        </Panel>
-      ))}
+      )}
 
       {latestResultGame > 0 && (
         <Panel title={`อันดับล่าสุด · หลังจบเกม ${latestResultGame}`} description={`คะแนนชัยชนะและผลต่างสะสม${latestResultSnapshot?.confirmedAt ? ` · เผยแพร่เมื่อ ${new Date(latestResultSnapshot.confirmedAt).toLocaleString("th-TH")}` : ""}`}>

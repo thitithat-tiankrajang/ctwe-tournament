@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { ArrowRight, ClipboardCheck, LockKeyhole, Trophy } from "lucide-react";
 import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { canManageTournament } from "@/domain/tournament/roles";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import type { Pairing, Player, RuntimeStage } from "@/domain/tournament/types";
 import { formatDateTime } from "@/lib/utils";
@@ -76,7 +77,7 @@ export default function CardOverviewPage() {
   const [historyGame, setHistoryGame] = useState<number | null>(null);
   const [views, setViews] = useState<Set<OverviewView>>(new Set<OverviewView>(["ranking", "pairing", "result"]));
   if (!card) return <CardNotFound />;
-  const isStaff = auth.authenticated && auth.roles.includes("ROLE_STAFF");
+  const canManage = canManageTournament(auth);
   const visibleSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt) || card.runtimeStage !== "PAIRING_PREVIEW" || !snapshot.gameNumbers.includes(card.currentGame));
   const publishedSnapshots = visibleSnapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const publishedGames = new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
@@ -90,7 +91,7 @@ export default function CardOverviewPage() {
   const selectedResultsPublished = Boolean(selectedSnapshot?.confirmedAt);
   const players = new Map(card.players.map((player) => [player.id, player]));
   const final = card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED";
-  const canClose = card.status === "FINISHED" && isStaff;
+  const canClose = card.status === "FINISHED" && canManage;
   const gameOptions = [...visibleGames].sort((a, b) => a - b);
   const toggleView = (view: OverviewView) => setViews((prev) => { const next = new Set(prev); if (next.has(view)) next.delete(view); else next.add(view); return next; });
 
@@ -108,7 +109,7 @@ export default function CardOverviewPage() {
         <section className="final-trophy"><Trophy size={52} /><div><span>FINAL RESULT</span><h2>ประกาศผลการแข่งขันแล้ว</h2><p>ผลทุกเกมผ่านการ Review และ Publish ครบถ้วน</p></div></section>
       )}
 
-      {isStaff && !final && (
+      {canManage && !final && (
         <div className="notice notice--info workflow-notice"><ClipboardCheck size={20} /><p><strong>ขั้นตอนปัจจุบัน: {stageLabels[card.runtimeStage]}</strong><span>เกม {card.currentGame} จาก {card.games.length} · ทำงานต่อในหน้าที่ระบบกำหนด</span></p><Link href={workflowHref(id, card.runtimeStage)}><Button size="sm">ทำงานต่อ <ArrowRight size={15} /></Button></Link></div>
       )}
 

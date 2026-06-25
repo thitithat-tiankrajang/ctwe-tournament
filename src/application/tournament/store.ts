@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { CreateCardInput, Player, TournamentCard } from "@/domain/tournament/types";
+import type { CreateCardInput, ManagedUser, Player, Tournament, TournamentCard } from "@/domain/tournament/types";
 
 export interface AuthState {
   authenticated: boolean;
@@ -10,11 +10,18 @@ export interface AuthState {
   csrfToken: string;
 }
 
+export interface ActiveTournament {
+  id: string;
+  name: string;
+}
+
 interface TournamentState {
   cards: TournamentCard[];
   auth: AuthState;
   loading: boolean;
   error: string | null;
+  activeTournament: ActiveTournament | null;
+  setActiveTournament: (tournament: ActiveTournament | null) => void;
   load: () => Promise<void>;
   refreshAuth: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
@@ -30,16 +37,45 @@ interface TournamentState {
   swapPlayers: (cardId: string, firstId: string, secondId: string, confirmSchoolConflict?: boolean) => Promise<void>;
   confirmPairingPreview: (cardId: string) => Promise<void>;
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
+  overrideResult: (cardId: string, matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
   reviewResults: (cardId: string) => Promise<void>;
   reopenResults: (cardId: string) => Promise<void>;
   publishResults: (cardId: string) => Promise<void>;
+  undoPairing: (cardId: string) => Promise<void>;
   closeCard: (cardId: string) => Promise<void>;
   deleteCard: (cardId: string) => Promise<void>;
   simulateTournament: (cardId: string) => Promise<void>;
   resetCard: (cardId: string) => Promise<void>;
+  // tenant + account management
+  loadTournaments: () => Promise<Tournament[]>;
+  createTournament: (name: string) => Promise<Tournament>;
+  deleteTournament: (tournamentId: string) => Promise<void>;
+  setTournamentStatus: (tournamentId: string, open: boolean) => Promise<void>;
+  grantStaffTournament: (username: string, tournamentId: string) => Promise<void>;
+  revokeStaffTournament: (username: string, tournamentId: string) => Promise<void>;
+  listDirectors: () => Promise<ManagedUser[]>;
+  createDirector: (username: string, password: string, tournamentIds: string[]) => Promise<void>;
+  deleteDirector: (username: string) => Promise<void>;
+  assignDirector: (tournamentId: string, username: string) => Promise<void>;
+  unassignDirector: (tournamentId: string, username: string) => Promise<void>;
+  setAccountEnabled: (scope: "directors" | "staff", username: string, enabled: boolean) => Promise<void>;
+  resetAccountPassword: (scope: "directors" | "staff", username: string, password: string) => Promise<void>;
+  listStaff: () => Promise<ManagedUser[]>;
+  createStaff: (username: string, password: string) => Promise<void>;
+  deleteStaff: (username: string) => Promise<void>;
 }
 
 const anonymous: AuthState = { authenticated: false, username: null, roles: [], csrfToken: "" };
+const ACTIVE_TOURNAMENT_KEY = "ctwe.activeTournament";
+
+export function readActiveTournament(): ActiveTournament | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_TOURNAMENT_KEY);
+    const parsed = raw ? JSON.parse(raw) as ActiveTournament : null;
+    return parsed && typeof parsed.id === "string" ? parsed : null;
+  } catch { return null; }
+}
 
 async function readError(response: Response) {
   try {
@@ -89,6 +125,14 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     auth: anonymous,
     loading: true,
     error: null,
+    activeTournament: null,
+    setActiveTournament: (tournament) => {
+      if (typeof window !== "undefined") {
+        if (tournament) window.localStorage.setItem(ACTIVE_TOURNAMENT_KEY, JSON.stringify(tournament));
+        else window.localStorage.removeItem(ACTIVE_TOURNAMENT_KEY);
+      }
+      set({ activeTournament: tournament });
+    },
     clearError: () => set({ error: null }),
     async refreshAuth() {
       try {
@@ -179,6 +223,12 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         body: JSON.stringify({ scoreOne, scoreTwo, editExisting }),
       });
     },
+    async overrideResult(cardId, matchId, scoreOne, scoreTwo) {
+      await mutateCard(`/api/cards/${cardId}/matches/${matchId}/override`, cardId, {
+        method: "PUT",
+        body: JSON.stringify({ scoreOne, scoreTwo, editExisting: true }),
+      });
+    },
     async reviewResults(cardId) {
       await mutateCard(`/api/cards/${cardId}/results/review`, cardId, { method: "POST" });
     },
@@ -187,6 +237,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async publishResults(cardId) {
       await mutateCard(`/api/cards/${cardId}/results/publish`, cardId, { method: "POST" });
+    },
+    async undoPairing(cardId) {
+      await mutateCard(`/api/cards/${cardId}/pairings/undo`, cardId, { method: "POST" });
     },
     async closeCard(cardId) {
       await mutateCard(`/api/cards/${cardId}/close`, cardId, { method: "POST" });
@@ -200,6 +253,59 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async resetCard(cardId) {
       await mutateCard(`/api/dev/cards/${cardId}/reset`, cardId, { method: "POST" });
+    },
+
+    // ---- tenant + account management ----
+    async loadTournaments() {
+      return request<Tournament[]>("/api/tournaments");
+    },
+    async createTournament(name) {
+      return request<Tournament>("/api/admin/tournaments", { method: "POST", body: JSON.stringify({ name }) });
+    },
+    async deleteTournament(tournamentId) {
+      await request(`/api/admin/tournaments/${tournamentId}`, { method: "DELETE" });
+      set((state) => ({ cards: state.cards.filter((card) => card.tournamentId !== tournamentId), error: null }));
+    },
+    async setTournamentStatus(tournamentId, open) {
+      await request(`/api/admin/tournaments/${tournamentId}/status`, { method: "PATCH", body: JSON.stringify({ open }) });
+    },
+    async grantStaffTournament(username, tournamentId) {
+      await request(`/api/director/staff/${encodeURIComponent(username)}/tournaments`, { method: "POST", body: JSON.stringify({ tournamentId }) });
+    },
+    async revokeStaffTournament(username, tournamentId) {
+      await request(`/api/director/staff/${encodeURIComponent(username)}/tournaments/${tournamentId}`, { method: "DELETE" });
+    },
+    async listDirectors() {
+      return request<ManagedUser[]>("/api/admin/directors");
+    },
+    async createDirector(username, password, tournamentIds) {
+      await request("/api/admin/directors", { method: "POST", body: JSON.stringify({ username, password, tournamentIds }) });
+    },
+    async deleteDirector(username) {
+      await request(`/api/admin/directors/${encodeURIComponent(username)}`, { method: "DELETE" });
+    },
+    async assignDirector(tournamentId, username) {
+      await request(`/api/admin/tournaments/${tournamentId}/directors`, { method: "POST", body: JSON.stringify({ username }) });
+    },
+    async unassignDirector(tournamentId, username) {
+      await request(`/api/admin/tournaments/${tournamentId}/directors/${encodeURIComponent(username)}`, { method: "DELETE" });
+    },
+    async setAccountEnabled(scope, username, enabled) {
+      const base = scope === "directors" ? "/api/admin/directors" : "/api/director/staff";
+      await request(`${base}/${encodeURIComponent(username)}/enabled`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+    },
+    async resetAccountPassword(scope, username, password) {
+      const base = scope === "directors" ? "/api/admin/directors" : "/api/director/staff";
+      await request(`${base}/${encodeURIComponent(username)}/password`, { method: "POST", body: JSON.stringify({ password }) });
+    },
+    async listStaff() {
+      return request<ManagedUser[]>("/api/director/staff");
+    },
+    async createStaff(username, password) {
+      await request("/api/director/staff", { method: "POST", body: JSON.stringify({ username, password }) });
+    },
+    async deleteStaff(username) {
+      await request(`/api/director/staff/${encodeURIComponent(username)}`, { method: "DELETE" });
     },
   };
 });

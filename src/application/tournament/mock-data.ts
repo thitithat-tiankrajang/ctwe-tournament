@@ -73,6 +73,7 @@ const amathPlayers = createMockPlayers(24, "ประถมศึกษา");
 export const seedCards: TournamentCard[] = [
   {
     id: "amath-primary",
+    tournamentId: "seed-tournament",
     name: "A-Math Championship",
     division: "ประถมศึกษา",
     status: "RUNNING",
@@ -114,6 +115,7 @@ export const seedCards: TournamentCard[] = [
   },
   {
     id: "scrabble-junior",
+    tournamentId: "seed-tournament",
     name: "Scrabble Open",
     division: "มัธยมศึกษาตอนต้น",
     status: "READY",

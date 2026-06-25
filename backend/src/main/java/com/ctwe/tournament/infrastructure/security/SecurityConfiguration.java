@@ -8,6 +8,9 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.JdbcUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
@@ -19,6 +22,12 @@ import javax.sql.DataSource;
 
 @Configuration
 public class SecurityConfiguration {
+    @Bean
+    PasswordEncoder passwordEncoder() {
+        // Matches the {bcrypt}$2a$12$... format stored for the bootstrap account; cost 12 for new accounts.
+        return new DelegatingPasswordEncoder("bcrypt", java.util.Map.of("bcrypt", new BCryptPasswordEncoder(12)));
+    }
+
     @Bean
     UserDetailsService staffUsers(DataSource dataSource) {
         var manager = new JdbcUserDetailsManager(dataSource);
@@ -44,9 +53,11 @@ public class SecurityConfiguration {
                 INSERT INTO staff_accounts (username, password_hash, enabled)
                 VALUES (?, ?, true) ON CONFLICT (username) DO NOTHING
                 """, username, "{bcrypt}" + passwordHash);
+            // The bootstrap account is the platform ADMIN (provider). Directors and staff are
+            // provisioned through the app, never via env.
             jdbc.update("""
                 INSERT INTO staff_authorities (username, authority)
-                VALUES (?, 'ROLE_STAFF') ON CONFLICT DO NOTHING
+                VALUES (?, 'ROLE_ADMIN') ON CONFLICT DO NOTHING
                 """, username);
         };
     }
@@ -60,10 +71,12 @@ public class SecurityConfiguration {
             .csrf(csrf -> csrf.csrfTokenRepository(csrfRepository))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health", "/api/auth/me", "/staff-login", "/login").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/cards/*/audit").hasRole("STAFF")
+                .requestMatchers(HttpMethod.GET, "/api/cards/*/audit").hasAnyRole("ADMIN", "DIRECTOR")
                 .requestMatchers(HttpMethod.GET, "/api/cards", "/api/cards/**").permitAll()
-                .requestMatchers("/api/dev/**").hasRole("STAFF")
-                .requestMatchers("/api/**").hasRole("STAFF")
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/director/**").hasRole("DIRECTOR")
+                .requestMatchers("/api/dev/**").hasRole("ADMIN")
+                .requestMatchers("/api/**").hasAnyRole("ADMIN", "DIRECTOR", "STAFF")
                 .anyRequest().permitAll())
             .formLogin(form -> form
                 .loginPage("/staff-login")

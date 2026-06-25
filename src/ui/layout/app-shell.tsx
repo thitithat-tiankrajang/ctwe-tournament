@@ -17,13 +17,15 @@ import {
   TableProperties,
   Trophy,
   Users,
+  UserCog,
   LogIn,
   ShieldCheck,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { FormEvent, useEffect, useState } from "react";
-import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { readActiveTournament, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { hasStaffAccess, isAdmin, isDirector } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 
@@ -65,7 +67,7 @@ function NavigationLink({ href, label, icon: Icon, active, workflow = false, col
   );
 }
 
-function CardFolder({ cardId, name, division, pages, expanded, current, workflowHref, pathname, onToggle, onClose }: {
+function CardFolder({ cardId, name, division, pages, expanded, current, workflowHref, pathname, onToggle, onClose, hideClose = false }: {
   cardId: string;
   name: string;
   division?: string;
@@ -76,6 +78,7 @@ function CardFolder({ cardId, name, division, pages, expanded, current, workflow
   pathname: string;
   onToggle: () => void;
   onClose: () => void;
+  hideClose?: boolean;
 }) {
   return (
     <div className={`card-folder${current ? " card-folder--current" : ""}`}>
@@ -86,7 +89,7 @@ function CardFolder({ cardId, name, division, pages, expanded, current, workflow
           <span className="card-folder__name"><strong>{name}</strong>{division && <small>{division}</small>}</span>
           {current && <span className="card-folder__here">ปัจจุบัน</span>}
         </button>
-        <button type="button" className="card-folder__close" onClick={onClose} aria-label={`ปิดการ์ด ${name}`}><X size={14} /></button>
+        {!hideClose && <button type="button" className="card-folder__close" onClick={onClose} aria-label={`ปิดการ์ด ${name}`}><X size={14} /></button>}
       </div>
       {expanded && (
         <div className="card-folder__pages">
@@ -104,14 +107,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   const id = typeof params.id === "string" ? params.id : undefined;
   const auth = useTournamentStore((state) => state.auth);
   const cards = useTournamentStore((state) => state.cards);
+  const activeTournament = useTournamentStore((state) => state.activeTournament);
+  const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
   const logout = useTournamentStore((state) => state.logout);
   const [loggingOut, setLoggingOut] = useState(false);
   const [openedIds, setOpenedIds] = useState<string[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState(false);
   const [hydrated, setHydrated] = useState(false);
-  const isStaff = auth.authenticated && auth.roles.includes("ROLE_STAFF");
-  const generalLinks = isStaff ? [...publicGeneralLinks, { href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : publicGeneralLinks;
+  const isStaff = hasStaffAccess(auth);
+  const generalLinks = [
+    ...(isStaff ? [{ href: "/tournaments", label: "รายการแข่งขัน", icon: Trophy }] : publicGeneralLinks),
+    ...(isAdmin(auth) ? [{ href: "/admin", label: "ผู้ดูแลระบบ", icon: ShieldCheck }] : []),
+    ...(isDirector(auth) ? [{ href: "/director", label: "จัดการเจ้าหน้าที่", icon: UserCog }] : []),
+    ...(isAdmin(auth) ? [{ href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : []),
+  ];
+  const tournamentCards = activeTournament ? cards.filter((card) => card.tournamentId === activeTournament.id) : [];
 
   // Restore the opened-card tabs and collapse state for this browser session.
   useEffect(() => {
@@ -120,6 +131,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (Array.isArray(saved)) setOpenedIds(saved.filter((value): value is string => typeof value === "string"));
       setCollapsed(sessionStorage.getItem(COLLAPSED_KEY) === "1");
     } catch { /* ignore malformed storage */ }
+    setActiveTournament(readActiveTournament());
     setHydrated(true);
   }, []);
 
@@ -200,27 +212,56 @@ export function AppShell({ children }: { children: ReactNode }) {
               <p className="nav-label">ระบบ</p>
               {generalLinks.map((link) => <NavigationLink key={link.href} {...link} active={pathname === link.href} />)}
 
-              <p className="nav-label nav-label--spaced">การ์ดที่เปิด{openedIds.length > 0 && ` · ${openedIds.length}`}</p>
-              {openedIds.length === 0 ? (
-                <p className="nav-empty">ยังไม่ได้เปิดการ์ด เลือกจาก “การ์ดแข่งขัน” แล้วการ์ดจะมาอยู่ที่นี่</p>
-              ) : openedIds.map((cardId) => {
-                const card = selectCard(cards, cardId);
-                return (
-                  <CardFolder
-                    key={cardId}
-                    cardId={cardId}
-                    name={card?.name ?? cardId}
-                    division={card?.division}
-                    pages={cardLinks(cardId, isStaff)}
-                    expanded={expandedIds.has(cardId)}
-                    current={cardId === id}
-                    workflowHref={workflowHrefFor(cardId)}
-                    pathname={pathname}
-                    onToggle={() => toggleFolder(cardId)}
-                    onClose={() => closeTab(cardId)}
-                  />
-                );
-              })}
+              {isStaff ? (activeTournament ? (
+                <>
+                  <p className="nav-label nav-label--spaced">{activeTournament.name}</p>
+                  <button type="button" className="nav-empty nav-tournament-close" style={{ cursor: "pointer", background: "none", border: "none", textAlign: "left", width: "100%", display: "flex", alignItems: "center", gap: 6 }} onClick={() => { setActiveTournament(null); router.push("/tournaments"); }}><X size={12} /> ออกจากรายการแข่งขันนี้</button>
+                  {tournamentCards.length === 0 ? (
+                    <p className="nav-empty">ยังไม่มีรุ่นการแข่งขัน — สร้างได้จากหน้าการ์ด</p>
+                  ) : tournamentCards.map((card) => (
+                    <CardFolder
+                      key={card.id}
+                      cardId={card.id}
+                      name={card.name}
+                      division={card.division}
+                      pages={cardLinks(card.id, isStaff)}
+                      expanded={expandedIds.has(card.id)}
+                      current={card.id === id}
+                      workflowHref={workflowHrefFor(card.id)}
+                      pathname={pathname}
+                      hideClose
+                      onToggle={() => toggleFolder(card.id)}
+                      onClose={() => undefined}
+                    />
+                  ))}
+                </>
+              ) : (
+                <p className="nav-empty">เข้าสู่รายการแข่งขันจาก “รายการแข่งขัน” เพื่อจัดการรุ่นการแข่งขัน</p>
+              )) : (
+                <>
+                  <p className="nav-label nav-label--spaced">การ์ดที่เปิด{openedIds.length > 0 && ` · ${openedIds.length}`}</p>
+                  {openedIds.length === 0 ? (
+                    <p className="nav-empty">ยังไม่ได้เปิดการ์ด เลือกจาก “การ์ดแข่งขัน” แล้วการ์ดจะมาอยู่ที่นี่</p>
+                  ) : openedIds.map((cardId) => {
+                    const card = selectCard(cards, cardId);
+                    return (
+                      <CardFolder
+                        key={cardId}
+                        cardId={cardId}
+                        name={card?.name ?? cardId}
+                        division={card?.division}
+                        pages={cardLinks(cardId, isStaff)}
+                        expanded={expandedIds.has(cardId)}
+                        current={cardId === id}
+                        workflowHref={workflowHrefFor(cardId)}
+                        pathname={pathname}
+                        onToggle={() => toggleFolder(cardId)}
+                        onClose={() => closeTab(cardId)}
+                      />
+                    );
+                  })}
+                </>
+              )}
             </>
           )}
         </nav>

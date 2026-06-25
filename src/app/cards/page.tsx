@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Plus, Trash2, Trophy } from "lucide-react";
+import { ArrowRight, DoorOpen, Plus, Trash2, Trophy } from "lucide-react";
 import { useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
+import { hasStaffAccess, isDirector } from "@/domain/tournament/roles";
 import type { TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
@@ -16,10 +17,17 @@ export default function CardsPage() {
   const loading = useTournamentStore((state) => state.loading);
   const error = useTournamentStore((state) => state.error);
   const deleteCard = useTournamentStore((state) => state.deleteCard);
-  const isStaff = auth.authenticated && auth.roles.includes("ROLE_STAFF");
+  const activeTournament = useTournamentStore((state) => state.activeTournament);
+  const isStaff = hasStaffAccess(auth);
+  // Directors create cards from their own console; admins use the standalone create page.
+  const createHref = isDirector(auth) ? "/director" : "/cards/create";
   const [deleting, setDeleting] = useState<TournamentCard | null>(null);
   const [pending, setPending] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+
+  // Back-office users must enter a tournament first; public viewers see all published cards.
+  const needsTournament = isStaff && !activeTournament;
+  const visibleCards = activeTournament ? cards.filter((card) => card.tournamentId === activeTournament.id) : cards;
 
   const confirmDelete = async () => {
     if (!deleting) return;
@@ -28,9 +36,9 @@ export default function CardsPage() {
     catch (failure) { setDeleteError(failure instanceof Error ? failure.message : "ลบการ์ดไม่สำเร็จ"); }
     finally { setPending(false); }
   };
-  const running = cards.filter((card) => card.status === "RUNNING").length;
-  const totalPlayers = cards.reduce((sum, card) => sum + card.players.length, 0);
-  const finished = cards.filter((card) => ["FINISHED", "CLOSED"].includes(card.status)).length;
+  const running = visibleCards.filter((card) => card.status === "RUNNING").length;
+  const totalPlayers = visibleCards.reduce((sum, card) => sum + card.players.length, 0);
+  const finished = visibleCards.filter((card) => ["FINISHED", "CLOSED"].includes(card.status)).length;
   const cardHref = (card: typeof cards[number]) => {
     if (!isStaff || card.runtimeStage === "FINAL_PUBLISHED") return `/cards/${card.id}`;
     if (card.runtimeStage === "PLAYER_REGISTRATION") return `/cards/${card.id}/players`;
@@ -41,23 +49,27 @@ export default function CardsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Tournament cards"
-        title="การ์ดการแข่งขัน"
-        description="หนึ่งการ์ดต่อหนึ่งรุ่นการแข่งขัน จัดการผู้เล่น เกม และผลลัพธ์แยกจากกันอย่างชัดเจน"
-        actions={isStaff ? <Link href="/cards/create"><Button><Plus size={17} />สร้างการ์ด</Button></Link> : undefined}
+        eyebrow={activeTournament ? "รายการแข่งขัน" : "Tournament cards"}
+        title={activeTournament ? activeTournament.name : "การ์ดการแข่งขัน"}
+        description={activeTournament ? "รุ่นการแข่งขัน (card) ทั้งหมดของรายการนี้ — จัดการผู้เล่น เกม และผลลัพธ์แยกแต่ละรุ่น" : "หนึ่งการ์ดต่อหนึ่งรุ่นการแข่งขัน จัดการผู้เล่น เกม และผลลัพธ์แยกจากกันอย่างชัดเจน"}
+        actions={activeTournament ? <Link href={createHref}><Button><Plus size={17} />สร้างการ์ด</Button></Link> : undefined}
       />
       {error && <div className="notice notice--warning"><p><strong>เชื่อมต่อฐานข้อมูลไม่สำเร็จ</strong><span>{error}</span></p></div>}
-      <div className="stat-grid">
-        <Stat label="การ์ดทั้งหมด" value={cards.length} note="ทุกสถานะ" />
-        <Stat label="กำลังแข่งขัน" value={running} tone="yellow" note="ต้องติดตามผล" />
-        <Stat label="ผู้เล่นในระบบ" value={totalPlayers.toLocaleString("th-TH")} tone="blue" note="รวมทุกการ์ด" />
-        <Stat label="แข่งขันเสร็จแล้ว" value={finished} tone="green" note="พร้อมส่งออกข้อมูล" />
-      </div>
-      {loading ? <div className="panel panel-padding">กำลังโหลดข้อมูลจากฐานข้อมูล…</div> : cards.length === 0 ? (
-        <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดการแข่งขัน" description="ยังไม่มีการแข่งขันที่เผยแพร่" action={isStaff ? <Link href="/cards/create"><Button>สร้างการ์ด</Button></Link> : undefined} />
+      {!needsTournament && (
+        <div className="stat-grid">
+          <Stat label="การ์ดทั้งหมด" value={visibleCards.length} note="ทุกสถานะ" />
+          <Stat label="กำลังแข่งขัน" value={running} tone="yellow" note="ต้องติดตามผล" />
+          <Stat label="ผู้เล่นในระบบ" value={totalPlayers.toLocaleString("th-TH")} tone="blue" note="รวมทุกการ์ด" />
+          <Stat label="แข่งขันเสร็จแล้ว" value={finished} tone="green" note="พร้อมส่งออกข้อมูล" />
+        </div>
+      )}
+      {loading ? <div className="panel panel-padding">กำลังโหลดข้อมูลจากฐานข้อมูล…</div> : needsTournament ? (
+        <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เลือกและเปิดรายการแข่งขัน (tournament) ก่อน จึงจะจัดการรุ่นการแข่งขันได้" action={<Link href="/tournaments"><Button><Trophy size={16} />ไปหน้ารายการแข่งขัน</Button></Link>} />
+      ) : visibleCards.length === 0 ? (
+        <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้" description={activeTournament ? "สร้างรุ่นการแข่งขันแรกของรายการนี้ได้เลย" : "ยังไม่มีการแข่งขันที่เผยแพร่"} action={activeTournament ? <Link href={createHref}><Button>สร้างการ์ด</Button></Link> : undefined} />
       ) : (
         <div className="card-grid">
-          {cards.map((card) => (
+          {visibleCards.map((card) => (
             <article className="competition-card" key={card.id}>
               <div className="competition-card__header">
                 <div><h2>{card.name}</h2><span className="competition-card__division">{card.division}</span></div>

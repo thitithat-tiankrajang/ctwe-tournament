@@ -3,6 +3,7 @@
 import { Beaker, FastForward, LockKeyhole, RotateCcw, School, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
+import { isAdmin } from "@/domain/tournament/roles";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
@@ -31,7 +32,7 @@ export default function DevToolsPage() {
     await generatePairings(cardId);
   };
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
-  if (!auth.authenticated || !auth.roles.includes("ROLE_STAFF")) {
+  if (!isAdmin(auth)) {
     return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="บุคคลทั่วไปสามารถดูข้อมูลการแข่งขันได้ แต่ไม่สามารถใช้เครื่องมือที่เปลี่ยนแปลงข้อมูล" /></div>;
   }
   return (
