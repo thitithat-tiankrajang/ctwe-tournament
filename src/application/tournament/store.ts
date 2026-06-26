@@ -128,12 +128,16 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     return response.status === 204 ? undefined as T : response.json() as Promise<T>;
   };
 
-  const replaceCard = (updated: TournamentCard) => set((state) => ({
-    cards: state.cards.some((card) => card.id === updated.id)
-      ? state.cards.map((card) => card.id === updated.id ? updated : card)
-      : [updated, ...state.cards],
-    error: null,
-  }));
+  const replaceCard = (updated: TournamentCard) => set((state) => {
+    const existing = state.cards.find((card) => card.id === updated.id);
+    if (existing && existing.version > updated.version) return { error: null };
+    return {
+      cards: existing
+        ? state.cards.map((card) => card.id === updated.id ? updated : card)
+        : [updated, ...state.cards],
+      error: null,
+    };
+  });
 
   const mutateCard = async (path: string, cardId: string, init: RequestInit = {}) => {
     const card = get().cards.find((item) => item.id === cardId);
@@ -163,6 +167,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       try {
         const response = await fetch(`/api/cards/${cardId}`, { credentials: "same-origin", cache: "no-store" });
         if (response.ok) replaceCard(await response.json() as TournamentCard);
+        else if (response.status === 404) set((state) => ({ cards: state.cards.filter((card) => card.id !== cardId), error: null }));
       } catch { /* transient network/poll error — keep current state */ }
     },
     async refreshAuth() {
