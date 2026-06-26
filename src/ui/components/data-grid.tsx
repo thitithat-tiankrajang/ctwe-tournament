@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Filter, Search, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/ui/components/button";
 
 export interface GridColumnBase {
@@ -15,6 +16,12 @@ export interface DataColumn<T> extends GridColumnBase {
   align?: "left" | "right" | "center";
   cellClassName?: string | ((row: T) => string | undefined);
   render: (row: T) => ReactNode;
+  /** Plain text/number accessor that powers Excel sort + filter for this column. */
+  value?: (row: T) => string | number;
+  /** Defaults to true when `value` is set. */
+  sortable?: boolean;
+  /** Defaults to true when `value` is set (e.g. set false for continuous/unique columns). */
+  filterable?: boolean;
 }
 
 export type GridFilter<T> =
@@ -99,18 +106,57 @@ export function usePagination(total: number, resetKey: string, initialSize = 20)
   return { pageSize, setPageSize, page: Math.min(page, totalPages), setPage, size, totalPages };
 }
 
-export function GridHead({ columns, colWidths, startResize, columnFilters }: { columns: GridColumnBase[]; colWidths: number[]; startResize: (index: number, clientX: number) => void; columnFilters?: Partial<Record<string, ReactNode>> }) {
+export interface ExcelHeadControls {
+  sortable: (key: string) => boolean;
+  filterable: (key: string) => boolean;
+  sort: { key: string; dir: SortDir } | null;
+  filters: Record<string, string[]>;
+  uniqueValues: Record<string, string[]>;
+  openKey: string | null;
+  openAnchor: { top: number; left: number };
+  onToggleSort: (key: string) => void;
+  onOpenFilter: (key: string, rect: DOMRect) => void;
+  onApply: (key: string, values: string[]) => void;
+  onClear: (key: string) => void;
+  onClose: () => void;
+}
+
+export function GridHead({ columns, colWidths, startResize, columnFilters, excel }: { columns: GridColumnBase[]; colWidths: number[]; startResize: (index: number, clientX: number) => void; columnFilters?: Partial<Record<string, ReactNode>>; excel?: ExcelHeadControls }) {
   return (
     <>
       <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
       <thead>
-        <tr>{columns.map((column, index) => (
-          <th key={column.key} className={`egrid-th egrid-col-${column.key}`}>
-            <span className="egrid-th__label">{column.label}</span>
-            {columnFilters?.[column.key] ? <span className="egrid-th__filterwrap">{columnFilters[column.key]}</span> : null}
-            <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onMouseDown={(event) => { event.preventDefault(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />
-          </th>
-        ))}</tr>
+        <tr>{columns.map((column, index) => {
+          const resizer = <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onMouseDown={(event) => { event.preventDefault(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />;
+          if (excel) {
+            const sortable = excel.sortable(column.key);
+            const filterable = excel.filterable(column.key);
+            const sorted = excel.sort?.key === column.key ? excel.sort.dir : null;
+            const filterActive = (excel.filters[column.key]?.length ?? 0) > 0;
+            return (
+              <th key={column.key} className={`egrid-th egrid-col-${column.key}`}>
+                <div className="egrid-th-bar">
+                  <button type="button" className={`egrid-th__label egrid-th__label--btn${sortable ? "" : " egrid-th__label--plain"}`} disabled={!sortable} onClick={() => sortable && excel.onToggleSort(column.key)}>
+                    <span className="egrid-th__text">{column.label}</span>
+                    {sorted === "asc" ? <ArrowUp size={12} /> : sorted === "desc" ? <ArrowDown size={12} /> : sortable ? <ArrowUpDown size={11} className="egrid-th__sorticon" /> : null}
+                  </button>
+                  {filterable && <button type="button" className={`egrid-th__filterbtn${filterActive ? " egrid-th__filterbtn--on" : ""}`} aria-label={`กรอง ${labelText(column.label)}`} aria-expanded={excel.openKey === column.key} onClick={(event) => excel.onOpenFilter(column.key, event.currentTarget.getBoundingClientRect())}><Filter size={12} /></button>}
+                </div>
+                {excel.openKey === column.key && filterable && (
+                  <ColumnFilterDropdown label={labelText(column.label) || column.key} values={excel.uniqueValues[column.key] ?? []} selected={excel.filters[column.key]} anchor={excel.openAnchor} onApply={(values) => excel.onApply(column.key, values)} onClear={() => excel.onClear(column.key)} onClose={excel.onClose} />
+                )}
+                {resizer}
+              </th>
+            );
+          }
+          return (
+            <th key={column.key} className={`egrid-th egrid-col-${column.key}`}>
+              <span className="egrid-th__label">{column.label}</span>
+              {columnFilters?.[column.key] ? <span className="egrid-th__filterwrap">{columnFilters[column.key]}</span> : null}
+              {resizer}
+            </th>
+          );
+        })}</tr>
       </thead>
     </>
   );
@@ -156,8 +202,106 @@ function cellClass<T>(column: DataColumn<T>, row: T) {
   return `${base}${extra ? ` ${extra}` : ""}`;
 }
 
+export type SortDir = "asc" | "desc";
+
+function labelText(label: ReactNode): string {
+  return typeof label === "string" ? label : "";
+}
+
+/** Shared Excel column controls (sort + multi-select filter) state, reusable across any grid. */
+export function useColumnControls() {
+  const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(null);
+  const [filters, setFilters] = useState<Record<string, string[]>>({});
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [openAnchor, setOpenAnchor] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const toggleSort = (key: string) => setSort((prev) => prev?.key !== key ? { key, dir: "asc" } : prev.dir === "asc" ? { key, dir: "desc" } : null);
+  const openFilter = (key: string, rect: DOMRect) => { setOpenAnchor({ top: rect.bottom + 4, left: rect.left }); setOpenKey((current) => current === key ? null : key); };
+  const applyFilter = (key: string, values: string[], total: number) => setFilters((prev) => { const next = { ...prev }; if (values.length === 0 || values.length >= total) delete next[key]; else next[key] = values; return next; });
+  const clearFilter = (key: string) => setFilters((prev) => { const next = { ...prev }; delete next[key]; return next; });
+  const clearAll = () => { setSort(null); setFilters({}); };
+  const activeFilterKeys = Object.keys(filters).filter((key) => filters[key]?.length);
+  return { sort, filters, openKey, openAnchor, setOpenKey, toggleSort, openFilter, applyFilter, clearFilter, clearAll, activeFilterKeys, active: sort !== null || activeFilterKeys.length > 0 };
+}
+
+/** Apply column filters + sort to rows using per-column string/number accessors. */
+export function applyColumnControls<T>(rows: T[], accessors: Record<string, (row: T) => string | number>, filters: Record<string, string[]>, sort: { key: string; dir: SortDir } | null): T[] {
+  const activeKeys = Object.keys(filters).filter((key) => filters[key]?.length && accessors[key]);
+  let result = activeKeys.length === 0 ? rows : rows.filter((row) => activeKeys.every((key) => filters[key].includes(String(accessors[key](row)))));
+  if (sort && accessors[sort.key]) {
+    const accessor = accessors[sort.key];
+    result = [...result].sort((a, b) => {
+      const av = accessor(a); const bv = accessor(b);
+      const cmp = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv), "th", { numeric: true });
+      return sort.dir === "asc" ? cmp : -cmp;
+    });
+  }
+  return result;
+}
+
+export function uniqueColumnValues<T>(rows: T[], accessors: Record<string, (row: T) => string | number>, keys: string[]): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const key of keys) {
+    if (!accessors[key]) continue;
+    const set = new Set<string>();
+    for (const row of rows) set.add(String(accessors[key](row)));
+    result[key] = [...set].sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
+  }
+  return result;
+}
+
+/** Excel-style per-column filter popover: search, select-all, multi-select checkboxes, apply, clear. */
+export function ColumnFilterDropdown({ label, values, selected, anchor, onApply, onClear, onClose }: {
+  label: string;
+  values: string[];
+  selected: string[] | undefined;
+  anchor: { top: number; left: number };
+  onApply: (values: string[]) => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [search, setSearch] = useState("");
+  const [draft, setDraft] = useState<Set<string>>(() => new Set(selected ?? values));
+
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => { if (ref.current && !ref.current.contains(event.target as Node)) onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onClose, true); // close if the table/page scrolls away from the anchor
+    window.addEventListener("resize", onClose);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); window.removeEventListener("scroll", onClose, true); window.removeEventListener("resize", onClose); };
+  }, [onClose]);
+
+  const visible = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase("th");
+    return term ? values.filter((value) => value.toLocaleLowerCase("th").includes(term)) : values;
+  }, [values, search]);
+  const allVisibleChecked = visible.length > 0 && visible.every((value) => draft.has(value));
+  const toggle = (value: string) => setDraft((prev) => { const next = new Set(prev); if (next.has(value)) next.delete(value); else next.add(value); return next; });
+  const toggleAll = () => setDraft((prev) => { const next = new Set(prev); if (allVisibleChecked) visible.forEach((value) => next.delete(value)); else visible.forEach((value) => next.add(value)); return next; });
+
+  const left = Math.max(8, Math.min(anchor.left, (typeof window !== "undefined" ? window.innerWidth : 9999) - 296));
+  return createPortal(
+    <div className="egrid-filterpop" ref={ref} style={{ top: anchor.top, left }} onMouseDown={(event) => event.stopPropagation()}>
+      <div className="egrid-filterpop__search"><Search size={13} /><input autoFocus value={search} placeholder={`ค้นหาใน ${label}`} onChange={(event) => setSearch(event.target.value)} /></div>
+      <label className="egrid-filterpop__all"><input type="checkbox" checked={allVisibleChecked} onChange={toggleAll} /><span>เลือกทั้งหมด{search ? " (ที่ค้นเจอ)" : ""}</span></label>
+      <div className="egrid-filterpop__list">
+        {visible.length === 0 ? <p className="egrid-filterpop__empty">ไม่พบค่า</p> : visible.map((value) => (
+          <label key={value} className="egrid-filterpop__item"><input type="checkbox" checked={draft.has(value)} onChange={() => toggle(value)} /><span title={value}>{value === "" ? "(ว่าง)" : value}</span></label>
+        ))}
+      </div>
+      <div className="egrid-filterpop__actions">
+        <Button size="sm" variant="ghost" onClick={onClear}>ล้างตัวกรอง</Button>
+        <Button size="sm" disabled={draft.size === 0} onClick={() => onApply([...draft])}>ใช้ ({draft.size})</Button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /** Generic Excel-style grid: resizable columns, sessionStorage widths, multi-field filters, pagination. */
-export function DataGrid<T>({ columns, rows, getRowKey, storageKey, resetKey, rowClassName, emptyText = "ไม่พบรายการ", pageSize: initialSize, filters, unit = "รายการ", onRowClick }: {
+export function DataGrid<T>({ columns, rows, getRowKey, storageKey, resetKey, rowClassName, emptyText = "ไม่พบรายการ", pageSize: initialSize, unit = "รายการ", onRowClick }: {
   columns: DataColumn<T>[];
   rows: T[];
   getRowKey: (row: T) => string;
@@ -166,64 +310,108 @@ export function DataGrid<T>({ columns, rows, getRowKey, storageKey, resetKey, ro
   rowClassName?: (row: T) => string | undefined;
   emptyText?: string;
   pageSize?: number;
-  filters?: GridFilter<T>[];
   unit?: string;
   onRowClick?: (row: T) => void;
 }) {
   const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(columns, storageKey);
-  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
-  const activeFilters = filters ?? [];
-  const setValue = (key: string, value: string) => setFilterValues((prev) => ({ ...prev, [key]: value }));
-  const toNumber = (raw: string | undefined) => { if (!raw || raw.trim() === "") return null; const value = Number(raw); return Number.isNaN(value) ? null : value; };
+  const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(null);
+  const [filters, setFilters] = useState<Record<string, string[]>>({});
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [openAnchor, setOpenAnchor] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
-  const visibleRows = rows.filter((row) => activeFilters.every((filter) => {
-    if (filter.kind === "range") {
-      const min = toNumber(filterValues[`${filter.key}:min`]); const max = toNumber(filterValues[`${filter.key}:max`]);
-      if (min === null && max === null) return true;
-      return filter.predicate(row, min, max);
+  const colByKey = useMemo(() => new Map(columns.map((column) => [column.key, column])), [columns]);
+  // Unique values per filterable column (Excel checkbox list); memoised, so large datasets stay cheap.
+  const uniqueValues = useMemo(() => {
+    const result: Record<string, string[]> = {};
+    for (const column of columns) {
+      if (column.value && (column.filterable ?? true)) {
+        const set = new Set<string>();
+        for (const row of rows) set.add(String(column.value(row)));
+        result[column.key] = [...set].sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
+      }
     }
-    const value = (filterValues[filter.key] ?? "").trim();
-    if (value === "") return true;
-    return filter.predicate(row, value);
-  }));
-  const anyActive = Object.values(filterValues).some((value) => value && value.trim() !== "");
+    return result;
+  }, [columns, rows]);
 
-  const { pageSize, setPageSize, page, setPage, size, totalPages } = usePagination(visibleRows.length, `${resetKey ?? ""}|${JSON.stringify(filterValues)}`, initialSize);
+  const visibleRows = useMemo(() => {
+    const activeKeys = Object.keys(filters).filter((key) => filters[key]?.length);
+    let result = activeKeys.length === 0 ? rows : rows.filter((row) => activeKeys.every((key) => {
+      const column = colByKey.get(key);
+      return !column?.value || filters[key].includes(String(column.value(row)));
+    }));
+    if (sort) {
+      const column = colByKey.get(sort.key);
+      if (column?.value) {
+        const accessor = column.value;
+        result = [...result].sort((a, b) => {
+          const av = accessor(a); const bv = accessor(b);
+          const cmp = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv), "th", { numeric: true });
+          return sort.dir === "asc" ? cmp : -cmp;
+        });
+      }
+    }
+    return result;
+  }, [rows, filters, sort, colByKey]);
+
+  const activeFilterKeys = Object.keys(filters).filter((key) => filters[key]?.length);
+  const anyActive = sort !== null || activeFilterKeys.length > 0;
+  const { pageSize, setPageSize, page, setPage, size, totalPages } = usePagination(visibleRows.length, `${resetKey ?? ""}|${JSON.stringify(filters)}|${sort ? sort.key + sort.dir : ""}`, initialSize);
   const pageRows = visibleRows.slice((page - 1) * size, page * size);
   const start = visibleRows.length === 0 ? 0 : (page - 1) * size + 1;
   const end = Math.min(page * size, visibleRows.length);
 
+  const toggleSort = (key: string) => setSort((prev) => prev?.key !== key ? { key, dir: "asc" } : prev.dir === "asc" ? { key, dir: "desc" } : null);
+  const applyFilter = (key: string, values: string[]) => setFilters((prev) => {
+    const next = { ...prev };
+    if (values.length === 0 || values.length >= (uniqueValues[key]?.length ?? 0)) delete next[key]; else next[key] = values;
+    return next;
+  });
+
   return (
     <div className="entry-grid-wrap">
-      {activeFilters.length > 0 && (
-        <div className="entry-toolbar">
-          {activeFilters.map((filter) => (
-            <div className="entry-filter" key={filter.key}>
-              <label htmlFor={`${storageKey}-${filter.key}`}>{filter.label}</label>
-              {filter.kind === "select" ? (
-                <select id={`${storageKey}-${filter.key}`} className="select" value={filterValues[filter.key] ?? ""} onChange={(event) => setValue(filter.key, event.target.value)}>
-                  <option value="">ทั้งหมด</option>
-                  {filter.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              ) : filter.kind === "range" ? (
-                <div className="entry-filter-range">
-                  <input id={`${storageKey}-${filter.key}`} type="number" inputMode="numeric" placeholder={filter.placeholder?.[0] ?? "ต่ำสุด"} value={filterValues[`${filter.key}:min`] ?? ""} onChange={(event) => setValue(`${filter.key}:min`, event.target.value)} />
-                  <span>–</span>
-                  <input type="number" inputMode="numeric" placeholder={filter.placeholder?.[1] ?? "สูงสุด"} value={filterValues[`${filter.key}:max`] ?? ""} onChange={(event) => setValue(`${filter.key}:max`, event.target.value)} />
-                </div>
-              ) : (
-                <input id={`${storageKey}-${filter.key}`} value={filterValues[filter.key] ?? ""} placeholder={filter.placeholder} onChange={(event) => setValue(filter.key, event.target.value)} />
-              )}
-            </div>
-          ))}
-          <div className="entry-toolbar__actions">
-            <Button variant="secondary" size="sm" disabled={!anyActive} onClick={() => setFilterValues({})}><X size={14} />ล้างตัวกรอง</Button>
-          </div>
+      {anyActive && (
+        <div className="entry-grid-meta">
+          <span className="entry-grid-meta__tags">
+            {sort && <span className="grid-chip">เรียง: {labelText(colByKey.get(sort.key)?.label)} {sort.dir === "asc" ? "↑" : "↓"}</span>}
+            {activeFilterKeys.map((key) => <span key={key} className="grid-chip">กรอง: {labelText(colByKey.get(key)?.label)} ({filters[key].length})</span>)}
+          </span>
+          <Button variant="secondary" size="sm" onClick={() => { setSort(null); setFilters({}); }}><X size={14} />ล้างทั้งหมด</Button>
         </div>
       )}
       <div className="entry-grid-scroll" ref={scrollRef}>
         <table className="entry-grid" style={{ width: totalWidth }}>
-          <GridHead columns={columns} colWidths={colWidths} startResize={startResize} />
+          <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
+          <thead>
+            <tr>{columns.map((column, index) => {
+              const sortable = Boolean(column.value) && (column.sortable ?? true);
+              const filterable = Boolean(column.value) && (column.filterable ?? true);
+              const sorted = sort?.key === column.key ? sort.dir : null;
+              const filterActive = (filters[column.key]?.length ?? 0) > 0;
+              return (
+                <th key={column.key} className={`egrid-th egrid-col-${column.key}`}>
+                  <div className="egrid-th-bar">
+                    <button type="button" className={`egrid-th__label egrid-th__label--btn${sortable ? "" : " egrid-th__label--plain"}`} disabled={!sortable} onClick={() => sortable && toggleSort(column.key)}>
+                      <span className="egrid-th__text">{column.label}</span>
+                      {sorted === "asc" ? <ArrowUp size={12} /> : sorted === "desc" ? <ArrowDown size={12} /> : sortable ? <ArrowUpDown size={11} className="egrid-th__sorticon" /> : null}
+                    </button>
+                    {filterable && <button type="button" className={`egrid-th__filterbtn${filterActive ? " egrid-th__filterbtn--on" : ""}`} aria-label={`กรอง ${labelText(column.label)}`} aria-expanded={openKey === column.key} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setOpenAnchor({ top: rect.bottom + 4, left: rect.left }); setOpenKey((current) => current === column.key ? null : column.key); }}><Filter size={12} /></button>}
+                  </div>
+                  {openKey === column.key && filterable && (
+                    <ColumnFilterDropdown
+                      label={labelText(column.label) || column.key}
+                      values={uniqueValues[column.key] ?? []}
+                      selected={filters[column.key]}
+                      anchor={openAnchor}
+                      onApply={(values) => { applyFilter(column.key, values); setOpenKey(null); }}
+                      onClear={() => { setFilters((prev) => { const next = { ...prev }; delete next[column.key]; return next; }); setOpenKey(null); }}
+                      onClose={() => setOpenKey(null)}
+                    />
+                  )}
+                  <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onMouseDown={(event) => { event.preventDefault(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />
+                </th>
+              );
+            })}</tr>
+          </thead>
           <tbody>
             {pageRows.length === 0
               ? <tr><td className="egrid-empty" colSpan={columns.length}><strong>{emptyText}</strong></td></tr>

@@ -147,6 +147,30 @@ public class TournamentCardService {
         return get(cardId, true);
     }
 
+    /** Bulk import (e.g. from Excel): append many players in one transaction with sequential codes. */
+    @Transactional
+    public CardDtos.CardResponse addPlayersBulk(UUID cardId, List<CardDtos.BulkPlayerEntry> players, String actor) {
+        CardRow card = requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
+        Integer next = jdbc.queryForObject("""
+            SELECT COALESCE(MAX(CASE WHEN external_id ~ '^P[0-9]+$' THEN substring(external_id from 2)::integer END), 0) + 1
+            FROM players WHERE card_id = ?
+            """, Integer.class, cardId);
+        int start = next == null ? 1 : next;
+        for (int index = 0; index < players.size(); index++) {
+            CardDtos.BulkPlayerEntry entry = players.get(index);
+            UUID playerId = UUID.randomUUID();
+            String externalId = "P" + String.format("%04d", start + index);
+            jdbc.update("""
+                INSERT INTO players (id, card_id, external_id, first_name, last_name, school, division)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, playerId, cardId, externalId, entry.firstName().trim(), entry.lastName().trim(), entry.school().trim(), card.division());
+            jdbc.update("INSERT INTO standings (id, card_id, player_id) VALUES (?, ?, ?)", UUID.randomUUID(), cardId, playerId);
+        }
+        touch(cardId);
+        audit(cardId, actor, "IMPORT_PLAYERS", null, Map.of("count", players.size(), "fromCode", "P" + String.format("%04d", start)));
+        return get(cardId, true);
+    }
+
     @Transactional
     public CardDtos.CardResponse updatePlayer(UUID cardId, String playerExternalId, CardDtos.PlayerRequest request, String actor, boolean operator) {
         // Directors/admins may correct player details at any time; staff only during registration.
@@ -256,52 +280,40 @@ public class TournamentCardService {
         }
     }
 
+    /**
+     * Random game-1 pairing that avoids same-school matchups when possible, and ALLOWS them with the
+     * mathematically minimum number when unavoidable (no exception). Greedy: every step pairs the two
+     * largest *different* schools, which maximises cross-school pairs; same-school pairs only remain when
+     * one school's players outnumber everyone else combined — those land on that largest (most-crowded)
+     * school, so the unavoidable pressure falls on a big school rather than a small one. Tie-break and
+     * within-school order are random, and {@code generateInitialTables} re-shuffles pairs into table
+     * numbers, so the result isn't reverse-engineerable.
+     */
     private List<InitialPair> randomizedSchoolSafePairs(List<SeatPlayer> shuffledPlayers) {
         if (shuffledPlayers.size() % 2 != 0)
             throw new IllegalArgumentException("จำนวนผู้เล่นต้องเป็นเลขคู่ก่อนสร้าง pairing");
 
-        Map<String, Integer> initialCounts = new HashMap<>();
-        Map<String, String> schoolNames = new HashMap<>();
-        for (SeatPlayer player : shuffledPlayers) {
-            String school = schoolKey(player.school());
-            initialCounts.merge(school, 1, Integer::sum);
-            schoolNames.putIfAbsent(school, player.school());
-        }
-        var dominant = initialCounts.entrySet().stream().max(Map.Entry.comparingByValue()).orElse(null);
-        if (dominant != null && dominant.getValue() > shuffledPlayers.size() / 2)
-            throw new IllegalArgumentException("ไม่สามารถจับคู่โดยหลีกเลี่ยงสถาบันเดียวกันได้: "
-                + schoolNames.get(dominant.getKey()) + " มี " + dominant.getValue() + " จาก " + shuffledPlayers.size()
-                + " คน (จำนวนจากสถาบันเดียวต้องไม่เกินครึ่งหนึ่งของผู้เล่นทั้งหมด)");
+        Map<String, List<SeatPlayer>> grouped = new HashMap<>();
+        for (SeatPlayer player : shuffledPlayers)
+            grouped.computeIfAbsent(schoolKey(player.school()), key -> new ArrayList<>()).add(player);
+        List<List<SeatPlayer>> buckets = new ArrayList<>(grouped.values());
+        for (List<SeatPlayer> bucket : buckets) Collections.shuffle(bucket, secureRandom);
 
-        var pending = new ArrayList<>(shuffledPlayers);
-        var pairs = new ArrayList<InitialPair>();
-        while (!pending.isEmpty()) {
-            SeatPlayer first = pending.remove(0);
-            Map<String, Integer> counts = new HashMap<>();
-            pending.forEach(player -> counts.merge(schoolKey(player.school()), 1, Integer::sum));
-            List<Integer> candidates = new ArrayList<>();
-            for (int index = 0; index < pending.size(); index++) candidates.add(index);
-            Collections.shuffle(candidates, secureRandom);
-
-            int opponentIndex = -1;
-            for (int candidateIndex : candidates) {
-                SeatPlayer candidate = pending.get(candidateIndex);
-                if (schoolKey(first.school()).equals(schoolKey(candidate.school()))) continue;
-                String candidateSchool = schoolKey(candidate.school());
-                int remainingPlayers = pending.size() - 1;
-                int largestRemainingSchool = 0;
-                for (var entry : counts.entrySet()) {
-                    int remainingFromSchool = entry.getValue() - (entry.getKey().equals(candidateSchool) ? 1 : 0);
-                    largestRemainingSchool = Math.max(largestRemainingSchool, remainingFromSchool);
-                }
-                if (largestRemainingSchool <= remainingPlayers / 2) {
-                    opponentIndex = candidateIndex;
-                    break;
-                }
+        List<InitialPair> pairs = new ArrayList<>();
+        while (true) {
+            buckets.removeIf(List::isEmpty);
+            if (buckets.isEmpty()) break;
+            Collections.shuffle(buckets, secureRandom);                       // random tie-break among equal sizes
+            buckets.sort((left, right) -> Integer.compare(right.size(), left.size())); // stable: largest first
+            List<SeatPlayer> largest = buckets.get(0);
+            if (buckets.size() == 1) {
+                // Only one school left: pair its surplus internally (the minimum unavoidable same-school pairs).
+                while (largest.size() >= 2)
+                    pairs.add(new InitialPair(largest.remove(largest.size() - 1), largest.remove(largest.size() - 1)));
+            } else {
+                List<SeatPlayer> second = buckets.get(1);
+                pairs.add(new InitialPair(largest.remove(largest.size() - 1), second.remove(second.size() - 1)));
             }
-            if (opponentIndex < 0)
-                throw new IllegalStateException("ไม่สามารถสร้าง pairing ที่แยกสถาบันได้จากข้อมูลชุดนี้");
-            pairs.add(new InitialPair(first, pending.remove(opponentIndex)));
         }
         return pairs;
     }
@@ -392,6 +404,33 @@ public class TournamentCardService {
             "publishedPairingGame", card.currentGame(),
             "resultCollectionGames", resultGames
         ));
+        return get(cardId, true);
+    }
+
+    /**
+     * Edit-pairing during result collection when NO result is recorded yet for the current game:
+     * revert RESULT_COLLECTION -> PAIRING_PREVIEW for that game so the director can re-edit the pairing
+     * on the preview page. If any result exists, the caller must use swap instead. Director-only upstream.
+     */
+    @Transactional
+    public CardDtos.CardResponse unpairToPreview(UUID cardId, String actor) {
+        CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
+        List<Integer> games = activeResultGames(card);
+        long results = count("""
+            SELECT COUNT(*) FROM match_results r JOIN matches m ON m.id = r.match_id JOIN games g ON g.id = m.game_id
+            WHERE m.card_id = ? AND g.game_number BETWEEN ? AND ? AND m.snapshot_id IS NULL
+            """, cardId, games.get(0), games.get(games.size() - 1));
+        if (results > 0)
+            throw new IllegalArgumentException("เกมนี้มีการกรอกผลแล้ว — ใช้การสลับผู้เล่น (Swap) แทนการยกเลิกการจับคู่");
+        if (card.currentGame() == 1) {
+            // Game 1 preview re-derives pairs from competition_tables seats, so drop the matches confirm created.
+            jdbc.update("DELETE FROM matches m USING games g WHERE m.game_id = g.id AND m.card_id = ? AND g.game_number = 1 AND m.snapshot_id IS NULL", cardId);
+        } else {
+            jdbc.update("UPDATE matches m SET pairing_published_at = NULL FROM games g WHERE m.game_id = g.id AND m.card_id = ? AND g.game_number = ?", cardId, card.currentGame());
+        }
+        jdbc.update("UPDATE games SET status = 'PENDING' WHERE card_id = ? AND game_number = ?", cardId, card.currentGame());
+        jdbc.update("UPDATE tournament_cards SET runtime_stage = 'PAIRING_PREVIEW', version = version + 1 WHERE id = ?", cardId);
+        audit(cardId, actor, "UNPAIR_TO_PREVIEW", "result collection เกม " + card.currentGame(), "กลับสู่ pairing preview");
         return get(cardId, true);
     }
 

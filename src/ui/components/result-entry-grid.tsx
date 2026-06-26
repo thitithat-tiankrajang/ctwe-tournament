@@ -1,11 +1,14 @@
 "use client";
 
-import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Pencil, Save, SaveAll, X } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Pencil, Save, SaveAll, Shuffle, Undo2, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
-import { GridHead, GridPagination, usePagination, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
+import { applyColumnControls, GridHead, GridPagination, uniqueColumnValues, usePagination, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
+
+/** Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair). */
+const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "id2", "name2", "school2"];
 
 export interface EntrySlot {
   /** Table/couple number; stable even before the pairing exists (PAIR_RESULT destination). */
@@ -77,7 +80,7 @@ function recordedDiff(pairing: Pairing) {
   return pairing.resultType === "DRAW" ? 0 : pairing.calculatedDiff ?? 0;
 }
 
-export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNote, storageKey, onSubmit }: {
+export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNote, storageKey, onSubmit, pairingEdit }: {
   gameNumber: number;
   slots: EntrySlot[];
   players: Map<string, Player>;
@@ -86,14 +89,18 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   /** Identifies the table so user-resized column widths persist per card+game in sessionStorage. */
   storageKey: string;
   onSubmit: (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => Promise<void>;
+  /** Director-only pairing edit during result collection: swap (>=1 result) or unpair-to-preview (0 results). */
+  pairingEdit?: { onSwap: (a: string, b: string) => Promise<boolean>; onUnpair: () => Promise<void> };
 }) {
-  const [fPair, setFPair] = useState(""); const [fId, setFId] = useState(""); const [fSchool, setFSchool] = useState(""); const [fName, setFName] = useState("");
+  const controls = useColumnControls();
   const [status, setStatus] = useState<"all" | RowStatus>("all");
   const [drafts, setDrafts] = useState<Record<string, { one: string; two: string }>>({});
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [savingAll, setSavingAll] = useState(false);
+  const [swapOpen, setSwapOpen] = useState(false);
+  const [swapA, setSwapA] = useState(""); const [swapB, setSwapB] = useState(""); const [swapping, setSwapping] = useState(false);
   // Quick key-in bar (รหัส A → คะแนน A → รหัส B → คะแนน B → save) + result toast/highlight.
   const [qIdA, setQIdA] = useState(""); const [qScoreA, setQScoreA] = useState("");
   const [qIdB, setQIdB] = useState(""); const [qScoreB, setQScoreB] = useState("");
@@ -126,27 +133,28 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
     return { slot, pairing, status: rowStatus, saved, changed, one, two };
   }), [slots, drafts]);
 
-  const filtered = useMemo(() => rows.filter((row) => {
-    if (status !== "all" && row.status !== status) return false;
-    if (fPair.trim() && !`${row.slot.tableNumber}`.includes(fPair.trim())) return false;
-    const p1 = row.pairing?.playerOneId ? players.get(row.pairing.playerOneId) : undefined;
-    const p2 = row.pairing?.playerTwoId ? players.get(row.pairing.playerTwoId) : undefined;
-    const idText = `${p1?.id ?? ""} ${p2?.id ?? ""}`.toLocaleLowerCase("th");
-    const schoolText = `${p1?.school ?? ""} ${p2?.school ?? ""}`.toLocaleLowerCase("th");
-    const nameText = `${p1?.firstName ?? ""} ${p1?.lastName ?? ""} ${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`.toLocaleLowerCase("th");
-    if (fId.trim() && !idText.includes(fId.trim().toLocaleLowerCase("th"))) return false;
-    if (fSchool.trim() && !schoolText.includes(fSchool.trim().toLocaleLowerCase("th"))) return false;
-    if (fName.trim() && !nameText.includes(fName.trim().toLocaleLowerCase("th"))) return false;
-    return true;
-  }), [rows, status, fPair, fId, fSchool, fName, players]);
+  const accessors = useMemo<Record<string, (row: (typeof rows)[number]) => string | number>>(() => ({
+    pair: (row) => row.slot.tableNumber,
+    id1: (row) => players.get(row.pairing?.playerOneId ?? "")?.id ?? "—",
+    name1: (row) => { const player = players.get(row.pairing?.playerOneId ?? ""); return player ? `${player.firstName} ${player.lastName}` : "—"; },
+    school1: (row) => players.get(row.pairing?.playerOneId ?? "")?.school ?? "—",
+    id2: (row) => players.get(row.pairing?.playerTwoId ?? "")?.id ?? "—",
+    name2: (row) => { const player = players.get(row.pairing?.playerTwoId ?? ""); return player ? `${player.firstName} ${player.lastName}` : "—"; },
+    school2: (row) => players.get(row.pairing?.playerTwoId ?? "")?.school ?? "—",
+  }), [players]);
+  const uniqueValues = useMemo(() => uniqueColumnValues(rows, accessors, ENTRY_FILTER_KEYS), [rows, accessors]);
+  const filtered = useMemo(() => {
+    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort);
+    return status === "all" ? byColumn : byColumn.filter((row) => row.status === status);
+  }, [rows, accessors, controls.filters, controls.sort, status]);
 
-  const { pageSize, setPageSize, page, setPage, size, totalPages } = usePagination(filtered.length, `${fPair}|${fId}|${fSchool}|${fName}|${status}`);
+  const { pageSize, setPageSize, page, setPage, size, totalPages } = usePagination(filtered.length, `${JSON.stringify(controls.filters)}|${controls.sort ? controls.sort.key + controls.sort.dir : ""}|${status}`);
   const pageRows = filtered.slice((page - 1) * size, page * size);
 
   const total = slots.length;
   const start = filtered.length === 0 ? 0 : (page - 1) * size + 1;
   const end = Math.min(page * size, filtered.length);
-  const filtersActive = Boolean(fPair || fId || fSchool || fName) || status !== "all";
+  const filtersActive = controls.active || status !== "all";
   const savedCount = rows.filter((row) => row.status === "saved").length;
   const dirtyCount = rows.filter((row) => row.status === "dirty").length;
   const filteredSavable = filtered.filter((row) => isCompletePairing(row.pairing) && row.status === "dirty" && calcOutcome(row.one ?? "", row.two ?? "", maxDiff, row.pairing.playerOneId, row.pairing.playerTwoId));
@@ -225,6 +233,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
     idARef.current?.focus();
   };
 
+  const doSwap = async () => {
+    if (!pairingEdit || !swapA.trim() || !swapB.trim()) return;
+    setSwapping(true);
+    try {
+      if (await pairingEdit.onSwap(swapA.trim().toUpperCase(), swapB.trim().toUpperCase())) { setSwapA(""); setSwapB(""); setSwapOpen(false); }
+    } finally { setSwapping(false); }
+  };
+
   const startEdit = (id: string) => setEditing((prev) => new Set(prev).add(id));
   const cancelEdit = (id: string) => {
     setEditing((prev) => { const next = new Set(prev); next.delete(id); return next; });
@@ -279,18 +295,40 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
         <div className="entry-grid-meta__actions">
           <label htmlFor={`f-status-${gameNumber}`}>สถานะ</label>
           <select id={`f-status-${gameNumber}`} className="select" value={status} onChange={(event) => setStatus(event.target.value as "all" | RowStatus)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-          <Button variant="secondary" size="sm" disabled={!filtersActive} onClick={() => { setFPair(""); setFId(""); setFSchool(""); setFName(""); setStatus("all"); }}><X size={14} />ล้างตัวกรอง</Button>
+          <Button variant="secondary" size="sm" disabled={!filtersActive} onClick={() => { controls.clearAll(); setStatus("all"); }}><X size={14} />ล้างตัวกรอง</Button>
           <Button size="sm" variant="success" disabled={savingAll || filteredSavable.length === 0} onClick={() => void saveAll()}>{savingAll ? <LoaderCircle className="loading-spinner" size={14} /> : <SaveAll size={14} />}บันทึกทั้งหมด ({filteredSavable.length})</Button>
+          {pairingEdit && (savedCount > 0
+            ? <Button size="sm" variant="secondary" onClick={() => setSwapOpen((open) => !open)} title="สลับผู้เล่นที่ยังไม่กรอกผล (เฉพาะผู้อำนวยการ)"><Shuffle size={14} />สลับผู้เล่น</Button>
+            : <Button size="sm" variant="secondary" onClick={() => void pairingEdit.onUnpair()} title="ยกเลิกการจับคู่ กลับไปหน้าแก้ pairing (เฉพาะผู้อำนวยการ)"><Undo2 size={14} />แก้การจับคู่</Button>
+          )}
         </div>
       </div>
+      {pairingEdit && savedCount > 0 && swapOpen && (
+        <div className="entry-swap">
+          <span className="entry-swap__label">สลับผู้เล่น (เฉพาะคู่ที่ยังไม่กรอกผล)</span>
+          <input className="entry-keyin__id" placeholder="รหัส A" value={swapA} aria-label="รหัสผู้เล่น A ที่จะสลับ" onChange={(event) => setSwapA(event.target.value.toUpperCase())} />
+          <span className="entry-keyin__vs">↔</span>
+          <input className="entry-keyin__id" placeholder="รหัส B" value={swapB} aria-label="รหัสผู้เล่น B ที่จะสลับ" onChange={(event) => setSwapB(event.target.value.toUpperCase())} />
+          <Button size="sm" variant="success" disabled={swapping || !swapA.trim() || !swapB.trim()} onClick={() => void doSwap()}>{swapping ? <LoaderCircle className="loading-spinner" size={14} /> : <Shuffle size={14} />}สลับ</Button>
+          <Button size="sm" variant="ghost" aria-label="ปิด" onClick={() => setSwapOpen(false)}><X size={14} /></Button>
+        </div>
+      )}
 
       <div className="entry-grid-scroll" ref={scrollRef}>
         <table className="entry-grid" style={{ width: totalWidth }}>
-          <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} columnFilters={{
-            pair: <input className="egrid-th__filter" inputMode="numeric" value={fPair} placeholder="เลขคู่" aria-label="กรองเลขคู่" onChange={(event) => setFPair(event.target.value)} />,
-            id1: <input className="egrid-th__filter" value={fId} placeholder="ค้นรหัส (ทั้งคู่)" aria-label="กรองรหัส" onChange={(event) => setFId(event.target.value)} />,
-            name1: <input className="egrid-th__filter" value={fName} placeholder="ค้นชื่อ (ทั้งคู่)" aria-label="กรองชื่อ" onChange={(event) => setFName(event.target.value)} />,
-            school1: <input className="egrid-th__filter" value={fSchool} placeholder="ค้นโรงเรียน (ทั้งคู่)" aria-label="กรองโรงเรียน" onChange={(event) => setFSchool(event.target.value)} />,
+          <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
+            sortable: (key) => ENTRY_FILTER_KEYS.includes(key),
+            filterable: (key) => ENTRY_FILTER_KEYS.includes(key),
+            sort: controls.sort,
+            filters: controls.filters,
+            uniqueValues,
+            openKey: controls.openKey,
+            openAnchor: controls.openAnchor,
+            onToggleSort: controls.toggleSort,
+            onOpenFilter: controls.openFilter,
+            onApply: (key, values) => controls.applyFilter(key, values, uniqueValues[key]?.length ?? 0),
+            onClear: controls.clearFilter,
+            onClose: () => controls.setOpenKey(null),
           }} />
           <tbody>
             {pageRows.length === 0 ? (
@@ -309,8 +347,8 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
                   <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
                   <td className="egrid-td" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : waitingText}</td>
                   <td className="egrid-td" title={p2?.school}>{p2?.school ?? "—"}</td>
-                  <td className="egrid-td"><input className="egrid-score" disabled placeholder="—" /></td>
-                  <td className="egrid-td"><input className="egrid-score" disabled placeholder="—" /></td>
+                  <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
+                  <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
                   <td className="egrid-td cell-diff">—</td>
                   <td className="egrid-td cell-action"><Badge tone="neutral">{pairing ? "รออีกฝั่ง" : "รอข้อมูล"}</Badge></td>
                 </tr>;

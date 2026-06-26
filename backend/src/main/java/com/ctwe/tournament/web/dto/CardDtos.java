@@ -33,6 +33,14 @@ public final class CardDtos {
         @NotBlank @Size(max = 200) String school
     ) {}
 
+    public record BulkPlayerEntry(
+        @NotBlank @Size(max = 120) String firstName,
+        @NotBlank @Size(max = 120) String lastName,
+        @NotBlank @Size(max = 200) String school
+    ) {}
+
+    public record BulkPlayersRequest(@NotNull @Size(min = 1, max = 5000) List<@jakarta.validation.Valid BulkPlayerEntry> players) {}
+
     public record ResultRequest(
         @NotNull @Min(0) @Max(1000000000) Integer scoreOne,
         @NotNull @Min(0) @Max(1000000000) Integer scoreTwo,

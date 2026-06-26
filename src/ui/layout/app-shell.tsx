@@ -12,8 +12,10 @@ import {
   FolderOpen,
   Gamepad2,
   LayoutDashboard,
-  PanelLeftClose,
-  PanelLeftOpen,
+  Lock,
+  LockOpen,
+  LoaderCircle,
+  LogOut,
   TableProperties,
   Trophy,
   Users,
@@ -23,14 +25,15 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { readActiveTournament, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { useCardSync } from "@/application/tournament/use-card-sync";
 import { hasStaffAccess, isAdmin, isDirector } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 
 const OPENED_KEY = "ctwe.openedCards";
-const COLLAPSED_KEY = "ctwe.sidebarCollapsed";
+const LOCKED_KEY = "ctwe.sidebarLocked";
 
 const publicGeneralLinks = [
   { href: "/cards", label: "การ์ดแข่งขัน", icon: LayoutDashboard },
@@ -111,11 +114,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
   const logout = useTournamentStore((state) => state.logout);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [openedIds, setOpenedIds] = useState<string[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [collapsed, setCollapsed] = useState(false);
+  const [locked, setLocked] = useState(true);   // sidebar pinned open; when unlocked it expands on hover
+  const [hovering, setHovering] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const isStaff = hasStaffAccess(auth);
+  // Live multi-user sync: poll the open card so concurrent staff/directors see each other's edits.
+  useCardSync(id);
   const generalLinks = [
     ...(isStaff ? [{ href: "/tournaments", label: "รายการแข่งขัน", icon: Trophy }] : publicGeneralLinks),
     ...(isAdmin(auth) ? [{ href: "/admin", label: "ผู้ดูแลระบบ", icon: ShieldCheck }] : []),
@@ -129,7 +136,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       const saved = JSON.parse(sessionStorage.getItem(OPENED_KEY) ?? "[]");
       if (Array.isArray(saved)) setOpenedIds(saved.filter((value): value is string => typeof value === "string"));
-      setCollapsed(sessionStorage.getItem(COLLAPSED_KEY) === "1");
+      const savedLock = sessionStorage.getItem(LOCKED_KEY);
+      if (savedLock !== null) setLocked(savedLock === "1");
     } catch { /* ignore malformed storage */ }
     setActiveTournament(readActiveTournament());
     setHydrated(true);
@@ -143,19 +151,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [id]);
 
   useEffect(() => { if (hydrated) try { sessionStorage.setItem(OPENED_KEY, JSON.stringify(openedIds)); } catch { /* ignore */ } }, [openedIds, hydrated]);
-  useEffect(() => { if (hydrated) try { sessionStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0"); } catch { /* ignore */ } }, [collapsed, hydrated]);
-
-  // Collapse the sidebar to a rail the moment staff start typing in the content area.
-  useEffect(() => {
-    const main = document.querySelector(".app-main");
-    if (!main) return;
-    const onFocusIn = (event: Event) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.matches?.("input, textarea, select")) setCollapsed(true);
-    };
-    main.addEventListener("focusin", onFocusIn);
-    return () => main.removeEventListener("focusin", onFocusIn);
-  }, []);
+  useEffect(() => { if (hydrated) try { sessionStorage.setItem(LOCKED_KEY, locked ? "1" : "0"); } catch { /* ignore */ } }, [locked, hydrated]);
 
   const toggleFolder = (cardId: string) => setExpandedIds((prev) => {
     const next = new Set(prev);
@@ -168,11 +164,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (cardId === id) router.push("/cards");
   };
 
-  const submitLogout = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const confirmLogout = async () => {
     setLoggingOut(true);
     try {
       await logout();
+      setLogoutConfirm(false);
       router.replace("/cards");
       router.refresh();
     } catch (failure) {
@@ -187,17 +183,23 @@ export function AppShell({ children }: { children: ReactNode }) {
     const card = selectCard(cards, cardId);
     return isStaff && card ? stageHref(cardId, card.runtimeStage) : undefined;
   };
+  // Expanded when pinned (locked) OR temporarily hovered; otherwise a narrow rail.
+  const collapsed = !(locked || hovering);
 
   return (
-    <div className={`app-shell${collapsed ? " app-shell--collapsed" : ""}`}>
-      <aside className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}>
+    <div className={`app-shell${locked ? "" : " app-shell--collapsed"}`}>
+      <aside
+        className={`sidebar${collapsed ? " sidebar--collapsed" : ""}${!locked && hovering ? " sidebar--floating" : ""}`}
+        onMouseEnter={() => setHovering(true)}
+        onMouseLeave={() => setHovering(false)}
+      >
         <div className="sidebar__head">
           <Link href="/cards" className="brand" aria-label="Tournament Control">
             <span className="brand__mark"><Trophy size={20} /></span>
             <span className="brand__text"><strong>Tournament Control</strong><small>ระบบจัดการแข่งขัน</small></span>
           </Link>
-          <button type="button" className="sidebar__toggle" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "ขยายเมนู" : "ยุบเมนู"} aria-expanded={!collapsed} title={collapsed ? "ขยายเมนู" : "ยุบเมนู"}>
-            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          <button type="button" className={`sidebar__toggle${locked ? " sidebar__toggle--locked" : ""}`} onClick={() => setLocked((value) => !value)} aria-pressed={locked} aria-label={locked ? "ปลดล็อกเมนู (เลื่อนเมาส์เพื่อเปิด/หุบ)" : "ล็อกเมนูให้เปิดค้าง"} title={locked ? "ล็อกอยู่: เปิดค้างตลอด — กดเพื่อใช้โหมดเลื่อนเมาส์ชี้" : "โหมดเลื่อนเมาส์: ชี้เพื่อเปิด หุบเมื่อเอาเมาส์ออก — กดเพื่อล็อกเปิดค้าง"}>
+            {locked ? <Lock size={16} /> : <LockOpen size={16} />}
           </button>
         </div>
 
@@ -271,18 +273,38 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="sidebar__footer-text"><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? "เจ้าหน้าที่" : "ดูข้อมูลเท่านั้น"}</small></span>
         </div>
         {isStaff ? (
-          <form onSubmit={submitLogout} className="sidebar__auth-wrap"><Button type="submit" variant="secondary" size="sm" className="sidebar__auth" disabled={loggingOut} title="ออกจากระบบ"><ShieldCheck size={15} /><span className="sidebar__auth-label">{loggingOut ? "กำลังออก…" : "ออกจากระบบ"}</span></Button></form>
+          <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>
         ) : (
           <Link href="/staff-login" className="sidebar__auth-wrap"><Button variant="secondary" size="sm" className="sidebar__auth" title="เข้าสู่ระบบเจ้าหน้าที่"><LogIn size={15} /><span className="sidebar__auth-label">เข้าสู่ระบบเจ้าหน้าที่</span></Button></Link>
         )}
       </aside>
       <div className="app-main">
-        <div className="mobile-brand"><Trophy size={19} /><strong>Tournament Control</strong></div>
+        <div className="mobile-brand">
+          <div className="mobile-brand__title"><Trophy size={19} /><strong>Tournament Control</strong></div>
+          {isStaff ? (
+            <button type="button" className="mobile-brand__auth" onClick={() => setLogoutConfirm(true)}><LogOut size={15} />ออกจากระบบ</button>
+          ) : (
+            <Link href="/staff-login" className="mobile-brand__auth mobile-brand__auth--login"><LogIn size={15} />เข้าสู่ระบบ</Link>
+          )}
+        </div>
+        <main className="content">{children}</main>
         <nav className="mobile-nav" aria-label="เมนูมือถือ">
           {railLinks.map((link) => <NavigationLink key={link.href} {...link} active={pathname === link.href} workflow={id ? link.href === workflowHrefFor(id) : false} />)}
         </nav>
-        <main className="content">{children}</main>
       </div>
+
+      {logoutConfirm && (
+        <div className="dialog-backdrop" role="presentation" onMouseDown={() => !loggingOut && setLogoutConfirm(false)}>
+          <section className="confirm-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header><div className="confirm-dialog__icon"><LogOut size={20} /></div><div><span>ยืนยันการออกจากระบบ</span><h2>ออกจากระบบ?</h2></div><button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={loggingOut} onClick={() => setLogoutConfirm(false)}><X size={18} /></button></header>
+            <p>คุณกำลังจะออกจากบัญชี <strong>{auth.username}</strong> — ยืนยันหรือไม่?</p>
+            <footer>
+              <Button variant="secondary" disabled={loggingOut} onClick={() => setLogoutConfirm(false)}>ยกเลิก</Button>
+              <Button disabled={loggingOut} onClick={() => void confirmLogout()}>{loggingOut ? <LoaderCircle className="loading-spinner" size={16} /> : <LogOut size={16} />}{loggingOut ? "กำลังออก…" : "ออกจากระบบ"}</Button>
+            </footer>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

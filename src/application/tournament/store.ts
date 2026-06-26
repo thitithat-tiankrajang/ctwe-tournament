@@ -23,12 +23,14 @@ interface TournamentState {
   activeTournament: ActiveTournament | null;
   setActiveTournament: (tournament: ActiveTournament | null) => void;
   load: () => Promise<void>;
+  syncCard: (cardId: string) => Promise<void>;
   refreshAuth: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
   createCard: (input: CreateCardInput) => Promise<string>;
   addPlayer: (cardId: string, player: Pick<Player, "firstName" | "lastName" | "school">) => Promise<void>;
+  importPlayers: (cardId: string, players: Pick<Player, "firstName" | "lastName" | "school">[]) => Promise<void>;
   updatePlayer: (cardId: string, playerId: string, player: Pick<Player, "firstName" | "lastName" | "school">) => Promise<void>;
   removePlayer: (cardId: string, playerId: string) => Promise<void>;
   finishRegistration: (cardId: string) => Promise<void>;
@@ -38,10 +40,12 @@ interface TournamentState {
   confirmPairingPreview: (cardId: string) => Promise<void>;
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
   overrideResult: (cardId: string, matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
+  verifyPassword: (password: string) => Promise<boolean>;
   reviewResults: (cardId: string) => Promise<void>;
   reopenResults: (cardId: string) => Promise<void>;
   publishResults: (cardId: string) => Promise<void>;
   undoPairing: (cardId: string) => Promise<void>;
+  unpairToPreview: (cardId: string) => Promise<void>;
   closeCard: (cardId: string) => Promise<void>;
   deleteCard: (cardId: string) => Promise<void>;
   simulateTournament: (cardId: string) => Promise<void>;
@@ -134,6 +138,13 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       set({ activeTournament: tournament });
     },
     clearError: () => set({ error: null }),
+    async syncCard(cardId) {
+      // Background live-sync for concurrent multi-user editing: pull the latest card, ignore transient errors.
+      try {
+        const response = await fetch(`/api/cards/${cardId}`, { credentials: "same-origin", cache: "no-store" });
+        if (response.ok) replaceCard(await response.json() as TournamentCard);
+      } catch { /* transient network/poll error — keep current state */ }
+    },
     async refreshAuth() {
       try {
         const auth = await request<AuthState>("/api/auth/me");
@@ -190,6 +201,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async addPlayer(cardId, player) {
       await mutateCard(`/api/cards/${cardId}/players`, cardId, { method: "POST", body: JSON.stringify(player) });
     },
+    async importPlayers(cardId, players) {
+      await mutateCard(`/api/cards/${cardId}/players/bulk`, cardId, { method: "POST", body: JSON.stringify({ players }) });
+    },
     async updatePlayer(cardId, playerId, player) {
       await mutateCard(`/api/cards/${cardId}/players/${encodeURIComponent(playerId)}`, cardId, {
         method: "PUT",
@@ -229,6 +243,14 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         body: JSON.stringify({ scoreOne, scoreTwo, editExisting: true }),
       });
     },
+    async verifyPassword(password) {
+      // Re-auth: a wrong password is a 401 we must NOT treat as a lost session, so bypass the shared helper.
+      const headers = new Headers({ "Content-Type": "application/json" });
+      const token = get().auth.csrfToken;
+      if (token) headers.set("X-XSRF-TOKEN", token);
+      const response = await fetch("/api/auth/verify-password", { method: "POST", headers, credentials: "same-origin", cache: "no-store", body: JSON.stringify({ password }) });
+      return response.ok;
+    },
     async reviewResults(cardId) {
       await mutateCard(`/api/cards/${cardId}/results/review`, cardId, { method: "POST" });
     },
@@ -240,6 +262,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async undoPairing(cardId) {
       await mutateCard(`/api/cards/${cardId}/pairings/undo`, cardId, { method: "POST" });
+    },
+    async unpairToPreview(cardId) {
+      await mutateCard(`/api/cards/${cardId}/pairings/unpair-to-preview`, cardId, { method: "POST" });
     },
     async closeCard(cardId) {
       await mutateCard(`/api/cards/${cardId}/close`, cardId, { method: "POST" });
