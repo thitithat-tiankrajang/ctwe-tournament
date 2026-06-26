@@ -73,6 +73,7 @@ public class SecurityConfiguration {
                 .requestMatchers("/actuator/health", "/api/auth/me", "/staff-login", "/login").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/cards/*/audit").hasAnyRole("ADMIN", "DIRECTOR")
                 .requestMatchers(HttpMethod.GET, "/api/cards", "/api/cards/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/archives", "/api/archives/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/director/**").hasRole("DIRECTOR")
                 .requestMatchers("/api/dev/**").hasRole("ADMIN")

@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { ArrowRight, DoorOpen, Plus, Trash2, Trophy } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { hasStaffAccess, isDirector } from "@/domain/tournament/roles";
 import type { TournamentCard } from "@/domain/tournament/types";
+import { ArchiveList } from "@/ui/components/archive-list";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
-import { EmptyState, PageHeader, Stat } from "@/ui/components/page";
+import { EmptyState, PageHeader, Panel, Stat } from "@/ui/components/page";
 
 export default function CardsPage() {
   const cards = useTournamentStore((state) => state.cards);
@@ -18,7 +19,10 @@ export default function CardsPage() {
   const error = useTournamentStore((state) => state.error);
   const deleteCard = useTournamentStore((state) => state.deleteCard);
   const activeTournament = useTournamentStore((state) => state.activeTournament);
+  const archives = useTournamentStore((state) => state.archives);
+  const loadArchives = useTournamentStore((state) => state.loadArchives);
   const isStaff = hasStaffAccess(auth);
+  useEffect(() => { void loadArchives(); }, [loadArchives]);
   // Directors create cards from their own console; admins use the standalone create page.
   const createHref = isDirector(auth) ? "/director" : "/cards/create";
   const [deleting, setDeleting] = useState<TournamentCard | null>(null);
@@ -89,6 +93,14 @@ export default function CardsPage() {
               </div>
             </article>
           ))}
+        </div>
+      )}
+
+      {archives.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <Panel title="คลังผลย้อนหลัง (ดาวน์โหลด Excel)" description="ทัวร์นาเมนต์ที่ถูกเก็บถาวรเป็นไฟล์ Excel — ดาวน์โหลดดูข้อมูลย้อนหลังได้ทุกเมื่อ">
+            <div className="panel-padding"><ArchiveList archives={archives} /></div>
+          </Panel>
         </div>
       )}
 

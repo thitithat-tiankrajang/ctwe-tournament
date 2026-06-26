@@ -49,4 +49,10 @@ public final class TenantDtos {
     public record PasswordRequest(@NotBlank @Size(min = 8, max = 72) String password) {}
 
     public record EnabledRequest(@NotNull Boolean enabled) {}
+
+    /** Metadata for an archived (exported-to-Excel) tournament; the file blob is downloaded separately. */
+    public record ArchiveSummary(
+        UUID id, String tournamentName, String fileName, long byteSize,
+        int cardCount, int playerCount, String archivedBy, Instant archivedAt
+    ) {}
 }

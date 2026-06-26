@@ -1,6 +1,7 @@
 package com.ctwe.tournament.web;
 
 import com.ctwe.tournament.application.TenantService;
+import com.ctwe.tournament.application.TournamentArchiveService;
 import com.ctwe.tournament.web.dto.TenantDtos;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -15,8 +16,12 @@ import java.util.UUID;
 @RequestMapping("/api/admin")
 public class AdminController {
     private final TenantService tenant;
+    private final TournamentArchiveService archive;
 
-    public AdminController(TenantService tenant) { this.tenant = tenant; }
+    public AdminController(TenantService tenant, TournamentArchiveService archive) {
+        this.tenant = tenant;
+        this.archive = archive;
+    }
 
     // --- tournaments ---
     @GetMapping("/tournaments")
@@ -35,6 +40,18 @@ public class AdminController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteTournament(@PathVariable UUID tournamentId, Authentication auth) {
         tenant.deleteTournament(tournamentId, auth.getName());
+    }
+
+    /** Export the whole tournament to an .xlsx (kept for public download), then delete the live data. */
+    @PostMapping("/tournaments/{tournamentId}/archive")
+    public TenantDtos.ArchiveSummary archiveTournament(@PathVariable UUID tournamentId, Authentication auth) {
+        return archive.archiveAndDelete(tournamentId, auth.getName());
+    }
+
+    @DeleteMapping("/archives/{archiveId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteArchive(@PathVariable UUID archiveId) {
+        archive.deleteArchive(archiveId);
     }
 
     @PatchMapping("/tournaments/{tournamentId}/status")

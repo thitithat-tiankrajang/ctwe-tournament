@@ -15,12 +15,24 @@ export interface ActiveTournament {
   name: string;
 }
 
+export interface TournamentArchive {
+  id: string;
+  tournamentName: string;
+  fileName: string;
+  byteSize: number;
+  cardCount: number;
+  playerCount: number;
+  archivedBy: string | null;
+  archivedAt: string;
+}
+
 interface TournamentState {
   cards: TournamentCard[];
   auth: AuthState;
   loading: boolean;
   error: string | null;
   activeTournament: ActiveTournament | null;
+  archives: TournamentArchive[];
   setActiveTournament: (tournament: ActiveTournament | null) => void;
   load: () => Promise<void>;
   syncCard: (cardId: string) => Promise<void>;
@@ -54,6 +66,9 @@ interface TournamentState {
   loadTournaments: () => Promise<Tournament[]>;
   createTournament: (name: string) => Promise<Tournament>;
   deleteTournament: (tournamentId: string) => Promise<void>;
+  loadArchives: () => Promise<TournamentArchive[]>;
+  archiveTournament: (tournamentId: string) => Promise<void>;
+  deleteArchive: (archiveId: string) => Promise<void>;
   setTournamentStatus: (tournamentId: string, open: boolean) => Promise<void>;
   grantStaffTournament: (username: string, tournamentId: string) => Promise<void>;
   revokeStaffTournament: (username: string, tournamentId: string) => Promise<void>;
@@ -130,6 +145,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     loading: true,
     error: null,
     activeTournament: null,
+    archives: [],
     setActiveTournament: (tournament) => {
       if (typeof window !== "undefined") {
         if (tournament) window.localStorage.setItem(ACTIVE_TOURNAMENT_KEY, JSON.stringify(tournament));
@@ -290,6 +306,20 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async deleteTournament(tournamentId) {
       await request(`/api/admin/tournaments/${tournamentId}`, { method: "DELETE" });
       set((state) => ({ cards: state.cards.filter((card) => card.tournamentId !== tournamentId), error: null }));
+    },
+    async loadArchives() {
+      const archives = await request<TournamentArchive[]>("/api/archives");
+      set({ archives });
+      return archives;
+    },
+    async archiveTournament(tournamentId) {
+      await request(`/api/admin/tournaments/${tournamentId}/archive`, { method: "POST" });
+      const archives = await request<TournamentArchive[]>("/api/archives");
+      set((state) => ({ cards: state.cards.filter((card) => card.tournamentId !== tournamentId), archives, error: null }));
+    },
+    async deleteArchive(archiveId) {
+      await request(`/api/admin/archives/${archiveId}`, { method: "DELETE" });
+      set((state) => ({ archives: state.archives.filter((archive) => archive.id !== archiveId), error: null }));
     },
     async setTournamentStatus(tournamentId, open) {
       await request(`/api/admin/tournaments/${tournamentId}/status`, { method: "PATCH", body: JSON.stringify({ open }) });

@@ -27,14 +27,11 @@ import java.util.UUID;
 public class TenantService {
     private final JdbcTemplate jdbc;
     private final PasswordEncoder passwordEncoder;
-    private final TournamentCardService cardService;
     private final ObjectMapper objectMapper;
 
-    public TenantService(JdbcTemplate jdbc, PasswordEncoder passwordEncoder,
-                         TournamentCardService cardService, ObjectMapper objectMapper) {
+    public TenantService(JdbcTemplate jdbc, PasswordEncoder passwordEncoder, ObjectMapper objectMapper) {
         this.jdbc = jdbc;
         this.passwordEncoder = passwordEncoder;
-        this.cardService = cardService;
         this.objectMapper = objectMapper;
     }
 
@@ -91,11 +88,14 @@ public class TenantService {
     @Transactional
     public void deleteTournament(UUID id, String actor) {
         getTournament(id); // 404 if missing
-        // Cards reference children (matches/standings/snapshots) without DB cascade, so delete each card cleanly first.
-        List<UUID> cardIds = jdbc.queryForList("SELECT id FROM tournament_cards WHERE tournament_id = ?", UUID.class, id);
-        for (UUID cardId : cardIds) cardService.delete(cardId);
-        jdbc.update("DELETE FROM tournaments WHERE id = ?", id); // cascades tournament_members
-        audit(actor, "DELETE_TOURNAMENT", Map.of("id", id.toString(), "cards", cardIds.size()), null);
+        // SAFETY (2026-06-25 incident): never cascade-delete cards. A tournament can only be removed
+        // once it is empty, so deleting one can never wipe player/match data by accident. Cards must be
+        // deleted (or moved) one-by-one and deliberately first.
+        Integer cardCount = jdbc.queryForObject("SELECT count(*) FROM tournament_cards WHERE tournament_id = ?", Integer.class, id);
+        if (cardCount != null && cardCount > 0)
+            throw new IllegalArgumentException("ลบทัวร์นาเมนต์ไม่ได้: ยังมี " + cardCount + " การ์ดอยู่ข้างใน — ต้องลบหรือย้ายการ์ดออกให้หมดก่อน");
+        jdbc.update("DELETE FROM tournaments WHERE id = ?", id); // cascades tournament_members only (no cards left)
+        audit(actor, "DELETE_TOURNAMENT", Map.of("id", id.toString()), null);
     }
 
     @Transactional

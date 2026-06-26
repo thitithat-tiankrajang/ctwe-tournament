@@ -1,10 +1,11 @@
 "use client";
 
-import { KeyRound, LockKeyhole, Plus, Shield, Trash2, Trophy, UserPlus } from "lucide-react";
+import { FileDown, KeyRound, LockKeyhole, Plus, Shield, Trash2, Trophy, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { isAdmin } from "@/domain/tournament/roles";
 import type { ManagedUser, Tournament } from "@/domain/tournament/types";
+import { ArchiveList } from "@/ui/components/archive-list";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
@@ -25,7 +26,7 @@ export default function AdminConsolePage() {
   const refresh = useCallback(async () => {
     if (!isAdmin(auth)) return;
     try {
-      const [t, d] = await Promise.all([store.loadTournaments(), store.listDirectors()]);
+      const [t, d] = await Promise.all([store.loadTournaments(), store.listDirectors(), store.loadArchives()]);
       setTournaments(t);
       setDirectors(d);
     } catch { /* surfaced via store.error */ }
@@ -68,7 +69,7 @@ export default function AdminConsolePage() {
                 <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Trophy size={16} />{t.name}</strong>
                 <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <Badge>{t.cardCount} การ์ด</Badge>
-                  <Button variant="danger" size="sm" disabled={busy} onClick={() => window.confirm(`ลบ "${t.name}" และการ์ดทั้งหมดในรายการนี้?`) && void act(() => store.deleteTournament(t.id))}><Trash2 size={14} /></Button>
+                  <Button variant="secondary" size="sm" disabled={busy} title="เก็บเป็น Excel แล้วลบข้อมูลออกจากฐานข้อมูล" onClick={() => window.confirm(`เก็บทัวร์นาเมนต์ "${t.name}" เป็นไฟล์ Excel แล้วลบข้อมูลทั้งหมด (${t.cardCount} การ์ด) ออกจากฐานข้อมูล?\n\nไฟล์จะดาวน์โหลดได้ภายหลังในหน้าภาพรวม แต่ข้อมูลในระบบจะถูกลบถาวร`) && void act(() => store.archiveTournament(t.id))}><FileDown size={14} /> เก็บเข้าคลัง</Button>
                 </span>
               </div>
               <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
@@ -86,6 +87,12 @@ export default function AdminConsolePage() {
               </div>
             </div>
           ))}
+        </div>
+      </Panel>
+
+      <Panel title="คลังที่เก็บถาวร (Excel)" description="ทัวร์นาเมนต์ที่ถูกเก็บเป็นไฟล์ Excel แล้ว — ดาวน์โหลดหรือลบไฟล์ถาวรได้ที่นี่ (ผู้ใช้ทั่วไปดาวน์โหลดได้ในหน้าภาพรวม)">
+        <div className="panel-padding">
+          <ArchiveList archives={store.archives} onDelete={(archive) => window.confirm(`ลบไฟล์เก็บถาวร "${archive.tournamentName}" อย่างถาวร? กู้คืนไม่ได้`) && void act(() => store.deleteArchive(archive.id))} />
         </div>
       </Panel>
 
