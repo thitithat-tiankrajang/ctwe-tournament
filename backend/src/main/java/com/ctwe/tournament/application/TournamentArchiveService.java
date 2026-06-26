@@ -131,6 +131,8 @@ public class TournamentArchiveService {
                 playersSheet(workbook, header, "C" + index + " ผู้เล่น", cardName, cardId);
                 resultsSheet(workbook, header, "C" + index + " ผล", cardName, cardId);
                 standingsSheet(workbook, header, "C" + index + " อันดับ", cardName, cardId);
+                Integer finalCount = jdbc.queryForObject("SELECT count(*) FROM final_pairings WHERE card_id = ?", Integer.class, cardId);
+                if (finalCount != null && finalCount > 0) finalSheet(workbook, header, "C" + index + " รอบชิง", cardName, cardId);
                 index++;
             }
 
@@ -216,6 +218,43 @@ public class TournamentArchiveService {
             cell(row, 7, null, standing.get("diff"));
         }
         widths(sheet, cols.length, 16);
+    }
+
+    private void finalSheet(Workbook workbook, CellStyle header, String sheetName, String cardName, UUID cardId) {
+        Sheet sheet = workbook.createSheet(sheetName);
+        cell(sheet.createRow(0), 0, header, "การ์ด: " + cardName + " — รอบชิงชนะเลิศ");
+        Row head = sheet.createRow(1);
+        String[] cols = {"คู่ชิง", "ผู้เข้าชิง 1", "ผู้เข้าชิง 2", "ผลรายเกม", "ผู้ชนะ (สรุป)", "การจัดอันดับ"};
+        for (int i = 0; i < cols.length; i++) cell(head, i, header, cols[i]);
+        int line = 2;
+        for (Map<String, Object> pairing : jdbc.queryForList("""
+            SELECT fp.slot, p1.first_name AS f1, p1.last_name AS l1, p2.first_name AS f2, p2.last_name AS l2,
+                   w.first_name AS wf, w.last_name AS wl
+            FROM final_pairings fp
+            JOIN players p1 ON p1.id = fp.player_one_id
+            JOIN players p2 ON p2.id = fp.player_two_id
+            LEFT JOIN players w ON w.id = fp.winner_id
+            WHERE fp.card_id = ? ORDER BY fp.slot
+            """, cardId)) {
+            int slot = ((Number) pairing.get("slot")).intValue();
+            StringBuilder scores = new StringBuilder();
+            for (Map<String, Object> game : jdbc.queryForList("SELECT game_index, score_one, score_two FROM final_game_results WHERE card_id = ? AND slot = ? ORDER BY game_index", cardId, slot)) {
+                if (scores.length() > 0) scores.append(", ");
+                Object s1 = game.get("score_one"); Object s2 = game.get("score_two");
+                scores.append("เกม ").append(game.get("game_index")).append(": ").append(s1 == null ? "-" : s1).append("-").append(s2 == null ? "-" : s2);
+            }
+            String winner = pairing.get("wf") == null ? "ยังไม่สรุป" : (pairing.get("wf") + " " + pairing.get("wl"));
+            String ranking = pairing.get("wf") == null ? "—"
+                : (slot == 0 ? "ผู้ชนะ = ที่ 1, ผู้แพ้ = ที่ 2" : "ผู้ชนะ = ที่ 3, ผู้แพ้ = ที่ 4");
+            Row row = sheet.createRow(line++);
+            cell(row, 0, null, slot == 0 ? "ชิงอันดับ 1-2" : "ชิงอันดับ 3-4");
+            cell(row, 1, null, pairing.get("f1") + " " + pairing.get("l1"));
+            cell(row, 2, null, pairing.get("f2") + " " + pairing.get("l2"));
+            cell(row, 3, null, scores.toString());
+            cell(row, 4, null, winner);
+            cell(row, 5, null, ranking);
+        }
+        widths(sheet, cols.length, 22);
     }
 
     private CellStyle headerStyle(Workbook workbook) {

@@ -111,6 +111,10 @@ export const seedCards: TournamentCard[] = [
         newValue: "24 players",
       },
     ],
+    finalType: "NONE",
+    finalGames: 0,
+    finalRound: null,
+    gibsonEnabled: false,
     createdAt,
   },
   {
@@ -128,6 +132,10 @@ export const seedCards: TournamentCard[] = [
     tables: [],
     snapshots: [],
     audit: [],
+    finalType: "NONE",
+    finalGames: 0,
+    finalRound: null,
+    gibsonEnabled: false,
     createdAt: "2026-06-21T07:30:00.000Z",
   },
 ];

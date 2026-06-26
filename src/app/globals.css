@@ -799,6 +799,26 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .egrid-filterpop__actions { border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: space-between; padding-top: 8px; }
 .confirm-dialog--wide { max-width: 680px; width: min(680px, 94vw); }
 
+/* Final / championship round */
+.final-board { display: grid; gap: 16px; }
+.final-slot-wrap { overflow-x: auto; padding: 4px 16px 16px; }
+.final-slot-table { border-collapse: collapse; min-width: 100%; }
+.final-slot-table th, .final-slot-table td { border: 1px solid var(--border); padding: 8px 12px; text-align: center; white-space: nowrap; }
+.final-slot-table thead th { background: #f4f5f7; font-size: 12px; }
+.final-slot-player { font-weight: 700; text-align: left !important; }
+.final-cell--win { background: var(--green-soft, #e7f3ec); font-weight: 700; }
+.final-score { max-width: 84px; text-align: center; }
+.final-slot-decide td { background: #fbfbfc; }
+.final-decide { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.final-decide__opt { align-items: center; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; display: inline-flex; gap: 6px; padding: 6px 13px; }
+.final-decide__opt--on { background: var(--blue); border-color: var(--blue); color: #fff; }
+.final-seed-list { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.final-seed-list li { align-items: center; border: 1px solid var(--border); display: flex; gap: 10px; padding: 9px 13px; }
+.final-seed-list strong { font-size: 14px; }
+.final-seed-list small { color: var(--muted); }
+.final-seed-vs { color: var(--blue-dark); font-size: 12px; font-weight: 700; margin-left: auto; }
+.final-summary { min-width: 280px; width: auto; }
+
 /* Archived-tournament (Excel) download list */
 .archive-list { display: grid; gap: 8px; }
 .archive-row { align-items: center; border: 1px solid var(--border); display: flex; gap: 12px; padding: 11px 13px; }

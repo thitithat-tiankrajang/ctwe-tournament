@@ -3,6 +3,7 @@ package com.ctwe.tournament.application;
 import com.ctwe.tournament.domain.model.CardStatus;
 import com.ctwe.tournament.domain.model.PairingRuleType;
 import com.ctwe.tournament.domain.model.RuntimeStage;
+import com.ctwe.tournament.domain.pairing.GibsonAnalysis;
 import com.ctwe.tournament.domain.pairing.PairingStrategy;
 import com.ctwe.tournament.web.dto.CardDtos;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -54,13 +55,14 @@ public class TournamentCardService {
         CardRow card;
         try {
             card = jdbc.queryForObject("""
-                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version
+                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version, final_type, final_games, gibson_enabled
                 FROM tournament_cards WHERE id = ?
                 """, (rs, row) -> new CardRow(
                 rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
                 rs.getInt("number_of_games"), CardStatus.valueOf(rs.getString("status")),
                 RuntimeStage.valueOf(rs.getString("runtime_stage")), rs.getInt("current_game"),
-                rs.getTimestamp("created_at").toInstant(), rs.getLong("version")), cardId);
+                rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
+                rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled")), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
@@ -92,7 +94,35 @@ public class TournamentCardService {
                 jsonText(rs.getString("old_value")), jsonText(rs.getString("new_value"))), cardId) : List.<CardDtos.AuditResponse>of();
 
         return new CardDtos.CardResponse(card.id(), tournamentId, card.name(), card.division(), card.status(), card.runtimeStage(),
-            card.currentGame(), card.version(), games, rules, players, tables, snapshots, audit, card.createdAt());
+            card.currentGame(), card.version(), games, rules, players, tables, snapshots, audit,
+            card.finalType(), card.finalGames(), loadFinalRound(cardId), card.gibsonEnabled(), card.createdAt());
+    }
+
+    /** Assemble the final-round bracket (null until the director starts it). Player ids are external codes. */
+    private CardDtos.FinalRoundResponse loadFinalRound(UUID cardId) {
+        record Slot(int slot, String one, String two, String winner) {}
+        List<Slot> pairings = jdbc.query("""
+            SELECT fp.slot, p1.external_id AS one, p2.external_id AS two, w.external_id AS winner
+            FROM final_pairings fp
+            JOIN players p1 ON p1.id = fp.player_one_id
+            JOIN players p2 ON p2.id = fp.player_two_id
+            LEFT JOIN players w ON w.id = fp.winner_id
+            WHERE fp.card_id = ? ORDER BY fp.slot
+            """, (rs, row) -> new Slot(rs.getInt("slot"), rs.getString("one"), rs.getString("two"), rs.getString("winner")), cardId);
+        if (pairings.isEmpty()) return null;
+        List<CardDtos.FinalSlotResponse> slots = new ArrayList<>();
+        for (Slot pairing : pairings) {
+            var games = jdbc.query("SELECT game_index, score_one, score_two FROM final_game_results WHERE card_id = ? AND slot = ? ORDER BY game_index",
+                (rs, row) -> {
+                    Integer scoreOne = (Integer) rs.getObject("score_one");
+                    Integer scoreTwo = (Integer) rs.getObject("score_two");
+                    String gameWinner = (scoreOne == null || scoreTwo == null || scoreOne.intValue() == scoreTwo.intValue())
+                        ? null : (scoreOne > scoreTwo ? pairing.one() : pairing.two());
+                    return new CardDtos.FinalGameResponse(rs.getInt("game_index"), scoreOne, scoreTwo, gameWinner);
+                }, cardId, pairing.slot());
+            slots.add(new CardDtos.FinalSlotResponse(pairing.slot(), pairing.one(), pairing.two(), games, pairing.winner()));
+        }
+        return new CardDtos.FinalRoundResponse(slots);
     }
 
     @Transactional
@@ -105,11 +135,15 @@ public class TournamentCardService {
             throw new IllegalArgumentException("PAIR_RESULT cannot chain beyond two games");
         if (count("SELECT COUNT(*) FROM tournaments WHERE id = ?", request.tournamentId()) == 0)
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament not found");
+        String finalType = request.finalType() == null ? "NONE" : request.finalType();
+        int finalGames = "NONE".equals(finalType) ? 0 : request.finalGames();
+        if (!"NONE".equals(finalType) && finalGames < 1)
+            throw new IllegalArgumentException("รอบชิงต้องมีอย่างน้อย 1 เกม");
         UUID cardId = UUID.randomUUID();
         jdbc.update("""
-            INSERT INTO tournament_cards (id, tournament_id, name, division, number_of_games, status, runtime_stage, current_game)
-            VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PLAYER_REGISTRATION', 1)
-            """, cardId, request.tournamentId(), request.name().trim(), request.division().trim(), request.numberOfGames());
+            INSERT INTO tournament_cards (id, tournament_id, name, division, number_of_games, status, runtime_stage, current_game, final_type, final_games, gibson_enabled)
+            VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PLAYER_REGISTRATION', 1, ?, ?, ?)
+            """, cardId, request.tournamentId(), request.name().trim(), request.division().trim(), request.numberOfGames(), finalType, finalGames, request.gibsonEnabled());
         for (int game = 1; game <= request.numberOfGames(); game++) {
             jdbc.update("INSERT INTO games (id, card_id, game_number, status, max_diff) VALUES (?, ?, ?, 'PENDING', ?)",
                 UUID.randomUUID(), cardId, game, request.gameMaxDiffs().get(game - 1));
@@ -568,11 +602,81 @@ public class TournamentCardService {
         int last = gameNumbers.get(gameNumbers.size() - 1);
         boolean finished = last >= card.numberOfGames();
         recalculateStandings(cardId);
+        // If the card has a final round, the last regular game leads to FINAL_SEEDING (director then starts it),
+        // not straight to FINAL_PUBLISHED.
+        boolean hasFinal = finished && !"NONE".equals(card.finalType());
         jdbc.update("""
             UPDATE tournament_cards SET current_game = ?, status = ?, runtime_stage = ?, version = version + 1 WHERE id = ?
-            """, finished ? last : last + 1, finished ? "FINISHED" : "RUNNING", finished ? "FINAL_PUBLISHED" : "TABLE_PAIRING", cardId);
+            """, finished ? last : last + 1,
+            (!finished || hasFinal) ? "RUNNING" : "FINISHED",
+            !finished ? "TABLE_PAIRING" : (hasFinal ? "FINAL_SEEDING" : "FINAL_PUBLISHED"), cardId);
         if (!finished) jdbc.update("DELETE FROM competition_tables WHERE card_id = ?", cardId);
         audit(cardId, actor, finished ? "PUBLISH_FINAL_RESULTS" : "PUBLISH_GAME_RESULTS", "game " + gameNumbers + " review", hash);
+        return get(cardId, true);
+    }
+
+    // ---- Final / championship round ----
+
+    /** Director starts the final: lock seeds (top 2 / top 4 from standings) into the bracket. */
+    @Transactional
+    public CardDtos.CardResponse startFinalRound(UUID cardId, String actor) {
+        CardRow card = requireStage(cardId, RuntimeStage.FINAL_SEEDING);
+        int slotCount = "CHAMPION_AND_THIRD".equals(card.finalType()) ? 2 : 1;
+        int needed = slotCount * 2;
+        List<UUID> seeds = jdbc.queryForList("""
+            SELECT player_id FROM standings WHERE card_id = ?
+            ORDER BY rank NULLS LAST, win_points DESC, diff DESC LIMIT ?
+            """, UUID.class, cardId, needed);
+        if (seeds.size() < needed)
+            throw new IllegalArgumentException("ผู้เล่นไม่พอสำหรับรอบชิง (ต้องการ " + needed + " คน มี " + seeds.size() + " คน)");
+        jdbc.update("DELETE FROM final_game_results WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM final_pairings WHERE card_id = ?", cardId);
+        for (int slot = 0; slot < slotCount; slot++) {
+            jdbc.update("INSERT INTO final_pairings (id, card_id, slot, player_one_id, player_two_id) VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), cardId, slot, seeds.get(slot * 2), seeds.get(slot * 2 + 1));
+            for (int game = 1; game <= card.finalGames(); game++)
+                jdbc.update("INSERT INTO final_game_results (id, card_id, slot, game_index) VALUES (?, ?, ?, ?)",
+                    UUID.randomUUID(), cardId, slot, game);
+        }
+        jdbc.update("UPDATE tournament_cards SET runtime_stage = 'FINAL_COLLECTION', version = version + 1 WHERE id = ?", cardId);
+        audit(cardId, actor, "START_FINAL", null, "seeds=" + needed);
+        return get(cardId, true);
+    }
+
+    /** Record one final game's scores (no max diff; per-game winner is derived from the scores). */
+    @Transactional
+    public CardDtos.CardResponse submitFinalResult(UUID cardId, int slot, int gameIndex, int scoreOne, int scoreTwo, String actor) {
+        requireStage(cardId, RuntimeStage.FINAL_COLLECTION);
+        int updated = jdbc.update("UPDATE final_game_results SET score_one = ?, score_two = ? WHERE card_id = ? AND slot = ? AND game_index = ?",
+            scoreOne, scoreTwo, cardId, slot, gameIndex);
+        if (updated == 0) throw new IllegalArgumentException("ไม่พบช่องผลรอบชิงนี้");
+        audit(cardId, actor, "FINAL_RESULT", null, "slot " + slot + " game " + gameIndex + " = " + scoreOne + ":" + scoreTwo);
+        return get(cardId, true);
+    }
+
+    /** Manual conclusion: the director/staff picks the winner of a final pairing (criteria vary). */
+    @Transactional
+    public CardDtos.CardResponse setFinalWinner(UUID cardId, int slot, String winnerExternalId, String actor) {
+        requireStage(cardId, RuntimeStage.FINAL_COLLECTION);
+        UUID winnerId = jdbc.query("SELECT id FROM players WHERE card_id = ? AND external_id = ?",
+            (rs, row) -> rs.getObject("id", UUID.class), cardId, winnerExternalId).stream().findFirst().orElse(null);
+        if (winnerId == null) throw new IllegalArgumentException("ไม่พบผู้เล่น");
+        int updated = jdbc.update("""
+            UPDATE final_pairings SET winner_id = ? WHERE card_id = ? AND slot = ? AND (player_one_id = ? OR player_two_id = ?)
+            """, winnerId, cardId, slot, winnerId, winnerId);
+        if (updated == 0) throw new IllegalArgumentException("ผู้ชนะต้องเป็นหนึ่งในผู้เข้าชิงของคู่นี้");
+        audit(cardId, actor, "FINAL_WINNER", null, "slot " + slot + " winner " + winnerExternalId);
+        return get(cardId, true);
+    }
+
+    /** Finish the final once every pairing has a manually-decided winner. */
+    @Transactional
+    public CardDtos.CardResponse publishFinalRound(UUID cardId, String actor) {
+        requireStage(cardId, RuntimeStage.FINAL_COLLECTION);
+        if (count("SELECT COUNT(*) FROM final_pairings WHERE card_id = ? AND winner_id IS NULL", cardId) > 0)
+            throw new IllegalArgumentException("ต้องสรุปผู้ชนะให้ครบทุกคู่ก่อนเผยแพร่");
+        jdbc.update("UPDATE tournament_cards SET status = 'FINISHED', runtime_stage = 'FINAL_PUBLISHED', version = version + 1 WHERE id = ?", cardId);
+        audit(cardId, actor, "PUBLISH_FINAL", null, "final published");
         return get(cardId, true);
     }
 
@@ -587,6 +691,7 @@ public class TournamentCardService {
         CardRow card = cardRow(cardId);
         if (card.status() == CardStatus.CLOSED)
             throw new IllegalArgumentException("การ์ดนี้ปิดแล้ว ไม่สามารถยกเลิกการจับคู่ได้");
+        requireRegularEditable(cardId);
 
         SnapshotBlock latest = jdbc.query("""
             SELECT id, game_numbers FROM pairing_snapshots
@@ -632,6 +737,7 @@ public class TournamentCardService {
     @Transactional
     public CardDtos.CardResponse overrideResult(UUID cardId, UUID matchId, CardDtos.ResultRequest request, String actor) {
         ensureEditable(cardId);
+        requireRegularEditable(cardId);
         MatchPlayers match;
         try {
             match = jdbc.queryForObject("""
@@ -716,6 +822,8 @@ public class TournamentCardService {
         // pairing_snapshots are append-only; the trigger only permits deletion under this flag.
         jdbc.execute("SET LOCAL app.allow_snapshot_delete = 'on'");
         jdbc.update("DELETE FROM pairing_snapshots WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM final_game_results WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM final_pairings WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM players WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM pairing_rules WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM games WHERE card_id = ?", cardId);
@@ -897,7 +1005,8 @@ public class TournamentCardService {
         PairingRuleType appliedRule = ruleForGame(cardId, gameNumber);
         if (appliedRule == PairingRuleType.PAIR_RESULT)
             throw new IllegalArgumentException("เกมแบบแพ้เจอแพ้/ชนะเจอชนะต้องถูกสร้างจากผลของเกมก่อนหน้าโดยอัตโนมัติ");
-        var pairs = strategies.resolve(appliedRule).generate(scores, new PairingStrategy.PairingContext(gameNumber, history));
+        var context = new PairingStrategy.PairingContext(gameNumber, history);
+        var pairs = applyGibsonPairing(cardId, gameNumber, scores, context, appliedRule);
         UUID gameId = gameId(cardId, gameNumber);
         for (int index = 0; index < pairs.size(); index++) {
             var pair = pairs.get(index);
@@ -907,6 +1016,77 @@ public class TournamentCardService {
                 """, UUID.randomUUID(), cardId, gameId, index + 1, UUID.fromString(pair.playerOneId()), UUID.fromString(pair.playerTwoId()));
         }
         return appliedRule;
+    }
+
+    /**
+     * If Gibsonization is enabled and the maths prove a player has CLINCHED a top-K finish, pull each such
+     * leader out and pair them with the lowest out-of-contention player (Gibson pairing) so their spread
+     * cannot reorder the remaining contenders; the rest are paired by the normal strategy. Falls back to
+     * the plain strategy when disabled, when nobody has clinched, or when there is no eliminated opponent.
+     */
+    private List<PairingStrategy.Pair> applyGibsonPairing(UUID cardId, int gameNumber, List<PairingStrategy.PlayerScore> scores,
+                                                          PairingStrategy.PairingContext context, PairingRuleType appliedRule) {
+        PairingStrategy strategy = strategies.resolve(appliedRule);
+        CardRow card = cardRow(cardId);
+        if (!card.gibsonEnabled()) return strategy.generate(scores, context);
+
+        int qualifyCut = "CHAMPION_AND_THIRD".equals(card.finalType()) ? 4 : "CHAMPION".equals(card.finalType()) ? 2 : 1;
+        int remainingGames = card.numberOfGames() - gameNumber + 1;
+        Long maxDiffSum = jdbc.queryForObject("SELECT COALESCE(SUM(max_diff), 0) FROM games WHERE card_id = ? AND game_number BETWEEN ? AND ?",
+            Long.class, cardId, gameNumber, card.numberOfGames());
+        List<GibsonAnalysis.PlayerStanding> standings = scores.stream()
+            .map(score -> new GibsonAnalysis.PlayerStanding(score.playerId(), score.winPoints(), score.diff())).toList();
+        GibsonAnalysis.Result analysis = GibsonAnalysis.analyze(standings, remainingGames, maxDiffSum == null ? 0L : maxDiffSum, qualifyCut);
+        if (analysis.gibsonized().isEmpty() || analysis.eliminated().isEmpty()) return strategy.generate(scores, context);
+
+        Comparator<PairingStrategy.PlayerScore> ranking = Comparator.comparingInt(PairingStrategy.PlayerScore::winPoints).reversed()
+            .thenComparing(Comparator.comparingInt(PairingStrategy.PlayerScore::diff).reversed())
+            .thenComparing(PairingStrategy.PlayerScore::playerId);
+        List<PairingStrategy.PlayerScore> ranked = scores.stream().sorted(ranking).toList();
+        List<PairingStrategy.PlayerScore> clinched = ranked.stream().filter(player -> analysis.gibsonized().contains(player.playerId())).toList();
+        List<PairingStrategy.PlayerScore> deadPool = new ArrayList<>(ranked.stream().filter(player -> analysis.eliminated().contains(player.playerId())).toList());
+        Collections.reverse(deadPool); // lowest-ranked out-of-contention player first
+
+        Set<String> used = new HashSet<>();
+        List<PairingStrategy.Pair> gibsonPairs = new ArrayList<>();
+        List<Map<String, Object>> gibsonLog = new ArrayList<>();
+        for (PairingStrategy.PlayerScore leader : clinched) {
+            PairingStrategy.PlayerScore opponent = pickDeadOpponent(deadPool, used, leader, context);
+            if (opponent == null) continue; // not enough out-of-contention players; leader stays in the normal pool
+            used.add(leader.playerId());
+            used.add(opponent.playerId());
+            gibsonPairs.add(new PairingStrategy.Pair(leader.playerId(), opponent.playerId()));
+            gibsonLog.add(Map.of("clinched", leader.playerId(), "vsEliminated", opponent.playerId()));
+        }
+        if (gibsonPairs.isEmpty()) return strategy.generate(scores, context);
+
+        List<PairingStrategy.PlayerScore> remaining = ranked.stream().filter(player -> !used.contains(player.playerId())).toList();
+        List<PairingStrategy.Pair> rest = remaining.isEmpty() ? List.of() : strategy.generate(remaining, context);
+
+        Map<String, Object> log = new LinkedHashMap<>();
+        log.put("game", gameNumber);
+        log.put("qualifyCut", qualifyCut);
+        log.put("remainingGames", remainingGames);
+        log.put("maxDiffSum", maxDiffSum);
+        log.put("gibsonPairs", gibsonLog);
+        log.put("proof", analysis.proof());
+        audit(cardId, "system", "GIBSON_PAIRING", null, log);
+
+        List<PairingStrategy.Pair> all = new ArrayList<>(gibsonPairs);
+        all.addAll(rest);
+        return all;
+    }
+
+    /** Lowest-ranked out-of-contention player for a Gibson pairing, preferring one the leader hasn't met. */
+    private PairingStrategy.PlayerScore pickDeadOpponent(List<PairingStrategy.PlayerScore> deadPool, Set<String> used,
+                                                         PairingStrategy.PlayerScore leader, PairingStrategy.PairingContext context) {
+        PairingStrategy.PlayerScore fallback = null;
+        for (PairingStrategy.PlayerScore candidate : deadPool) {
+            if (used.contains(candidate.playerId())) continue;
+            if (fallback == null) fallback = candidate;
+            if (!context.alreadyPlayed(leader.playerId(), candidate.playerId())) return candidate;
+        }
+        return fallback;
     }
 
     private void createMatchesFromInitialTables(UUID cardId) {
@@ -1050,11 +1230,12 @@ public class TournamentCardService {
     private CardRow cardRow(UUID cardId) {
         try {
             return jdbc.queryForObject("""
-                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version
+                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version, final_type, final_games, gibson_enabled
                 FROM tournament_cards WHERE id = ? FOR UPDATE
                 """, (rs, row) -> new CardRow(rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
                 rs.getInt("number_of_games"), CardStatus.valueOf(rs.getString("status")), RuntimeStage.valueOf(rs.getString("runtime_stage")),
-                rs.getInt("current_game"), rs.getTimestamp("created_at").toInstant(), rs.getLong("version")), cardId);
+                rs.getInt("current_game"), rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
+                rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled")), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
@@ -1062,6 +1243,15 @@ public class TournamentCardService {
 
     private void ensureEditable(UUID cardId) {
         if (cardRow(cardId).status() == CardStatus.CLOSED) throw new IllegalArgumentException("This card is closed and immutable");
+    }
+
+    /** Once a card enters/concludes its final round, the regular games are frozen (no override / un-pair). */
+    private void requireRegularEditable(UUID cardId) {
+        CardRow card = cardRow(cardId);
+        boolean inFinal = card.runtimeStage() == RuntimeStage.FINAL_SEEDING
+            || card.runtimeStage() == RuntimeStage.FINAL_COLLECTION
+            || (card.runtimeStage() == RuntimeStage.FINAL_PUBLISHED && !"NONE".equals(card.finalType()));
+        if (inFinal) throw new IllegalArgumentException("การ์ดเข้าสู่รอบชิงแล้ว แก้ไขผลเกมปกติหรือยกเลิกการจับคู่ไม่ได้");
     }
 
     private CardRow requireStage(UUID cardId, RuntimeStage expected) {
@@ -1137,7 +1327,7 @@ public class TournamentCardService {
         return false;
     }
 
-    private record CardRow(UUID id, String name, String division, int numberOfGames, CardStatus status, RuntimeStage runtimeStage, int currentGame, Instant createdAt, long version) {}
+    private record CardRow(UUID id, String name, String division, int numberOfGames, CardStatus status, RuntimeStage runtimeStage, int currentGame, Instant createdAt, long version, String finalType, int finalGames, boolean gibsonEnabled) {}
     private record PlayerCodeRow(UUID id, String externalId) {}
     private record PlayerAudit(UUID id, String externalId, String firstName, String lastName, String school) {
         Map<String, String> asAuditValue() {

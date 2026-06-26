@@ -5,8 +5,29 @@ export type RuntimeStage =
   | "PAIRING_PREVIEW"
   | "RESULT_COLLECTION"
   | "RESULT_REVIEW"
+  | "FINAL_SEEDING"
+  | "FINAL_COLLECTION"
   | "FINAL_PUBLISHED";
 export type PairingRuleType = "PAIR_RESULT" | "SWISS" | "KING_OF_THE_HILL";
+export type FinalType = "NONE" | "CHAMPION" | "CHAMPION_AND_THIRD";
+
+export interface FinalGameResult {
+  gameIndex: number;
+  scoreOne: number | null;
+  scoreTwo: number | null;
+  winnerId: string | null;
+}
+/** One play-off bracket slot: slot 0 decides 1st/2nd, slot 1 decides 3rd/4th. */
+export interface FinalSlot {
+  slot: number;
+  playerOneId: string;
+  playerTwoId: string;
+  games: FinalGameResult[];
+  winnerId: string | null;
+}
+export interface FinalRound {
+  slots: FinalSlot[];
+}
 
 export interface PairingRule {
   fromGame: number;
@@ -107,6 +128,10 @@ export interface TournamentCard {
   tables: SeatingTable[];
   snapshots: PairingSnapshot[];
   audit: AuditEntry[];
+  finalType: FinalType;
+  finalGames: number;
+  finalRound: FinalRound | null;
+  gibsonEnabled: boolean;
   createdAt: string;
 }
 
@@ -117,4 +142,7 @@ export interface CreateCardInput {
   numberOfGames: number;
   rules: PairingRuleType[];
   gameMaxDiffs: number[];
+  finalType: FinalType;
+  finalGames: number;
+  gibsonEnabled: boolean;
 }

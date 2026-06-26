@@ -158,6 +158,33 @@ public class CardController {
         return service.publishResults(cardId, authentication.getName());
     }
 
+    // ---- final / championship round ----
+    @PostMapping("/{cardId}/final/start")
+    public CardDtos.CardResponse startFinal(@PathVariable UUID cardId, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        return service.startFinalRound(cardId, authentication.getName());
+    }
+
+    @PutMapping("/{cardId}/final/{slot}/games/{gameIndex}")
+    public CardDtos.CardResponse submitFinalResult(@PathVariable UUID cardId, @PathVariable int slot, @PathVariable int gameIndex,
+                                                   @Valid @RequestBody CardDtos.FinalResultRequest request, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
+        return service.submitFinalResult(cardId, slot, gameIndex, request.scoreOne(), request.scoreTwo(), authentication.getName());
+    }
+
+    @PutMapping("/{cardId}/final/{slot}/winner")
+    public CardDtos.CardResponse setFinalWinner(@PathVariable UUID cardId, @PathVariable int slot,
+                                                @Valid @RequestBody CardDtos.FinalWinnerRequest request, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
+        return service.setFinalWinner(cardId, slot, request.winnerId(), authentication.getName());
+    }
+
+    @PostMapping("/{cardId}/final/publish")
+    public CardDtos.CardResponse publishFinal(@PathVariable UUID cardId, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        return service.publishFinalRound(cardId, authentication.getName());
+    }
+
     /** Any authenticated back-office principal (admin/director/staff) sees the internal staff view. */
     private boolean backOffice(Authentication authentication) {
         return authz.isAdmin(authentication) || authz.isDirector(authentication) || authz.isStaff(authentication);

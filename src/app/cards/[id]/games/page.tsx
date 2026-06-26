@@ -18,6 +18,7 @@ import { PlayerHistoryTable } from "@/ui/components/player-history-table";
 import { ResultEntryGrid, ResultViewGrid, type EntrySlot } from "@/ui/components/result-entry-grid";
 import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
 import { OverrideEditor } from "@/ui/components/override-editor";
+import { FinalRoundBoard } from "@/ui/components/final-round-board";
 
 function isRecorded(pairing: Pairing) {
   return pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
@@ -84,6 +85,55 @@ function GamesBrowse({ card, players, canEdit, onOverride }: {
   );
 }
 
+/** Final / championship round: seeding review (director starts) then the entry + summary board. */
+function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, onPublish }: {
+  card: TournamentCard;
+  canManage: boolean;
+  onStart: () => Promise<void>;
+  onSubmitGame: (slot: number, gameIndex: number, scoreOne: number, scoreTwo: number) => Promise<void>;
+  onSetWinner: (slot: number, winnerId: string) => Promise<void>;
+  onPublish: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const seeding = card.runtimeStage === "FINAL_SEEDING";
+  const needed = card.finalType === "CHAMPION_AND_THIRD" ? 4 : 2;
+  const seeds = [...card.players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff).slice(0, needed);
+  const start = async () => {
+    if (!window.confirm("เริ่มรอบชิง? ผู้เข้าชิงจะถูกล็อกตามอันดับนี้ และจะแก้ไขผล/ยกเลิกการจับคู่ของเกมปกติไม่ได้อีก")) return;
+    setBusy(true);
+    try { await onStart(); } catch (error) { window.alert(error instanceof Error ? error.message : "เริ่มรอบชิงไม่สำเร็จ"); } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <PageHeader eyebrow={`${card.name} · รอบชิงชนะเลิศ`} title="รอบชิงชนะเลิศ"
+        description={seeding ? "ตรวจรายชื่อผู้เข้าชิงตามอันดับท้ายเกมสุดท้าย แล้วกดเริ่มรอบชิง" : "กรอกผลรายเกม (ไม่มี max diff) แล้วสรุปผู้ชนะของแต่ละคู่เอง"} />
+      {seeding ? (
+        <Panel title="ผู้เข้าชิง (ตรวจก่อนเริ่ม)" description={card.finalType === "CHAMPION_AND_THIRD" ? "ชิงที่ 1 (อันดับ 1,2) และชิงที่ 3 (อันดับ 3,4)" : "ชิงที่ 1 (อันดับ 1,2)"}>
+          <div className="panel-padding">
+            {seeds.length < needed ? (
+              <p className="form-error">ผู้เล่นไม่พอสำหรับรอบชิง (ต้องการ {needed} คน มี {seeds.length} คน)</p>
+            ) : (
+              <ol className="final-seed-list">
+                {seeds.map((player, index) => (
+                  <li key={player.id}>
+                    <Badge tone={index === 0 ? "success" : "info"}>อันดับ {index + 1}</Badge>
+                    <strong>{player.firstName} {player.lastName}</strong><small>{player.school}</small>
+                    {index % 2 === 1 && <span className="final-seed-vs">ชิงอันดับ {index === 1 ? "1-2" : "3-4"}</span>}
+                  </li>
+                ))}
+              </ol>
+            )}
+            <div className="notice notice--warning" style={{ marginTop: 12 }}><LockKeyhole size={18} /><p><strong>เริ่มรอบชิงแล้วล็อกถาวร</strong><span>หลังเริ่ม จะแก้ไขผลเกมปกติหรือยกเลิกการจับคู่ไม่ได้อีก</span></p></div>
+            {canManage && <div className="form-actions" style={{ paddingLeft: 0 }}><Button disabled={busy || seeds.length < needed} onClick={() => void start()}><Trophy size={16} />เริ่มรอบชิง (ล็อก seed)</Button></div>}
+          </div>
+        </Panel>
+      ) : (
+        <FinalRoundBoard card={card} canManage={canManage} readOnly={card.runtimeStage === "FINAL_PUBLISHED"} onSubmitGame={onSubmitGame} onSetWinner={onSetWinner} onPublish={onPublish} />
+      )}
+    </>
+  );
+}
+
 export default function GamesPage() {
   const { id } = useParams<{ id: string }>(); const router = useRouter();
   const cards = useTournamentStore((state) => state.cards); const auth = useTournamentStore((state) => state.auth); const loading = useTournamentStore((state) => state.loading);
@@ -93,6 +143,10 @@ export default function GamesPage() {
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
   const unpairToPreview = useTournamentStore((state) => state.unpairToPreview);
   const verifyPassword = useTournamentStore((state) => state.verifyPassword);
+  const startFinal = useTournamentStore((state) => state.startFinal);
+  const submitFinalResult = useTournamentStore((state) => state.submitFinalResult);
+  const setFinalWinner = useTournamentStore((state) => state.setFinalWinner);
+  const publishFinal = useTournamentStore((state) => state.publishFinal);
   const card = selectCard(cards, id); const [busy, setBusy] = useState(false);
   const [viewKey, setViewKey] = useState<string | null>(null);
   const [editUnlocked, setEditUnlocked] = useState(false);
@@ -165,6 +219,14 @@ export default function GamesPage() {
     } catch { setPwError("ตรวจสอบรหัสผ่านไม่สำเร็จ"); }
     finally { setPwBusy(false); }
   };
+
+  if (card.runtimeStage === "FINAL_SEEDING" || card.runtimeStage === "FINAL_COLLECTION" || (card.runtimeStage === "FINAL_PUBLISHED" && card.finalType !== "NONE")) {
+    return <FinalRoundView card={card} canManage={isDirector}
+      onStart={() => startFinal(id)}
+      onSubmitGame={(slot, gameIndex, scoreOne, scoreTwo) => submitFinalResult(id, slot, gameIndex, scoreOne, scoreTwo)}
+      onSetWinner={(slot, winnerId) => setFinalWinner(id, slot, winnerId)}
+      onPublish={() => publishFinal(id)} />;
+  }
 
   if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} canEdit={canManageTournament(auth)} onOverride={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} /></>;
 

@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTournamentStore } from "@/application/tournament/store";
 import { createCardSchema, type CreateCardForm } from "@/domain/tournament/schemas";
-import type { PairingRuleType, Tournament } from "@/domain/tournament/types";
+import type { FinalType, PairingRuleType, Tournament } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 import { Panel } from "@/ui/components/page";
 
@@ -30,6 +30,9 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
   const createCard = useTournamentStore((state) => state.createCard);
   const [rules, setRules] = useState<PairingRuleType[]>(["SWISS", "SWISS", "SWISS"]);
   const [gameMaxDiffs, setGameMaxDiffs] = useState<number[]>([350, 350, 350, 350]);
+  const [finalType, setFinalType] = useState<FinalType>("NONE");
+  const [finalGames, setFinalGames] = useState<number>(1);
+  const [gibsonEnabled, setGibsonEnabled] = useState(false);
   const [tournamentId, setTournamentId] = useState(fixedTournament?.id ?? "");
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<CreateCardForm>({
     resolver: zodResolver(createCardSchema),
@@ -61,7 +64,7 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
     const tour = resolveTournament();
     if (!tour) { window.alert("กรุณาเลือกรายการแข่งขัน (tournament) ก่อนสร้างการ์ด"); return; }
     try {
-      const id = await createCard({ tournamentId: tour.id, ...values, rules, gameMaxDiffs });
+      const id = await createCard({ tournamentId: tour.id, ...values, rules, gameMaxDiffs, finalType, finalGames: finalType === "NONE" ? 0 : finalGames, gibsonEnabled });
       onCreated(id, tour);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "ไม่สามารถสร้างการ์ดได้");
@@ -115,6 +118,33 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
                 onChange={(event) => setGameMaxDiffs((current) => current.map((value, gameIndex) => gameIndex === index ? Number(event.target.value) : value))} />
             </div>
           ))}
+        </div>
+      </Panel>
+
+      <Panel title="รอบชิงชนะเลิศ" description="เลือกได้ว่ามีรอบตัดสินอันดับหรือไม่ — ผู้เข้าชิงมาจากอันดับท้ายเกมสุดท้าย รอบชิงไม่มี max diff และสรุปผู้ชนะเอง">
+        <div className="panel-padding form-grid">
+          <div className="form-field">
+            <label className="form-label" htmlFor="cf-final-type">รูปแบบรอบชิง</label>
+            <select className="select" id="cf-final-type" value={finalType} onChange={(event) => setFinalType(event.target.value as FinalType)}>
+              <option value="NONE">ไม่มีรอบชิง</option>
+              <option value="CHAMPION">ชิงที่ 1 — อันดับ 1,2 เข้าชิง (ชนะ = ที่ 1, แพ้ = ที่ 2)</option>
+              <option value="CHAMPION_AND_THIRD">ชิงที่ 1 และ 3 — เพิ่มอันดับ 3,4 ชิงที่ 3 (ชนะ = ที่ 3, แพ้ = ที่ 4)</option>
+            </select>
+          </div>
+          {finalType !== "NONE" && (
+            <div className="form-field">
+              <label className="form-label" htmlFor="cf-final-games">จำนวนเกมรอบชิง</label>
+              <input className="input" id="cf-final-games" type="number" min={1} max={12} value={finalGames}
+                onChange={(event) => setFinalGames(Math.max(1, Math.min(12, Number(event.target.value) || 1)))} />
+            </div>
+          )}
+          <div className="form-field" style={{ gridColumn: "1 / -1" }}>
+            <label className="form-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input type="checkbox" checked={gibsonEnabled} onChange={(event) => setGibsonEnabled(event.target.checked)} />
+              เปิดใช้ Gibsonization (Gibson Pairing)
+            </label>
+            <small className="muted">เมื่อระบบพิสูจน์ได้ว่ามีผู้เล่นการันตีแชมป์/เข้ารอบแน่นอนแล้ว จะจับคู่ผู้เล่นคนนั้นกับผู้ที่หมดลุ้นรางวัล เพื่อไม่ให้คะแนนไปกระทบลำดับกลุ่มที่ยังลุ้นอยู่ (คำนวณจาก max diff และเกมที่เหลือ)</small>
+          </div>
         </div>
       </Panel>
 

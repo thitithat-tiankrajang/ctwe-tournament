@@ -23,8 +23,14 @@ public final class CardDtos {
         @NotBlank @Size(max = 180) String division,
         @Min(2) @Max(12) int numberOfGames,
         @NotNull @Size(min = 1, max = 11) List<PairingRuleType> rules,
-        @NotNull @Size(min = 2, max = 12) List<@NotNull @Min(1) @Max(1000000) Integer> gameMaxDiffs
+        @NotNull @Size(min = 2, max = 12) List<@NotNull @Min(1) @Max(1000000) Integer> gameMaxDiffs,
+        @Pattern(regexp = "NONE|CHAMPION|CHAMPION_AND_THIRD") String finalType,
+        @Min(0) @Max(12) int finalGames,
+        boolean gibsonEnabled
     ) {}
+
+    public record FinalResultRequest(@NotNull @Min(0) @Max(1000000000) Integer scoreOne, @NotNull @Min(0) @Max(1000000000) Integer scoreTwo) {}
+    public record FinalWinnerRequest(@NotBlank String winnerId) {}
 
     public record PlayerRequest(
         @Size(max = 64) @Pattern(regexp = "[A-Za-z0-9_-]+") String id,
@@ -59,6 +65,11 @@ public final class CardDtos {
     public record SnapshotResponse(String id, List<Integer> gameNumbers, List<PairingResponse> pairings, String confirmedAt) {}
     public record AuditResponse(String id, String timestamp, String user, String action, String oldValue, String newValue) {}
 
+    // Final / championship round
+    public record FinalGameResponse(int gameIndex, Integer scoreOne, Integer scoreTwo, String winnerId) {}
+    public record FinalSlotResponse(int slot, String playerOneId, String playerTwoId, List<FinalGameResponse> games, String winnerId) {}
+    public record FinalRoundResponse(List<FinalSlotResponse> slots) {}
+
     public record CardResponse(
         UUID id,
         UUID tournamentId,
@@ -74,6 +85,10 @@ public final class CardDtos {
         List<TableResponse> tables,
         List<SnapshotResponse> snapshots,
         List<AuditResponse> audit,
+        String finalType,
+        int finalGames,
+        FinalRoundResponse finalRound,
+        boolean gibsonEnabled,
         Instant createdAt
     ) {}
 }

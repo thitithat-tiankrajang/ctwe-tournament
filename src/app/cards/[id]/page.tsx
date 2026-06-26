@@ -14,6 +14,7 @@ import { CardNotFound } from "@/ui/components/card-not-found";
 import { DataGrid, type DataColumn } from "@/ui/components/data-grid";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { ResultViewGrid } from "@/ui/components/result-entry-grid";
+import { FinalRoundBoard } from "@/ui/components/final-round-board";
 
 type OverviewView = "ranking" | "pairing" | "result";
 
@@ -23,13 +24,15 @@ const stageLabels: Record<RuntimeStage, string> = {
   PAIRING_PREVIEW: "ตรวจและยืนยัน Pairing",
   RESULT_COLLECTION: "กรอกผลการแข่งขัน",
   RESULT_REVIEW: "Review ก่อน Publish",
+  FINAL_SEEDING: "ตรวจผู้เข้าชิงรอบชิง",
+  FINAL_COLLECTION: "กรอกผลรอบชิงชนะเลิศ",
   FINAL_PUBLISHED: "ประกาศผลแล้ว",
 };
 
 function workflowHref(cardId: string, stage: RuntimeStage) {
   if (stage === "PLAYER_REGISTRATION") return `/cards/${cardId}/players`;
   if (stage === "TABLE_PAIRING" || stage === "PAIRING_PREVIEW") return `/cards/${cardId}/tables`;
-  if (stage === "RESULT_COLLECTION" || stage === "RESULT_REVIEW") return `/cards/${cardId}/games`;
+  if (stage === "RESULT_COLLECTION" || stage === "RESULT_REVIEW" || stage === "FINAL_SEEDING" || stage === "FINAL_COLLECTION") return `/cards/${cardId}/games`;
   return `/cards/${cardId}`;
 }
 
@@ -106,6 +109,10 @@ export default function CardOverviewPage() {
 
       {final && (
         <section className="final-trophy"><Trophy size={52} /><div><span>FINAL RESULT</span><h2>ประกาศผลการแข่งขันแล้ว</h2><p>ผลทุกเกมผ่านการ Review และ Publish ครบถ้วน</p></div></section>
+      )}
+
+      {card.finalType !== "NONE" && card.finalRound && (
+        <div style={{ marginBottom: 4 }}><FinalRoundBoard card={card} readOnly /></div>
       )}
 
       {canManage && !final && (

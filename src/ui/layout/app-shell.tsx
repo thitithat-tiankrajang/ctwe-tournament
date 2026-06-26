@@ -46,7 +46,9 @@ function stageHref(id: string, stage: RuntimeStage) {
     case "TABLE_PAIRING":
     case "PAIRING_PREVIEW": return `/cards/${id}/tables`;
     case "RESULT_COLLECTION":
-    case "RESULT_REVIEW": return `/cards/${id}/games`;
+    case "RESULT_REVIEW":
+    case "FINAL_SEEDING":
+    case "FINAL_COLLECTION": return `/cards/${id}/games`;
     default: return `/cards/${id}`;
   }
 }
