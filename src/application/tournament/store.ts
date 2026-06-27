@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { CreateCardInput, ManagedUser, Player, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, Tournament, TournamentCard } from "@/domain/tournament/types";
 
 export interface AuthState {
   authenticated: boolean;
@@ -36,6 +36,7 @@ interface TournamentState {
   setActiveTournament: (tournament: ActiveTournament | null) => void;
   load: () => Promise<void>;
   syncCard: (cardId: string) => Promise<void>;
+  loadAudit: (cardId: string) => Promise<AuditEntry[]>;
   refreshAuth: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -170,6 +171,10 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         else if (response.status === 404) set((state) => ({ cards: state.cards.filter((card) => card.id !== cardId), error: null }));
       } catch { /* transient network/poll error — keep current state */ }
     },
+    async loadAudit(cardId) {
+      // Audit is no longer in the card payload (kept the hot path cheap); fetch it on demand for the audit page.
+      return request<AuditEntry[]>(`/api/cards/${cardId}/audit`);
+    },
     async refreshAuth() {
       try {
         const auth = await request<AuthState>("/api/auth/me");
@@ -257,10 +262,24 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       await mutateCard(`/api/cards/${cardId}/pairings/confirm`, cardId, { method: "POST" });
     },
     async submitResult(cardId, pairingId, scoreOne, scoreTwo, editExisting = false) {
-      await mutateCard(`/api/cards/${cardId}/matches/${pairingId}/result`, cardId, {
-        method: "PUT",
-        body: JSON.stringify({ scoreOne, scoreTwo, editExisting }),
-      });
+      // Hot path: the server returns just the in-progress block's pairings (+ version), not the whole card.
+      const patch = await request<{ version: number; blockPairings: Pairing[] }>(
+        `/api/cards/${cardId}/matches/${pairingId}/result`,
+        { method: "PUT", body: JSON.stringify({ scoreOne, scoreTwo, editExisting }) },
+      );
+      let patched = false;
+      set((state) => ({
+        cards: state.cards.map((card) => {
+          if (card.id !== cardId) return card;
+          const index = card.snapshots.findIndex((snapshot) => !snapshot.confirmedAt);
+          if (index < 0) return card; // no in-progress block to patch — fall back below
+          patched = true;
+          const snapshots = card.snapshots.map((snapshot, i) => i === index ? { ...snapshot, pairings: patch.blockPairings } : snapshot);
+          return { ...card, snapshots, version: patch.version };
+        }),
+        error: null,
+      }));
+      if (!patched) await get().syncCard(cardId); // safety net: pull the full card if we couldn't patch in place
     },
     async overrideResult(cardId, matchId, scoreOne, scoreTwo) {
       await mutateCard(`/api/cards/${cardId}/matches/${matchId}/override`, cardId, {

@@ -25,9 +25,18 @@ export function useCardSync(cardId: string | undefined, intervalMs = 3500) {
   useEffect(() => {
     if (!cardId) return;
     let active = true;
-    const tick = () => { if (active && document.visibilityState !== "hidden") void syncCard(cardId); };
-    const timer = window.setInterval(tick, intervalMs);
-    tick();
+    // Poll a tiny version endpoint first; only pull the (much larger) full card when it actually changed.
+    const tick = async () => {
+      if (!active || document.visibilityState === "hidden") return;
+      try {
+        const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}/version`, { credentials: "same-origin", cache: "no-store" });
+        if (!active || !response.ok) return;
+        const { version } = (await response.json()) as { version: number };
+        if (currentVersionRef.current === undefined || version !== currentVersionRef.current) await syncCard(cardId);
+      } catch { /* transient poll error — keep current state */ }
+    };
+    const timer = window.setInterval(() => void tick(), intervalMs);
+    void tick();
     let source: EventSource | null = null;
     if ("EventSource" in window) {
       source = new EventSource(`/api/cards/${encodeURIComponent(cardId)}/events`);
@@ -44,7 +53,7 @@ export function useCardSync(cardId: string | undefined, intervalMs = 3500) {
         // EventSource reconnects itself; the polling fallback covers the gap.
       };
     }
-    const onVisible = () => { if (document.visibilityState === "visible") tick(); };
+    const onVisible = () => { if (document.visibilityState === "visible") void tick(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       active = false;

@@ -86,16 +86,33 @@ public class TournamentCardService {
                 rs.getInt("wins"), rs.getInt("draws"), rs.getInt("losses"), rs.getInt("win_points"), rs.getInt("diff")), cardId);
         var tables = staffView ? loadTables(cardId) : List.<CardDtos.TableResponse>of();
         var snapshots = loadSnapshots(cardId, staffView);
-        var audit = staffView ? jdbc.query("""
-            SELECT id, actor, action, old_value::text old_value, new_value::text new_value, created_at
-            FROM audit_logs WHERE card_id = ? ORDER BY created_at DESC LIMIT 2000
-            """, (rs, row) -> new CardDtos.AuditResponse(rs.getObject("id", UUID.class).toString(),
-                rs.getTimestamp("created_at").toInstant().toString(), rs.getString("actor"), rs.getString("action"),
-                jsonText(rs.getString("old_value")), jsonText(rs.getString("new_value"))), cardId) : List.<CardDtos.AuditResponse>of();
+        // Audit is intentionally NOT loaded in the card payload — it is the largest, JSONB-heavy part and
+        // only the audit page needs it. Loading it on every save/poll/list (get() runs per card in list())
+        // dominated latency + heap. It is served on demand via GET /{cardId}/audit instead.
+        var audit = List.<CardDtos.AuditResponse>of();
 
         return new CardDtos.CardResponse(card.id(), tournamentId, card.name(), card.division(), card.status(), card.runtimeStage(),
             card.currentGame(), card.version(), games, rules, players, tables, snapshots, audit,
             card.finalType(), card.finalGames(), loadFinalRound(cardId), card.gibsonEnabled(), card.createdAt());
+    }
+
+    /** On-demand audit log for the audit page (kept out of the card payload to keep the hot path cheap). */
+    @Transactional(readOnly = true)
+    public List<CardDtos.AuditResponse> auditLog(UUID cardId) {
+        return jdbc.query("""
+            SELECT id, actor, action, old_value::text old_value, new_value::text new_value, created_at
+            FROM audit_logs WHERE card_id = ? ORDER BY created_at DESC LIMIT 1000
+            """, (rs, row) -> new CardDtos.AuditResponse(rs.getObject("id", UUID.class).toString(),
+                rs.getTimestamp("created_at").toInstant().toString(), rs.getString("actor"), rs.getString("action"),
+                jsonText(rs.getString("old_value")), jsonText(rs.getString("new_value"))), cardId);
+    }
+
+    /** Tiny change-detector for live-sync polling: avoids rebuilding the whole card when nothing changed. */
+    @Transactional(readOnly = true)
+    public long cardVersion(UUID cardId) {
+        List<Long> rows = jdbc.queryForList("SELECT version FROM tournament_cards WHERE id = ?", Long.class, cardId);
+        if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
+        return rows.get(0);
     }
 
     /** Assemble the final-round bracket (null until the director starts it). Player ids are external codes. */
@@ -469,7 +486,7 @@ public class TournamentCardService {
     }
 
     @Transactional
-    public CardDtos.CardResponse submitResult(UUID cardId, UUID matchId, CardDtos.ResultRequest request, String actor) {
+    public CardDtos.ResultPatch submitResult(UUID cardId, UUID matchId, CardDtos.ResultRequest request, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
         int scoreOne = request.scoreOne();
         int scoreTwo = request.scoreTwo();
@@ -526,7 +543,31 @@ public class TournamentCardService {
         audit(cardId, actor, existing ? "EDIT_RESULT" : "SUBMIT_RESULT", previousResult, calculatedResult);
         if (match.gameNumber() == card.currentGame() && isOutgoingPairResult(cardId, card.currentGame()))
             syncPairResultSource(cardId, card.currentGame(), match.tableNumber());
-        return get(cardId, true);
+        // Return only the current block's pairings (+ new version) instead of rebuilding the whole card — the
+        // hot path. Other screens learn of the change via SSE/version-poll and resync. Standings are NOT
+        // touched during result collection, so the rest of the card is unchanged.
+        List<Integer> blockGames = activeResultGames(card);
+        return new CardDtos.ResultPatch(cardVersion(cardId),
+            currentBlockPairings(cardId, blockGames.get(0), blockGames.get(blockGames.size() - 1)));
+    }
+
+    /** Just the unconfirmed (in-progress) pairings of one result block — used by the lightweight save response. */
+    private List<CardDtos.PairingResponse> currentBlockPairings(UUID cardId, int fromGame, int toGame) {
+        return jdbc.query("""
+            SELECT m.id, g.game_number, m.table_number, p1.external_id player_one, p2.external_id player_two,
+                   pw.external_id winner, r.score_one, r.score_two, r.result_type, r.calculated_diff,
+                   m.snapshot_id, m.pairing_published_at, s.confirmed_at
+            FROM matches m JOIN games g ON g.id = m.game_id
+            LEFT JOIN players p1 ON p1.id = m.player_one_id LEFT JOIN players p2 ON p2.id = m.player_two_id
+            LEFT JOIN match_results r ON r.match_id = m.id LEFT JOIN players pw ON pw.id = r.winner_id
+            LEFT JOIN pairing_snapshots s ON s.id = m.snapshot_id
+            WHERE m.card_id = ? AND g.game_number BETWEEN ? AND ? AND m.snapshot_id IS NULL
+            ORDER BY g.game_number, m.table_number
+            """, (rs, row) -> new PairingRow(rs.getObject("id", UUID.class), rs.getInt("game_number"), rs.getInt("table_number"),
+                rs.getString("player_one"), rs.getString("player_two"), rs.getString("winner"), nullableInt(rs, "score_one"),
+                nullableInt(rs, "score_two"), rs.getString("result_type"), nullableInt(rs, "calculated_diff"),
+                rs.getObject("snapshot_id", UUID.class), rs.getTimestamp("pairing_published_at"), rs.getTimestamp("confirmed_at")),
+            cardId, fromGame, toGame).stream().map(row -> toPairingResponse(row, true)).toList();
     }
 
     @Transactional

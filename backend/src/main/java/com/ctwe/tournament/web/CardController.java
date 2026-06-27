@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -45,6 +46,19 @@ public class CardController {
     @GetMapping("/{cardId}")
     public CardDtos.CardResponse get(@PathVariable UUID cardId, Authentication authentication) {
         return service.get(cardId, backOffice(authentication));
+    }
+
+    /** On-demand audit log (kept out of the card payload). Role-gated to ADMIN/DIRECTOR by SecurityConfiguration. */
+    @GetMapping("/{cardId}/audit")
+    public List<CardDtos.AuditResponse> audit(@PathVariable UUID cardId, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        return service.auditLog(cardId);
+    }
+
+    /** Tiny change-detector for live-sync polling (full card is fetched only when this changes). */
+    @GetMapping("/{cardId}/version")
+    public Map<String, Long> version(@PathVariable UUID cardId) {
+        return Map.of("version", service.cardVersion(cardId));
     }
 
     @GetMapping(value = "/{cardId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -133,10 +147,12 @@ public class CardController {
     }
 
     @PutMapping("/{cardId}/matches/{matchId}/result")
-    public CardDtos.CardResponse submitResult(@PathVariable UUID cardId, @PathVariable UUID matchId,
-                                               @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
+    public CardDtos.ResultPatch submitResult(@PathVariable UUID cardId, @PathVariable UUID matchId,
+                                             @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
-        return changed(service.submitResult(cardId, matchId, request, authentication.getName()));
+        CardDtos.ResultPatch patch = service.submitResult(cardId, matchId, request, authentication.getName());
+        events.publish(cardId, patch.version()); // notify other screens to resync (they fetch the full card)
+        return patch;
     }
 
     @PutMapping("/{cardId}/matches/{matchId}/override")
