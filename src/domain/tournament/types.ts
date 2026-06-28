@@ -133,6 +133,31 @@ export interface TournamentCard {
   finalRound: FinalRound | null;
   gibsonEnabled: boolean;
   createdAt: string;
+  /** Present on the compact anonymous catalog representation. */
+  playerCount?: number;
+  gameCount?: number;
+  publishedGameCount?: number;
+  summaryOnly?: boolean;
+}
+
+export interface PublicCardSummary {
+  id: string;
+  tournamentId: string;
+  name: string;
+  division: string;
+  status: CardStatus;
+  runtimeStage: RuntimeStage;
+  currentGame: number;
+  gameCount: number;
+  playerCount: number;
+  publishedGameCount: number;
+  version: number;
+  createdAt: string;
+}
+
+export interface PublicCardVersion {
+  id: string;
+  version: number;
 }
 
 export interface CreateCardInput {

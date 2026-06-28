@@ -94,6 +94,7 @@ public class AdminController {
     }
 
     @PatchMapping("/directors/{username}/enabled")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void setDirectorEnabled(@PathVariable String username, @Valid @RequestBody TenantDtos.EnabledRequest request,
                                    Authentication auth) {
         requireDirector(username);
@@ -101,6 +102,7 @@ public class AdminController {
     }
 
     @PostMapping("/directors/{username}/password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void resetDirectorPassword(@PathVariable String username, @Valid @RequestBody TenantDtos.PasswordRequest request,
                                       Authentication auth) {
         requireDirector(username);

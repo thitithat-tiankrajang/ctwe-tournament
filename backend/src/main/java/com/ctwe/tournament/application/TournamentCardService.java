@@ -5,11 +5,15 @@ import com.ctwe.tournament.domain.model.PairingRuleType;
 import com.ctwe.tournament.domain.model.RuntimeStage;
 import com.ctwe.tournament.domain.pairing.GibsonAnalysis;
 import com.ctwe.tournament.domain.pairing.PairingStrategy;
+import com.ctwe.tournament.infrastructure.cache.EvictPublicCard;
+import com.ctwe.tournament.infrastructure.cache.TournamentCaches;
 import com.ctwe.tournament.web.dto.CardDtos;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -143,6 +147,10 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @Caching(evict = {
+        @CacheEvict(cacheNames = TournamentCaches.PUBLIC_CARD_CATALOG, allEntries = true),
+        @CacheEvict(cacheNames = TournamentCaches.PUBLIC_CARD_VERSIONS, allEntries = true)
+    })
     public CardDtos.CardResponse create(CardDtos.CreateCardRequest request, String actor) {
         if (request.rules().size() != request.numberOfGames() - 1)
             throw new IllegalArgumentException("Every game edge requires exactly one pairing rule");
@@ -223,6 +231,7 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse updatePlayer(UUID cardId, String playerExternalId, CardDtos.PlayerRequest request, String actor, boolean operator) {
         // Directors/admins may correct player details at any time; staff only during registration.
         if (operator) ensureEditable(cardId);
@@ -236,6 +245,7 @@ public class TournamentCardService {
             """, request.firstName().trim(), request.lastName().trim(), request.school().trim(), cardId, playerExternalId);
         if (changed == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Player not found");
         touch(cardId);
+        publishPublicIfPlayersVisible(cardId);
         audit(cardId, actor, "UPDATE_PLAYER", oldPlayer.asAuditValue(), Map.of(
             "id", playerExternalId,
             "firstName", request.firstName().trim(),
@@ -246,6 +256,7 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse removePlayer(UUID cardId, String playerExternalId, String actor) {
         requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
         PlayerAudit removedPlayer = playerAudit(cardId, playerExternalId);
@@ -277,6 +288,7 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse finishRegistration(UUID cardId, String actor) {
         requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
         long players = count("SELECT COUNT(*) FROM players WHERE card_id = ?", cardId);
@@ -285,6 +297,7 @@ public class TournamentCardService {
         if (hasPairResultRule(cardId) && players % 4 != 0)
             throw new IllegalArgumentException("การแข่งขันที่ใช้แพ้เจอแพ้/ชนะเจอชนะต้องมีจำนวนผู้เล่นหาร 4 ลงตัว");
         jdbc.update("UPDATE tournament_cards SET status = 'READY', runtime_stage = 'TABLE_PAIRING', version = version + 1 WHERE id = ?", cardId);
+        publishPublic(cardId);
         audit(cardId, actor, "FINISH_PLAYER_REGISTRATION", players + " players", "ready for game 1 pairing");
         return get(cardId, true);
     }
@@ -374,6 +387,7 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse swapPlayers(UUID cardId, CardDtos.SwapRequest request, String actor) {
         // Edit pairing is allowed from preview through result collection (director-only, enforced upstream).
         CardRow card = cardRow(cardId);
@@ -389,6 +403,7 @@ public class TournamentCardService {
             swapSeats(cardId, first, second, request.confirmSchoolConflict());
         else swapMatchPlayers(cardId, card.currentGame(), first, second, request.confirmSchoolConflict());
         touch(cardId);
+        if (card.runtimeStage() == RuntimeStage.RESULT_COLLECTION) publishPublic(cardId);
         audit(cardId, actor, "SWAP_PLAYERS", request.firstPlayerId(), request.secondPlayerId() + " · เกม " + card.currentGame());
         return get(cardId, true);
     }
@@ -441,6 +456,7 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse confirmPairingPreview(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.PAIRING_PREVIEW);
         if (card.currentGame() == 1) createMatchesFromInitialTables(cardId);
@@ -450,6 +466,7 @@ public class TournamentCardService {
             cardId, card.currentGame());
         jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number = ?", cardId, card.currentGame());
         jdbc.update("UPDATE tournament_cards SET status = 'RUNNING', runtime_stage = 'RESULT_COLLECTION', version = version + 1 WHERE id = ?", cardId);
+        publishPublic(cardId);
         List<Integer> resultGames = activeResultGames(card);
         audit(cardId, actor, "CONFIRM_PAIRING", "preview", Map.of(
             "publishedPairingGame", card.currentGame(),
@@ -464,6 +481,7 @@ public class TournamentCardService {
      * on the preview page. If any result exists, the caller must use swap instead. Director-only upstream.
      */
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse unpairToPreview(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
         List<Integer> games = activeResultGames(card);
@@ -481,6 +499,7 @@ public class TournamentCardService {
         }
         jdbc.update("UPDATE games SET status = 'PENDING' WHERE card_id = ? AND game_number = ?", cardId, card.currentGame());
         jdbc.update("UPDATE tournament_cards SET runtime_stage = 'PAIRING_PREVIEW', version = version + 1 WHERE id = ?", cardId);
+        publishPublic(cardId);
         audit(cardId, actor, "UNPAIR_TO_PREVIEW", "result collection เกม " + card.currentGame(), "กลับสู่ pairing preview");
         return get(cardId, true);
     }
@@ -541,18 +560,23 @@ public class TournamentCardService {
         calculatedResult.put("calculatedDiff", calculatedDiff);
         calculatedResult.put("maxDiff", match.maxDiff());
         audit(cardId, actor, existing ? "EDIT_RESULT" : "SUBMIT_RESULT", previousResult, calculatedResult);
-        if (match.gameNumber() == card.currentGame() && isOutgoingPairResult(cardId, card.currentGame()))
+        boolean updatesPairResultDestination =
+            match.gameNumber() == card.currentGame() && isOutgoingPairResult(cardId, card.currentGame());
+        if (updatesPairResultDestination)
             syncPairResultSource(cardId, card.currentGame(), match.tableNumber());
-        // Return only the current block's pairings (+ new version) instead of rebuilding the whole card — the
-        // hot path. Other screens learn of the change via SSE/version-poll and resync. Standings are NOT
-        // touched during result collection, so the rest of the card is unchanged.
-        List<Integer> blockGames = activeResultGames(card);
+        // A normal save changes one row. PAIR_RESULT can additionally materialize/update two
+        // destination rows. Broadcasting only those rows keeps SSE traffic bounded at O(1).
+        int destinationGame = updatesPairResultDestination ? card.currentGame() + 1 : -1;
+        int destinationGroupStart = updatesPairResultDestination
+            ? ((match.tableNumber() - 1) / 2) * 2 + 1
+            : -1;
         return new CardDtos.ResultPatch(cardVersion(cardId),
-            currentBlockPairings(cardId, blockGames.get(0), blockGames.get(blockGames.size() - 1)));
+            changedResultPairings(cardId, matchId, destinationGame, destinationGroupStart));
     }
 
-    /** Just the unconfirmed (in-progress) pairings of one result block — used by the lightweight save response. */
-    private List<CardDtos.PairingResponse> currentBlockPairings(UUID cardId, int fromGame, int toGame) {
+    private List<CardDtos.PairingResponse> changedResultPairings(
+        UUID cardId, UUID sourceMatchId, int destinationGame, int destinationGroupStart
+    ) {
         return jdbc.query("""
             SELECT m.id, g.game_number, m.table_number, p1.external_id player_one, p2.external_id player_two,
                    pw.external_id winner, r.score_one, r.score_two, r.result_type, r.calculated_diff,
@@ -561,13 +585,15 @@ public class TournamentCardService {
             LEFT JOIN players p1 ON p1.id = m.player_one_id LEFT JOIN players p2 ON p2.id = m.player_two_id
             LEFT JOIN match_results r ON r.match_id = m.id LEFT JOIN players pw ON pw.id = r.winner_id
             LEFT JOIN pairing_snapshots s ON s.id = m.snapshot_id
-            WHERE m.card_id = ? AND g.game_number BETWEEN ? AND ? AND m.snapshot_id IS NULL
+            WHERE m.card_id = ? AND m.snapshot_id IS NULL
+              AND (m.id = ? OR (g.game_number = ? AND m.table_number IN (?, ?)))
             ORDER BY g.game_number, m.table_number
             """, (rs, row) -> new PairingRow(rs.getObject("id", UUID.class), rs.getInt("game_number"), rs.getInt("table_number"),
                 rs.getString("player_one"), rs.getString("player_two"), rs.getString("winner"), nullableInt(rs, "score_one"),
                 nullableInt(rs, "score_two"), rs.getString("result_type"), nullableInt(rs, "calculated_diff"),
                 rs.getObject("snapshot_id", UUID.class), rs.getTimestamp("pairing_published_at"), rs.getTimestamp("confirmed_at")),
-            cardId, fromGame, toGame).stream().map(row -> toPairingResponse(row, true)).toList();
+            cardId, sourceMatchId, destinationGame, destinationGroupStart, destinationGroupStart + 1)
+            .stream().map(row -> toPairingResponse(row, true)).toList();
     }
 
     @Transactional
@@ -600,6 +626,7 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse publishResults(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_REVIEW);
         var rows = pairingRows(cardId, true);
@@ -651,6 +678,7 @@ public class TournamentCardService {
             """, finished ? last : last + 1,
             (!finished || hasFinal) ? "RUNNING" : "FINISHED",
             !finished ? "TABLE_PAIRING" : (hasFinal ? "FINAL_SEEDING" : "FINAL_PUBLISHED"), cardId);
+        publishPublic(cardId);
         if (!finished) jdbc.update("DELETE FROM competition_tables WHERE card_id = ?", cardId);
         audit(cardId, actor, finished ? "PUBLISH_FINAL_RESULTS" : "PUBLISH_GAME_RESULTS", "game " + gameNumbers + " review", hash);
         return get(cardId, true);
@@ -691,6 +719,7 @@ public class TournamentCardService {
         int updated = jdbc.update("UPDATE final_game_results SET score_one = ?, score_two = ? WHERE card_id = ? AND slot = ? AND game_index = ?",
             scoreOne, scoreTwo, cardId, slot, gameIndex);
         if (updated == 0) throw new IllegalArgumentException("ไม่พบช่องผลรอบชิงนี้");
+        touch(cardId);
         audit(cardId, actor, "FINAL_RESULT", null, "slot " + slot + " game " + gameIndex + " = " + scoreOne + ":" + scoreTwo);
         return get(cardId, true);
     }
@@ -706,17 +735,20 @@ public class TournamentCardService {
             UPDATE final_pairings SET winner_id = ? WHERE card_id = ? AND slot = ? AND (player_one_id = ? OR player_two_id = ?)
             """, winnerId, cardId, slot, winnerId, winnerId);
         if (updated == 0) throw new IllegalArgumentException("ผู้ชนะต้องเป็นหนึ่งในผู้เข้าชิงของคู่นี้");
+        touch(cardId);
         audit(cardId, actor, "FINAL_WINNER", null, "slot " + slot + " winner " + winnerExternalId);
         return get(cardId, true);
     }
 
     /** Finish the final once every pairing has a manually-decided winner. */
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse publishFinalRound(UUID cardId, String actor) {
         requireStage(cardId, RuntimeStage.FINAL_COLLECTION);
         if (count("SELECT COUNT(*) FROM final_pairings WHERE card_id = ? AND winner_id IS NULL", cardId) > 0)
             throw new IllegalArgumentException("ต้องสรุปผู้ชนะให้ครบทุกคู่ก่อนเผยแพร่");
         jdbc.update("UPDATE tournament_cards SET status = 'FINISHED', runtime_stage = 'FINAL_PUBLISHED', version = version + 1 WHERE id = ?", cardId);
+        publishPublic(cardId);
         audit(cardId, actor, "PUBLISH_FINAL", null, "final published");
         return get(cardId, true);
     }
@@ -728,6 +760,7 @@ public class TournamentCardService {
      * When re-paired afterwards the latest standings are used. Director-only (enforced upstream).
      */
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse undoPairing(UUID cardId, String actor) {
         CardRow card = cardRow(cardId);
         if (card.status() == CardStatus.CLOSED)
@@ -748,6 +781,7 @@ public class TournamentCardService {
             jdbc.update("UPDATE games SET status = 'PENDING' WHERE card_id = ?", cardId);
             recalculateStandings(cardId);
             jdbc.update("UPDATE tournament_cards SET current_game = 1, status = 'READY', runtime_stage = 'TABLE_PAIRING', version = version + 1 WHERE id = ?", cardId);
+            publishPublic(cardId);
             audit(cardId, actor, "UNDO_PAIRING", "game 1 preview", "กลับสู่ TABLE_PAIRING");
             return get(cardId, true);
         }
@@ -767,6 +801,7 @@ public class TournamentCardService {
         jdbc.update("""
             UPDATE tournament_cards SET current_game = ?, status = 'RUNNING', runtime_stage = 'RESULT_COLLECTION', version = version + 1 WHERE id = ?
             """, firstGame, cardId);
+        publishPublic(cardId);
         audit(cardId, actor, "UNDO_PAIRING", "block " + latest.gameNumbers(), "เปิดกรอกผลเกม " + firstGame + " อีกครั้ง");
         return get(cardId, true);
     }
@@ -776,6 +811,7 @@ public class TournamentCardService {
      * standings. Pairings are NOT regenerated; to re-pair from the new standings, undo the pairing first.
      */
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse overrideResult(UUID cardId, UUID matchId, CardDtos.ResultRequest request, String actor) {
         ensureEditable(cardId);
         requireRegularEditable(cardId);
@@ -819,6 +855,7 @@ public class TournamentCardService {
             """, UUID.randomUUID(), matchId, winner, scoreOne, scoreTwo, resultType, calculatedDiff, actor);
         recalculateStandings(cardId);
         touch(cardId);
+        publishPublic(cardId);
         Map<String, Object> calculated = new LinkedHashMap<>();
         calculated.put("scoreOne", scoreOne);
         calculated.put("scoreTwo", scoreTwo);
@@ -843,16 +880,23 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse close(UUID cardId, String actor) {
         CardRow card = cardRow(cardId);
         if (card.status() != CardStatus.FINISHED) throw new IllegalArgumentException("Only a finished card can be closed");
         jdbc.update("UPDATE tournament_cards SET status = 'CLOSED', version = version + 1 WHERE id = ?", cardId);
+        publishPublic(cardId);
         audit(cardId, actor, "CLOSE_CARD", card.status().name(), "CLOSED");
         return get(cardId, true);
     }
 
     /** Permanently removes a card and every row tied to it (players, pairings, results, standings, audit logs). */
     @Transactional
+    @Caching(evict = {
+        @CacheEvict(cacheNames = TournamentCaches.PUBLIC_CARD_DETAILS, key = "#cardId"),
+        @CacheEvict(cacheNames = TournamentCaches.PUBLIC_CARD_CATALOG, allEntries = true),
+        @CacheEvict(cacheNames = TournamentCaches.PUBLIC_CARD_VERSIONS, allEntries = true)
+    })
     public void delete(UUID cardId) {
         cardRow(cardId); // 404 + row lock if the card does not exist
         jdbc.update("DELETE FROM match_results WHERE match_id IN (SELECT id FROM matches WHERE card_id = ?)", cardId);
@@ -873,8 +917,10 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse generateTestPlayers(UUID cardId, int amount, String actor) {
-        if (amount != 300 && amount != 1000) throw new IllegalArgumentException("Test player count must be 300 or 1000");
+        if (amount != 300 && amount != 400 && amount != 1000)
+            throw new IllegalArgumentException("Test player count must be 300, 400 or 1000");
         resetRuntimeData(cardId, actor, false);
         jdbc.update("DELETE FROM standings WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM players WHERE card_id = ?", cardId);
@@ -892,13 +938,16 @@ public class TournamentCardService {
             jdbc.update("INSERT INTO standings (id, card_id, player_id) VALUES (?, ?, ?)", UUID.randomUUID(), cardId, playerId);
         }
         touch(cardId);
+        publishPublic(cardId);
         audit(cardId, actor, "GENERATE_TEST_PLAYERS", null, amount + " players");
         return get(cardId, true);
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse resetRuntime(UUID cardId, String actor) {
         resetRuntimeData(cardId, actor, true);
+        publishPublic(cardId);
         return get(cardId, true);
     }
 
@@ -928,6 +977,7 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse simulate(UUID cardId, String actor) {
         resetRuntimeData(cardId, actor, false);
         CardRow card = cardRow(cardId);
@@ -1333,6 +1383,13 @@ public class TournamentCardService {
     }
     private long count(String sql, Object... args) { return Objects.requireNonNull(jdbc.queryForObject(sql, Long.class, args)); }
     private void touch(UUID cardId) { jdbc.update("UPDATE tournament_cards SET version = version + 1 WHERE id = ?", cardId); }
+    private void publishPublic(UUID cardId) {
+        jdbc.update("UPDATE tournament_cards SET public_version = public_version + 1 WHERE id = ?", cardId);
+    }
+    private void publishPublicIfPlayersVisible(UUID cardId) {
+        String stage = jdbc.queryForObject("SELECT runtime_stage FROM tournament_cards WHERE id = ?", String.class, cardId);
+        if (!RuntimeStage.PLAYER_REGISTRATION.name().equals(stage)) publishPublic(cardId);
+    }
 
     private void audit(UUID cardId, String actor, String action, Object oldValue, Object newValue) {
         jdbc.update("""

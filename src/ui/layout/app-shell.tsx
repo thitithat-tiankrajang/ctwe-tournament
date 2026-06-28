@@ -25,9 +25,10 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { readActiveTournament, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { useCardSync } from "@/application/tournament/use-card-sync";
+import { usePublicSync } from "@/application/tournament/use-public-sync";
 import { hasStaffAccess, isAdmin, isDirector } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
@@ -123,8 +124,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [hovering, setHovering] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const isStaff = hasStaffAccess(auth);
-  // Live multi-user sync: poll the open card so concurrent staff/directors see each other's edits.
-  useCardSync(id);
+  const currentCard = id ? selectCard(cards, id) : undefined;
+  const previousFlowRef = useRef<{ cardId?: string; stage?: RuntimeStage }>({
+    cardId: id,
+    stage: currentCard?.runtimeStage,
+  });
+  // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
+  useCardSync(isStaff ? id : undefined);
+  usePublicSync(id, !isStaff);
   const generalLinks = [
     ...(isStaff ? [{ href: "/tournaments", label: "รายการแข่งขัน", icon: Trophy }] : publicGeneralLinks),
     ...(isAdmin(auth) ? [{ href: "/admin", label: "ผู้ดูแลระบบ", icon: ShieldCheck }] : []),
@@ -151,6 +158,17 @@ export function AppShell({ children }: { children: ReactNode }) {
     setOpenedIds((prev) => prev.includes(id) ? prev : [...prev, id]);
     setExpandedIds((prev) => prev.has(id) ? prev : new Set(prev).add(id));
   }, [id]);
+
+  // Follow a remote workflow transition only when this browser is still on the old workflow page.
+  useEffect(() => {
+    const nextStage = currentCard?.runtimeStage;
+    const previous = previousFlowRef.current;
+    previousFlowRef.current = { cardId: id, stage: nextStage };
+    if (previous.cardId !== id) return;
+    const previousStage = previous.stage;
+    if (!isStaff || !id || !previousStage || !nextStage || previousStage === nextStage) return;
+    if (pathname === stageHref(id, previousStage)) router.replace(stageHref(id, nextStage));
+  }, [currentCard?.runtimeStage, id, isStaff, pathname, router]);
 
   useEffect(() => { if (hydrated) try { sessionStorage.setItem(OPENED_KEY, JSON.stringify(openedIds)); } catch { /* ignore */ } }, [openedIds, hydrated]);
   useEffect(() => { if (hydrated) try { sessionStorage.setItem(LOCKED_KEY, locked ? "1" : "0"); } catch { /* ignore */ } }, [locked, hydrated]);

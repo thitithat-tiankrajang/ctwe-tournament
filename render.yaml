@@ -2,10 +2,10 @@ services:
   - type: web
     name: ctwe-tournament-api
     runtime: docker
-    plan: free
+    plan: starter
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    healthCheckPath: /actuator/health
+    healthCheckPath: /actuator/health/readiness
     maxShutdownDelaySeconds: 30
     envVars:
       - key: DATABASE_URL
@@ -28,3 +28,11 @@ services:
         value: "5"
       - key: DB_POOL_MIN_IDLE
         value: "0"
+      - key: PUBLIC_CARD_CACHE_TTL_SECONDS
+        value: "300"
+      - key: PUBLIC_CARD_CACHE_MAX_SIZE
+        value: "8"
+      - key: PUBLIC_CARD_CATALOG_CACHE_TTL_SECONDS
+        value: "300"
+      - key: PUBLIC_CARD_VERSIONS_CACHE_TTL_SECONDS
+        value: "3"

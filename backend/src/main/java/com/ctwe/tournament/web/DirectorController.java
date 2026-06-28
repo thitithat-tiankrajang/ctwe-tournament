@@ -37,6 +37,7 @@ public class DirectorController {
     }
 
     @PatchMapping("/staff/{username}/enabled")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void setStaffEnabled(@PathVariable String username, @Valid @RequestBody TenantDtos.EnabledRequest request,
                                 Authentication auth) {
         tenant.requireOwnedStaff(username, auth.getName());
@@ -44,6 +45,7 @@ public class DirectorController {
     }
 
     @PostMapping("/staff/{username}/password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void resetStaffPassword(@PathVariable String username, @Valid @RequestBody TenantDtos.PasswordRequest request,
                                    Authentication auth) {
         tenant.requireOwnedStaff(username, auth.getName());

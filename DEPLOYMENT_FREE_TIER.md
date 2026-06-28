@@ -1,4 +1,4 @@
-# Free-tier Deployment Runbook
+# Low-cost Deployment Runbook
 
 สถาปัตยกรรมรอบทดลอง:
 
@@ -13,7 +13,7 @@ Browser → Vercel (Next.js + HTTPS)
 ## ข้อจำกัดที่ต้องทราบ
 
 - Vercel Hobby ใช้กับงานส่วนตัว/non-commercial เท่านั้น
-- Render Free จะ sleep หลังไม่มี request 15 นาที การเปิดครั้งแรกอาจรอประมาณ 1 นาที
+- Render Blueprint ใช้ Starter 512 MB / 0.5 CPU เป็นค่าเริ่มต้น และไม่ควรลดเป็น Free ในวันใช้งานจริง
 - Neon Free มี storage 0.5 GB, compute 100 CU-hours/project/month และ scale-to-zero
 - Free tier ไม่มี SLA และไม่ควรเป็นปลายทางของการแข่งขันที่รับความเสี่ยง downtime ไม่ได้
 - ก่อนวันแข่งจริงควร export backup และพิจารณาอัปเกรด backend อย่างน้อยชั่วคราวเพื่อไม่ให้ cold start
@@ -69,7 +69,7 @@ STAFF_PASSWORD_HASH=$2y$12$...
 1. Render Dashboard → **New +** → **Blueprint**
 2. เชื่อม private GitHub repository
 3. เลือก `render.yaml` จาก root
-4. เลือก instance `Free`
+4. เลือก instance `Starter`
 5. กรอก secret ที่ Blueprint ขอ:
 
 ```text
@@ -92,7 +92,7 @@ DB_POOL_MIN_IDLE=0
 เมื่อ deploy สำเร็จ ให้เปิด:
 
 ```text
-https://YOUR-RENDER-SERVICE.onrender.com/actuator/health
+https://YOUR-RENDER-SERVICE.onrender.com/actuator/health/readiness
 ```
 
 ต้องได้ `{"status":"UP"}` Flyway จะสร้าง schema และ migrations อัตโนมัติเมื่อ backend เริ่มทำงาน
@@ -132,4 +132,5 @@ Frontend proxy `/api`, `/login`, `/logout` ไป backend ทำให้ browse
 - สร้าง Neon manual snapshot ก่อนเริ่มงานและก่อน migration สำคัญ
 - ทดสอบ restore บน Neon branch แยก
 - ตั้งผู้รับผิดชอบ monitor Render/Neon/Vercel dashboards
-- Free Render cold start ไม่เหมาะกับช่วงเปิดรับผลแบบต่อเนื่อง หากเป็นงานจริงให้อัปเกรด backend ก่อนเริ่มงาน
+- สำหรับงาน 5,000 viewers ให้อัปเป็น Standard เฉพาะช่วงงาน แล้วลดกลับเป็น Starter หลังจบงาน
+- ทำ capacity test และขั้นตอน warm cache ตาม `docs/EVENT_CAPACITY_RUNBOOK.md`

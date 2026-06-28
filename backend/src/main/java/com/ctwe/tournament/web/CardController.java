@@ -1,6 +1,7 @@
 package com.ctwe.tournament.web;
 
 import com.ctwe.tournament.application.CardEventPublisher;
+import com.ctwe.tournament.application.PublicCardQueryService;
 import com.ctwe.tournament.application.TournamentCardService;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService.Capability;
@@ -27,25 +28,29 @@ import java.util.UUID;
 @RequestMapping("/api/cards")
 public class CardController {
     private final TournamentCardService service;
+    private final PublicCardQueryService publicCards;
     private final AuthorizationService authz;
     private final CardEventPublisher events;
 
-    public CardController(TournamentCardService service, AuthorizationService authz, CardEventPublisher events) {
+    public CardController(TournamentCardService service, PublicCardQueryService publicCards,
+                          AuthorizationService authz, CardEventPublisher events) {
         this.service = service;
+        this.publicCards = publicCards;
         this.authz = authz;
         this.events = events;
     }
 
     @GetMapping
     public List<CardDtos.CardResponse> list(Authentication authentication) {
+        if (!backOffice(authentication)) return publicCards.list();
         Set<UUID> restrict = (authz.isDirector(authentication) || authz.isStaff(authentication))
             ? authz.accessibleTournamentIds(authentication) : null;
-        return service.list(backOffice(authentication), restrict);
+        return service.list(true, restrict);
     }
 
     @GetMapping("/{cardId}")
     public CardDtos.CardResponse get(@PathVariable UUID cardId, Authentication authentication) {
-        return service.get(cardId, backOffice(authentication));
+        return backOffice(authentication) ? service.get(cardId, true) : publicCards.get(cardId);
     }
 
     /** On-demand audit log (kept out of the card payload). Role-gated to ADMIN/DIRECTOR by SecurityConfiguration. */
@@ -63,8 +68,8 @@ public class CardController {
 
     @GetMapping(value = "/{cardId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events(@PathVariable UUID cardId, Authentication authentication) {
-        service.get(cardId, backOffice(authentication));
-        return events.subscribe(cardId);
+        authz.requireTournamentAccess(authentication, authz.tournamentOfCard(cardId));
+        return events.subscribe(cardId, () -> service.cardVersion(cardId));
     }
 
     @PostMapping
@@ -151,7 +156,7 @@ public class CardController {
                                              @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
         CardDtos.ResultPatch patch = service.submitResult(cardId, matchId, request, authentication.getName());
-        events.publish(cardId, patch.version()); // notify other screens to resync (they fetch the full card)
+        events.publishResult(cardId, patch);
         return patch;
     }
 

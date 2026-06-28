@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { LockKeyhole, LogIn, ShieldCheck } from "lucide-react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { Button } from "@/ui/components/button";
@@ -12,8 +12,12 @@ export default function StaffLoginPage() {
   const router = useRouter();
   const auth = useTournamentStore((state) => state.auth);
   const login = useTournamentStore((state) => state.login);
+  const refreshAuth = useTournamentStore((state) => state.refreshAuth);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  useEffect(() => {
+    if (!auth.csrfToken) void refreshAuth();
+  }, [auth.csrfToken, refreshAuth]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

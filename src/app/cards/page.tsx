@@ -41,7 +41,7 @@ export default function CardsPage() {
     finally { setPending(false); }
   };
   const running = visibleCards.filter((card) => card.status === "RUNNING").length;
-  const totalPlayers = visibleCards.reduce((sum, card) => sum + card.players.length, 0);
+  const totalPlayers = visibleCards.reduce((sum, card) => sum + (card.playerCount ?? card.players.length), 0);
   const finished = visibleCards.filter((card) => ["FINISHED", "CLOSED"].includes(card.status)).length;
   const cardHref = (card: typeof cards[number]) => {
     if (!isStaff || card.runtimeStage === "FINAL_PUBLISHED") return `/cards/${card.id}`;
@@ -83,9 +83,9 @@ export default function CardsPage() {
                 </div>
               </div>
               <div className="competition-card__metrics">
-                <div className="competition-card__metric"><span>ผู้เล่น</span><strong>{card.players.length}</strong></div>
-                <div className="competition-card__metric"><span>เกม</span><strong>{card.games.length}</strong></div>
-                <div className="competition-card__metric"><span>เกมปัจจุบัน</span><strong>{card.currentGame}/{card.games.length}</strong></div>
+                <div className="competition-card__metric"><span>ผู้เล่น</span><strong>{card.playerCount ?? card.players.length}</strong></div>
+                <div className="competition-card__metric"><span>เกม</span><strong>{card.gameCount ?? card.games.length}</strong></div>
+                <div className="competition-card__metric"><span>เกมปัจจุบัน</span><strong>{card.currentGame}/{card.gameCount ?? card.games.length}</strong></div>
               </div>
               <div className="competition-card__footer">
                 <small>สร้างเมื่อ {new Intl.DateTimeFormat("th-TH", { dateStyle: "medium" }).format(new Date(card.createdAt))}</small>

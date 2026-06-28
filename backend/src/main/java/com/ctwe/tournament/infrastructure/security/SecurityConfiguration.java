@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -70,8 +71,11 @@ public class SecurityConfiguration {
         return http
             .csrf(csrf -> csrf.csrfTokenRepository(csrfRepository))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/actuator/health", "/api/auth/me", "/staff-login", "/login").permitAll()
+                .requestMatchers("/actuator/health/**", "/api/auth/me", "/staff-login", "/login").permitAll()
+                .requestMatchers("/actuator/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.GET, "/api/public/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/cards/*/audit").hasAnyRole("ADMIN", "DIRECTOR")
+                .requestMatchers(HttpMethod.GET, "/api/cards/*/events").hasAnyRole("ADMIN", "DIRECTOR", "STAFF")
                 .requestMatchers(HttpMethod.GET, "/api/cards", "/api/cards/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/archives", "/api/archives/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
@@ -82,12 +86,18 @@ public class SecurityConfiguration {
             .formLogin(form -> form
                 .loginPage("/staff-login")
                 .loginProcessingUrl("/login")
-                .successHandler((request, response, authentication) -> response.setStatus(HttpStatus.NO_CONTENT.value()))
+                .successHandler((request, response, authentication) -> {
+                    response.addHeader("Set-Cookie", staffSessionMarker(true, request.isSecure()).toString());
+                    response.setStatus(HttpStatus.NO_CONTENT.value());
+                })
                 .failureHandler((request, response, exception) -> response.sendError(HttpStatus.UNAUTHORIZED.value()))
                 .permitAll())
             .logout(logout -> logout
                 .logoutRequestMatcher(new AntPathRequestMatcher("/logout", "POST"))
-                .logoutSuccessHandler((request, response, authentication) -> response.setStatus(HttpStatus.NO_CONTENT.value()))
+                .logoutSuccessHandler((request, response, authentication) -> {
+                    response.addHeader("Set-Cookie", staffSessionMarker(false, request.isSecure()).toString());
+                    response.setStatus(HttpStatus.NO_CONTENT.value());
+                })
                 .invalidateHttpSession(true)
                 .deleteCookies("JSESSIONID"))
             .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
@@ -99,6 +109,20 @@ public class SecurityConfiguration {
             .sessionManagement(session -> session
                 .sessionFixation(fixation -> fixation.migrateSession())
                 .maximumSessions(2))
+            .build();
+    }
+
+    /**
+     * A non-sensitive browser hint that avoids an anonymous /api/auth/me origin request on every
+     * public page load. Authorization still relies exclusively on the HttpOnly server session.
+     */
+    private ResponseCookie staffSessionMarker(boolean active, boolean secure) {
+        return ResponseCookie.from("CTWE_STAFF", active ? "1" : "")
+            .path("/")
+            .httpOnly(false)
+            .secure(secure)
+            .sameSite("Strict")
+            .maxAge(active ? java.time.Duration.ofDays(2) : java.time.Duration.ZERO)
             .build();
     }
 }

@@ -73,11 +73,13 @@ function PairingGrid({ pairings, players }: { pairings: Pairing[]; players: Map<
 export default function CardOverviewPage() {
   const { id } = useParams<{ id: string }>();
   const cards = useTournamentStore((state) => state.cards);
+  const loading = useTournamentStore((state) => state.loading);
   const closeCard = useTournamentStore((state) => state.closeCard);
   const auth = useTournamentStore((state) => state.auth);
   const card = selectCard(cards, id);
   const [historyGame, setHistoryGame] = useState<number | null>(null);
   const [views, setViews] = useState<Set<OverviewView>>(new Set<OverviewView>(["ranking", "pairing", "result"]));
+  if (loading || card?.summaryOnly) return <div className="panel panel-padding">กำลังโหลดข้อมูลการแข่งขัน…</div>;
   if (!card) return <CardNotFound />;
   const canManage = canManageTournament(auth);
   const visibleSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt) || card.runtimeStage !== "PAIRING_PREVIEW" || !snapshot.gameNumbers.includes(card.currentGame));

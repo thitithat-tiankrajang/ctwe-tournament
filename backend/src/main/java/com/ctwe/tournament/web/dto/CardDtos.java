@@ -63,8 +63,8 @@ public final class CardDtos {
     public record PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
                                   String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff) {}
     public record SnapshotResponse(String id, List<Integer> gameNumbers, List<PairingResponse> pairings, String confirmedAt) {}
-    /** Lightweight result-save response: just the current block's pairings + new version (not the whole card). */
-    public record ResultPatch(long version, List<PairingResponse> blockPairings) {}
+    /** Lightweight result-save response: changed source/destination rows only, plus the card version. */
+    public record ResultPatch(long version, List<PairingResponse> changedPairings) {}
     public record AuditResponse(String id, String timestamp, String user, String action, String oldValue, String newValue) {}
 
     // Final / championship round

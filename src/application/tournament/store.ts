@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
 
 export interface AuthState {
   authenticated: boolean;
@@ -35,7 +35,10 @@ interface TournamentState {
   archives: TournamentArchive[];
   setActiveTournament: (tournament: ActiveTournament | null) => void;
   load: () => Promise<void>;
+  refreshPublicCatalog: (versionToken?: string) => Promise<void>;
   syncCard: (cardId: string) => Promise<void>;
+  applyCardState: (card: TournamentCard) => void;
+  applyResultPatch: (cardId: string, version: number, changedPairings: Pairing[]) => boolean;
   loadAudit: (cardId: string) => Promise<AuditEntry[]>;
   refreshAuth: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
@@ -91,6 +94,17 @@ interface TournamentState {
 
 const anonymous: AuthState = { authenticated: false, username: null, roles: [], csrfToken: "" };
 const ACTIVE_TOURNAMENT_KEY = "ctwe.activeTournament";
+const STAFF_SESSION_MARKER = "CTWE_STAFF";
+
+function hasStaffSessionHint() {
+  return typeof document !== "undefined"
+    && document.cookie.split(";").some((item) => item.trim() === `${STAFF_SESSION_MARKER}=1`);
+}
+
+function clearStaffSessionHint() {
+  if (typeof document !== "undefined")
+    document.cookie = `${STAFF_SESSION_MARKER}=; Path=/; Max-Age=0; SameSite=Strict`;
+}
 
 export function readActiveTournament(): ActiveTournament | null {
   if (typeof window === "undefined") return null;
@@ -99,6 +113,34 @@ export function readActiveTournament(): ActiveTournament | null {
     const parsed = raw ? JSON.parse(raw) as ActiveTournament : null;
     return parsed && typeof parsed.id === "string" ? parsed : null;
   } catch { return null; }
+}
+
+function publicSummaryCard(summary: PublicCardSummary): TournamentCard {
+  return {
+    id: summary.id,
+    tournamentId: summary.tournamentId,
+    name: summary.name,
+    division: summary.division,
+    status: summary.status,
+    runtimeStage: summary.runtimeStage,
+    currentGame: summary.currentGame,
+    version: summary.version,
+    games: [],
+    rules: [],
+    players: [],
+    tables: [],
+    snapshots: [],
+    audit: [],
+    finalType: "NONE",
+    finalGames: 0,
+    finalRound: null,
+    gibsonEnabled: false,
+    createdAt: summary.createdAt,
+    playerCount: summary.playerCount,
+    gameCount: summary.gameCount,
+    publishedGameCount: summary.publishedGameCount,
+    summaryOnly: true,
+  };
 }
 
 async function readError(response: Response) {
@@ -111,6 +153,29 @@ async function readError(response: Response) {
 }
 
 export const useTournamentStore = create<TournamentState>((set, get) => {
+  const resultReconcileTimers = new Map<string, number>();
+
+  const scheduleResultReconciliation = (cardId: string) => {
+    const existing = resultReconcileTimers.get(cardId);
+    if (existing !== undefined) window.clearTimeout(existing);
+    const timer = window.setTimeout(async () => {
+      resultReconcileTimers.delete(cardId);
+      try {
+        const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}/version`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const { version } = await response.json() as { version: number };
+        const localVersion = get().cards.find((card) => card.id === cardId)?.version;
+        if (localVersion === undefined || version > localVersion) await get().syncCard(cardId);
+      } catch {
+        // SSE remains the primary path; a later event/reconnect can still reconcile this card.
+      }
+    }, 1_500);
+    resultReconcileTimers.set(cardId, timer);
+  };
+
   const request = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
     const method = init.method?.toUpperCase() ?? "GET";
     const headers = new Headers(init.headers);
@@ -126,7 +191,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       set({ error: message });
       throw new Error(message);
     }
-    return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+    if (response.status === 204) return undefined as T;
+    const body = await response.text();
+    return body ? JSON.parse(body) as T : undefined as T;
   };
 
   const replaceCard = (updated: TournamentCard) => set((state) => {
@@ -140,12 +207,70 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     };
   });
 
+  const fetchPublicCatalog = async (versionToken?: string) => {
+    const suffix = versionToken ? `?v=${encodeURIComponent(versionToken)}` : "";
+    const response = await fetch(`/api/public/cards${suffix}`, { credentials: "omit" });
+    if (!response.ok) throw new Error(await readError(response));
+    return response.json() as Promise<PublicCardSummary[]>;
+  };
+
+  const mergePublicCatalog = (summaries: PublicCardSummary[]) => set((state) => {
+    const existing = new Map(state.cards.map((card) => [card.id, card]));
+    return {
+      cards: summaries.map((summary) => {
+        const card = existing.get(summary.id);
+        if (card && !card.summaryOnly && card.version === summary.version) {
+          return {
+            ...card,
+            name: summary.name,
+            division: summary.division,
+            status: summary.status,
+            runtimeStage: summary.runtimeStage,
+            currentGame: summary.currentGame,
+            playerCount: summary.playerCount,
+            gameCount: summary.gameCount,
+            publishedGameCount: summary.publishedGameCount,
+          };
+        }
+        return publicSummaryCard(summary);
+      }),
+      error: null,
+    };
+  });
+
   const mutateCard = async (path: string, cardId: string, init: RequestInit = {}) => {
     const card = get().cards.find((item) => item.id === cardId);
     const headers = new Headers(init.headers);
     if (card) headers.set("If-Match", `\"${card.version}\"`);
     const updated = await request<TournamentCard>(path, { ...init, headers });
     replaceCard(updated);
+  };
+
+  const applyResultPatch = (cardId: string, version: number, changedPairings: Pairing[]) => {
+    let patched = false;
+    set((state) => ({
+      cards: state.cards.map((card) => {
+        if (card.id !== cardId) return card;
+        if (card.version >= version) {
+          patched = true;
+          return card;
+        }
+        const index = card.snapshots.findIndex((snapshot) => !snapshot.confirmedAt);
+        if (index < 0) return card;
+        patched = true;
+        const changes = new Map(changedPairings.map((pairing) => [pairing.id, pairing]));
+        const existingIds = new Set(card.snapshots[index].pairings.map((pairing) => pairing.id));
+        const merged = card.snapshots[index].pairings
+          .map((pairing) => changes.get(pairing.id) ?? pairing)
+          .concat(changedPairings.filter((pairing) => !existingIds.has(pairing.id)))
+          .sort((a, b) => (a.gameNumber ?? 0) - (b.gameNumber ?? 0) || a.tableNumber - b.tableNumber);
+        const snapshots = card.snapshots.map((snapshot, i) =>
+          i === index ? { ...snapshot, pairings: merged } : snapshot);
+        return { ...card, snapshots, version };
+      }),
+      error: null,
+    }));
+    return patched;
   };
 
   return {
@@ -166,11 +291,23 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async syncCard(cardId) {
       // Background live-sync for concurrent multi-user editing: pull the latest card, ignore transient errors.
       try {
-        const response = await fetch(`/api/cards/${cardId}`, { credentials: "same-origin", cache: "no-store" });
+        const backOffice = get().auth.authenticated;
+        const expectedPublicVersion = get().cards.find((card) => card.id === cardId)?.version;
+        const publicVersionQuery = expectedPublicVersion === undefined
+          ? ""
+          : `?v=${encodeURIComponent(expectedPublicVersion)}`;
+        const response = await fetch(
+          backOffice ? `/api/cards/${cardId}` : `/api/public/cards/${cardId}${publicVersionQuery}`,
+          backOffice
+            ? { credentials: "same-origin", cache: "no-store" }
+            : { credentials: "omit" },
+        );
         if (response.ok) replaceCard(await response.json() as TournamentCard);
         else if (response.status === 404) set((state) => ({ cards: state.cards.filter((card) => card.id !== cardId), error: null }));
       } catch { /* transient network/poll error — keep current state */ }
     },
+    applyCardState: replaceCard,
+    applyResultPatch,
     async loadAudit(cardId) {
       // Audit is no longer in the card payload (kept the hot path cheap); fetch it on demand for the audit page.
       return request<AuditEntry[]>(`/api/cards/${cardId}/audit`);
@@ -179,24 +316,38 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       try {
         const auth = await request<AuthState>("/api/auth/me");
         set({ auth });
+        if (!auth.authenticated) clearStaffSessionHint();
       } catch {
         set({ auth: anonymous });
+        clearStaffSessionHint();
       }
     },
     async load() {
       set({ loading: true, error: null });
       try {
-        const [auth, cards] = await Promise.all([
-          fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" }).then((response) => response.json() as Promise<AuthState>),
-          fetch("/api/cards", { credentials: "same-origin", cache: "no-store" }).then(async (response) => {
-            if (!response.ok) throw new Error(await readError(response));
-            return response.json() as Promise<TournamentCard[]>;
-          }),
-        ]);
+        let auth = anonymous;
+        if (hasStaffSessionHint()) {
+          const authResponse = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
+          if (!authResponse.ok) throw new Error(await readError(authResponse));
+          auth = await authResponse.json() as AuthState;
+          if (!auth.authenticated) clearStaffSessionHint();
+        }
+        let cards: TournamentCard[];
+        if (auth.authenticated) {
+          const response = await fetch("/api/cards", { credentials: "same-origin", cache: "no-store" });
+          if (!response.ok) throw new Error(await readError(response));
+          cards = await response.json() as TournamentCard[];
+        } else {
+          cards = (await fetchPublicCatalog()).map(publicSummaryCard);
+        }
         set({ auth, cards, loading: false });
       } catch (error) {
         set({ loading: false, error: error instanceof Error ? error.message : "ไม่สามารถเชื่อมต่อ API ได้" });
       }
+    },
+    async refreshPublicCatalog(versionToken) {
+      if (get().auth.authenticated) return;
+      mergePublicCatalog(await fetchPublicCatalog(versionToken));
     },
     async login(username, password) {
       const body = new URLSearchParams({ username, password, _csrf: get().auth.csrfToken });
@@ -210,6 +361,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       if (!response.ok) throw new Error(response.status === 401 ? "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" : `เข้าสู่ระบบไม่สำเร็จ (${response.status})`);
       await get().refreshAuth();
       if (!get().auth.authenticated) throw new Error("สร้าง session เจ้าหน้าที่ไม่สำเร็จ");
+      await get().load();
     },
     async logout() {
       const body = new URLSearchParams({ _csrf: get().auth.csrfToken });
@@ -222,6 +374,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       });
       if (!response.ok) throw new Error(`ออกจากระบบไม่สำเร็จ (${response.status})`);
       set({ auth: anonymous });
+      await get().load();
     },
     async createCard(input) {
       const card = await request<TournamentCard>("/api/cards", { method: "POST", body: JSON.stringify(input) });
@@ -263,23 +416,13 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async submitResult(cardId, pairingId, scoreOne, scoreTwo, editExisting = false) {
       // Hot path: the server returns just the in-progress block's pairings (+ version), not the whole card.
-      const patch = await request<{ version: number; blockPairings: Pairing[] }>(
+      const patch = await request<{ version: number; changedPairings: Pairing[] }>(
         `/api/cards/${cardId}/matches/${pairingId}/result`,
         { method: "PUT", body: JSON.stringify({ scoreOne, scoreTwo, editExisting }) },
       );
-      let patched = false;
-      set((state) => ({
-        cards: state.cards.map((card) => {
-          if (card.id !== cardId) return card;
-          const index = card.snapshots.findIndex((snapshot) => !snapshot.confirmedAt);
-          if (index < 0) return card; // no in-progress block to patch — fall back below
-          patched = true;
-          const snapshots = card.snapshots.map((snapshot, i) => i === index ? { ...snapshot, pairings: patch.blockPairings } : snapshot);
-          return { ...card, snapshots, version: patch.version };
-        }),
-        error: null,
-      }));
+      const patched = applyResultPatch(cardId, patch.version, patch.changedPairings);
       if (!patched) await get().syncCard(cardId); // safety net: pull the full card if we couldn't patch in place
+      scheduleResultReconciliation(cardId);
     },
     async overrideResult(cardId, matchId, scoreOne, scoreTwo) {
       await mutateCard(`/api/cards/${cardId}/matches/${matchId}/override`, cardId, {
@@ -348,7 +491,12 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       set((state) => ({ cards: state.cards.filter((card) => card.tournamentId !== tournamentId), error: null }));
     },
     async loadArchives() {
-      const archives = await request<TournamentArchive[]>("/api/archives");
+      const archives = get().auth.authenticated
+        ? await request<TournamentArchive[]>("/api/archives")
+        : await fetch("/api/public/archives", { credentials: "omit" }).then(async (response) => {
+            if (!response.ok) throw new Error(await readError(response));
+            return response.json() as Promise<TournamentArchive[]>;
+          });
       set({ archives });
       return archives;
     },

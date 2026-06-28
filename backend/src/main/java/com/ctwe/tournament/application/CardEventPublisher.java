@@ -11,15 +11,16 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.LongSupplier;
 
 @Service
 public class CardEventPublisher {
-    private static final long STREAM_TIMEOUT_MS = 30 * 60 * 1000L;
+    private static final long STREAM_TIMEOUT_MS = 6 * 60 * 60 * 1000L;
 
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
 
-    public SseEmitter subscribe(UUID cardId) {
-        SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
+    public SseEmitter subscribe(UUID cardId, LongSupplier currentVersion) {
+        SseEmitter emitter = createEmitter();
         emitters.computeIfAbsent(cardId, ignored -> new CopyOnWriteArrayList<>()).add(emitter);
 
         Runnable remove = () -> remove(cardId, emitter);
@@ -30,12 +31,26 @@ public class CardEventPublisher {
         });
         emitter.onError(error -> remove.run());
 
-        send(cardId, emitter, "connected", new CardChangeEvent(cardId, 0, Instant.now()));
+        try {
+            long version = currentVersion.getAsLong();
+            send(cardId, emitter, "connected", version, new CardChangeEvent(cardId, version, Instant.now()));
+        } catch (RuntimeException error) {
+            remove(cardId, emitter);
+            throw error;
+        }
         return emitter;
     }
 
+    SseEmitter createEmitter() {
+        return new SseEmitter(STREAM_TIMEOUT_MS);
+    }
+
     public void publish(CardDtos.CardResponse card) {
-        publish(card.id(), card.version());
+        List<SseEmitter> cardEmitters = emitters.get(card.id());
+        if (cardEmitters == null || cardEmitters.isEmpty()) return;
+
+        CardStateEvent event = new CardStateEvent(card.id(), card.version(), Instant.now(), card);
+        for (SseEmitter emitter : cardEmitters) send(card.id(), emitter, "state", card.version(), event);
     }
 
     public void publish(UUID cardId, long version) {
@@ -43,14 +58,22 @@ public class CardEventPublisher {
         if (cardEmitters == null || cardEmitters.isEmpty()) return;
 
         CardChangeEvent event = new CardChangeEvent(cardId, version, Instant.now());
-        for (SseEmitter emitter : cardEmitters) send(cardId, emitter, "card", event);
+        for (SseEmitter emitter : cardEmitters) send(cardId, emitter, "card", version, event);
     }
 
-    private void send(UUID cardId, SseEmitter emitter, String name, CardChangeEvent event) {
+    public void publishResult(UUID cardId, CardDtos.ResultPatch patch) {
+        List<SseEmitter> cardEmitters = emitters.get(cardId);
+        if (cardEmitters == null || cardEmitters.isEmpty()) return;
+
+        ResultChangeEvent event = new ResultChangeEvent(cardId, patch.version(), Instant.now(), patch.changedPairings());
+        for (SseEmitter emitter : cardEmitters) send(cardId, emitter, "result", patch.version(), event);
+    }
+
+    private void send(UUID cardId, SseEmitter emitter, String name, long version, Object event) {
         try {
             emitter.send(SseEmitter.event()
                 .name(name)
-                .id(Long.toString(event.version()))
+                .id(Long.toString(version))
                 .reconnectTime(2_000)
                 .data(event));
         } catch (IOException | IllegalStateException error) {
@@ -66,4 +89,7 @@ public class CardEventPublisher {
     }
 
     public record CardChangeEvent(UUID cardId, long version, Instant updatedAt) {}
+    public record CardStateEvent(UUID cardId, long version, Instant updatedAt, CardDtos.CardResponse card) {}
+    public record ResultChangeEvent(UUID cardId, long version, Instant updatedAt,
+                                    List<CardDtos.PairingResponse> changedPairings) {}
 }
