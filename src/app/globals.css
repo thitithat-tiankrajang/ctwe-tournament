@@ -807,6 +807,9 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   .mobile-brand__title { align-items: center; display: flex; gap: 9px; min-width: 0; }
   .mobile-brand__title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-brand__title svg { color: #8fb5f7; }
+  .mobile-brand__back { align-self: stretch; color: inherit; flex: 1 1 auto; margin: -9px 0 -9px -14px; padding: 9px 12px 9px 14px; }
+  .mobile-brand__back:active { background: #2a3037; }
+  .mobile-brand__back .mobile-brand__back-icon { color: #e7ebef; flex: 0 0 auto; }
   .mobile-brand__actions { align-items: center; display: flex; gap: 6px; }
   .mobile-brand__auth { align-items: center; background: #2a3037; border: 1px solid #3a424c; border-radius: 999px; color: #e7ebef; cursor: pointer; display: inline-flex; flex: 0 0 auto; font-size: 12px; font-weight: 700; gap: 5px; padding: 6px 13px; }
   .mobile-brand__auth:disabled { cursor: default; opacity: 1; }

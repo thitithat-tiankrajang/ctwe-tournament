@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import {
   Activity,
+  ArrowLeft,
   Bell,
   BellRing,
   ChevronRight,
@@ -325,7 +326,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className={`app-main${id && !isStaff ? " app-main--public-card" : ""}`}>
         <div className="mobile-brand">
           {scopeLocked
-            ? <span className="mobile-brand__title"><Trophy size={19} /><strong>{activeTournament?.name ?? "Tournament Control"}</strong></span>
+            ? id && !isStaff
+              ? <Link href="/cards" className="mobile-brand__title mobile-brand__back" aria-label={`กลับไปเลือกกลุ่มรุ่นของ ${activeTournament?.name ?? "รายการแข่งขัน"}`}>
+                  <ArrowLeft className="mobile-brand__back-icon" size={18} aria-hidden="true" />
+                  <Trophy size={19} aria-hidden="true" />
+                  <strong>{activeTournament?.name ?? "Tournament Control"}</strong>
+                </Link>
+              : <span className="mobile-brand__title"><Trophy size={19} /><strong>{activeTournament?.name ?? "Tournament Control"}</strong></span>
             : <Link href="/" className="mobile-brand__title" aria-label="ไปหน้ารวมการแข่งขัน"><Trophy size={19} /><strong>Tournament Control</strong></Link>}
           {(isStaff || notificationPermission === "default" || notificationPermission === "granted") && <div className="mobile-brand__actions">
             {!isStaff && (notificationPermission === "default" || notificationPermission === "granted") && (
