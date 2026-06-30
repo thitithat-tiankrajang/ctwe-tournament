@@ -26,7 +26,8 @@ export default function StaffLoginPage() {
     setSubmitting(true);
     try {
       await login(String(data.get("username") ?? ""), String(data.get("password") ?? ""));
-      router.replace("/cards");
+      // The master page routes each role: staff into their tournament, director to their manage list.
+      router.replace("/");
       router.refresh();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "เข้าสู่ระบบไม่สำเร็จ");
@@ -44,7 +45,7 @@ export default function StaffLoginPage() {
           <div className="notice notice--info"><ShieldCheck size={18} /><p><strong>บุคคลทั่วไปไม่จำเป็นต้องเข้าสู่ระบบ</strong><span>กลับไปหน้าการแข่งขันเพื่อดูข้อมูลแบบ read-only ได้ทันที</span></p></div>
           <div className="form-field"><label className="form-label" htmlFor="username">ชื่อผู้ใช้</label><input className="input" id="username" name="username" autoComplete="username" required /></div>
           <div className="form-field"><label className="form-label" htmlFor="password">รหัสผ่าน</label><input className="input" id="password" name="password" type="password" autoComplete="current-password" required /></div>
-          <div className="form-actions"><Link href="/cards"><Button type="button" variant="secondary">กลับหน้าสาธารณะ</Button></Link><Button type="submit" disabled={!auth.csrfToken || submitting}><LogIn size={16} />{submitting ? "กำลังตรวจสอบ…" : "เข้าสู่ระบบ"}</Button></div>
+          <div className="form-actions"><Link href="/"><Button type="button" variant="secondary">กลับหน้าสาธารณะ</Button></Link><Button type="submit" disabled={!auth.csrfToken || submitting}><LogIn size={16} />{submitting ? "กำลังตรวจสอบ…" : "เข้าสู่ระบบ"}</Button></div>
         </form>
       </Panel>
       <div className="notice notice--warning"><LockKeyhole size={18} /><p><strong>ห้ามแชร์บัญชีเจ้าหน้าที่</strong><span>ทุกการเปลี่ยนแปลงจะบันทึกชื่อบัญชีไว้ใน audit log</span></p></div>

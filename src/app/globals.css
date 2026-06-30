@@ -282,6 +282,9 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .card-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .competition-card { background: white; border: 1px solid var(--border); border-left: 5px solid var(--blue); display: flex; flex-direction: column; min-height: 218px; }
 .competition-card:hover { border-color: #9ea7b3; border-left-color: var(--blue-dark); }
+/* Director "manage" mode: green accent to signal you can edit this tournament, not just watch it. */
+.competition-card--manage { border-left-color: var(--green, #1b8a4c); background: linear-gradient(100deg, var(--green-soft, #e8f6ee) 0%, white 60%); }
+.competition-card--manage:hover { border-color: #8fc7a6; border-left-color: var(--green-dark, #16794a); }
 .competition-card__header { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; padding: 18px; }
 .competition-card__header-actions { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; }
 .competition-card .card-delete { color: var(--muted); padding: 4px 7px; }

@@ -4,12 +4,18 @@ import { KeyRound, LockKeyhole, Trash2, Trophy, UserPlus, Users } from "lucide-r
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTournamentStore } from "@/application/tournament/store";
+import { toast } from "@/application/ui/toast";
 import { isDirector } from "@/domain/tournament/roles";
 import type { ManagedUser, Tournament } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { CardCreateForm } from "@/ui/components/card-create-form";
+import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { PromptDialog } from "@/ui/components/prompt-dialog";
+
+interface ConfirmState { title: string; description: string; confirmLabel: string; danger?: boolean; run: () => Promise<unknown>; }
+interface PromptState { title: string; label: string; placeholder?: string; type?: "text" | "password"; confirmLabel: string; minLength?: number; run: (value: string) => Promise<unknown>; }
 
 export default function DirectorConsolePage() {
   const auth = useTournamentStore((state) => state.auth);
@@ -30,6 +36,10 @@ export default function DirectorConsolePage() {
   const [busy, setBusy] = useState(false);
   const [sUser, setSUser] = useState("");
   const [sPass, setSPass] = useState("");
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [prompt, setPrompt] = useState<PromptState | null>(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState("");
 
   const refresh = useCallback(async () => {
     if (!isDirector(auth)) return;
@@ -42,12 +52,28 @@ export default function DirectorConsolePage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  const errorMessage = (error: unknown) => error instanceof Error ? error.message : "เกิดข้อผิดพลาด";
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try { await fn(); await refresh(); }
-    catch (error) { window.alert(error instanceof Error ? error.message : "เกิดข้อผิดพลาด"); }
+    catch (error) { toast.error(errorMessage(error)); }
     finally { setBusy(false); }
   };
+  const submitConfirm = async () => {
+    if (!confirm) return;
+    setDialogBusy(true); setDialogError("");
+    try { await confirm.run(); await refresh(); setConfirm(null); }
+    catch (error) { setDialogError(errorMessage(error)); }
+    finally { setDialogBusy(false); }
+  };
+  const submitPrompt = async (value: string) => {
+    if (!prompt) return;
+    setDialogBusy(true); setDialogError("");
+    try { await prompt.run(value); await refresh(); setPrompt(null); }
+    catch (error) { setDialogError(errorMessage(error)); }
+    finally { setDialogBusy(false); }
+  };
+  const closeDialogs = () => { if (!dialogBusy) { setConfirm(null); setPrompt(null); setDialogError(""); } };
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
   if (!isDirector(auth)) {
@@ -99,28 +125,58 @@ export default function DirectorConsolePage() {
                 <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Users size={15} />{s.username} {!s.enabled && <Badge tone="warning">ปิดใช้งาน</Badge>}</strong>
                 <span style={{ display: "flex", gap: 6 }}>
                   <Button variant="secondary" size="sm" disabled={busy} onClick={() => act(() => setAccountEnabled("staff", s.username, !s.enabled))}>{s.enabled ? "ปิดใช้งาน" : "เปิดใช้งาน"}</Button>
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => { const p = window.prompt("รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)"); if (p) void act(() => resetAccountPassword("staff", s.username, p)); }}><KeyRound size={14} /></Button>
-                  <Button variant="danger" size="sm" disabled={busy} onClick={() => window.confirm(`ลบเจ้าหน้าที่ ${s.username}?`) && void act(() => deleteStaff(s.username))}><Trash2 size={14} /></Button>
+                  <Button variant="secondary" size="sm" disabled={busy} title="ตั้งรหัสผ่านใหม่" onClick={() => { setDialogError(""); setPrompt({ title: `ตั้งรหัสผ่านใหม่ · ${s.username}`, label: "รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)", type: "password", placeholder: "อย่างน้อย 8 ตัวอักษร", minLength: 8, confirmLabel: "บันทึกรหัสผ่าน", run: (p) => resetAccountPassword("staff", s.username, p) }); }}><KeyRound size={14} /></Button>
+                  <Button variant="danger" size="sm" disabled={busy} onClick={() => setConfirm({ title: `ลบเจ้าหน้าที่ ${s.username}?`, description: "บัญชีเจ้าหน้าที่นี้จะถูกลบอย่างถาวร", confirmLabel: "ลบถาวร", danger: true, run: () => deleteStaff(s.username) })}><Trash2 size={14} /></Button>
                 </span>
               </div>
               <div style={{ marginTop: 10 }}>
-                <span className="muted" style={{ fontSize: 13 }}>เข้าถึงรายการแข่งขัน (ติ๊กแล้วเห็นทุก card ในรายการนั้น):</span>
+                <span className="muted" style={{ fontSize: 13 }}>รายการแข่งขันของเจ้าหน้าที่ (เลือกได้ 1 รายการ — เห็นทุก card ในรายการนั้น):</span>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 6 }}>
                   {tournaments.length === 0 && <span className="muted" style={{ fontSize: 13 }}>คุณยังไม่ได้รับมอบหมายรายการแข่งขัน</span>}
                   {tournaments.map((t) => {
                     const granted = s.tournamentIds.includes(t.id);
                     return (
                       <label key={t.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <input type="checkbox" checked={granted} disabled={busy} onChange={() => act(() => granted ? revokeStaffTournament(s.username, t.id) : grantStaffTournament(s.username, t.id))} />{t.name}
+                        <input type="radio" name={`staff-tour-${s.username}`} checked={granted} disabled={busy} onChange={() => act(() => grantStaffTournament(s.username, t.id))} />{t.name}
                       </label>
                     );
                   })}
+                  {tournaments.length > 0 && (
+                    <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <input type="radio" name={`staff-tour-${s.username}`} checked={s.tournamentIds.length === 0} disabled={busy} onChange={() => { const current = s.tournamentIds[0]; if (current) void act(() => revokeStaffTournament(s.username, current)); }} />ไม่กำหนด
+                    </label>
+                  )}
                 </div>
               </div>
             </div>
           ))}
         </div>
       </Panel>
+
+      <ConfirmDialog
+        open={confirm !== null}
+        title={confirm?.title ?? ""}
+        description={confirm?.description ?? ""}
+        confirmLabel={confirm?.confirmLabel ?? "ยืนยัน"}
+        danger={confirm?.danger}
+        busy={dialogBusy}
+        error={dialogError || undefined}
+        onConfirm={() => void submitConfirm()}
+        onCancel={closeDialogs}
+      />
+      <PromptDialog
+        open={prompt !== null}
+        title={prompt?.title ?? ""}
+        label={prompt?.label ?? ""}
+        placeholder={prompt?.placeholder}
+        type={prompt?.type}
+        confirmLabel={prompt?.confirmLabel ?? "ยืนยัน"}
+        minLength={prompt?.minLength}
+        busy={dialogBusy}
+        error={dialogError || undefined}
+        onSubmit={(value) => void submitPrompt(value)}
+        onCancel={closeDialogs}
+      />
     </>
   );
 }

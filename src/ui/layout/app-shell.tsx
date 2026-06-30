@@ -33,6 +33,7 @@ import { useCardSync } from "@/application/tournament/use-card-sync";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
 import { hasStaffAccess, isAdmin, isDirector } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
+import { toast } from "@/application/ui/toast";
 import { Button } from "@/ui/components/button";
 import { Toaster } from "@/ui/components/toaster";
 
@@ -124,8 +125,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
   const isStaff = hasStaffAccess(auth);
   const admin = isAdmin(auth);
-  // Entering a tournament via its private link scopes non-admins to it — no nav back to the master page.
-  const scopeLocked = !!activeTournament && !admin;
+  const director = isDirector(auth);
+  // Staff and public viewers are locked to one tournament (no nav back). Directors and admins, who
+  // run multiple tournaments, keep cross-tournament navigation.
+  const scopeLocked = !!activeTournament && !admin && !director;
   const currentCard = id ? selectCard(cards, id) : undefined;
   const previousFlowRef = useRef<{ cardId?: string; stage?: RuntimeStage }>({
     cardId: id,
@@ -134,8 +137,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
   useCardSync(isStaff ? id : undefined);
   const { notificationPermission, requestNotificationPermission } = usePublicSync(id, !isStaff);
-  // Entry is link-based now: no cross-tournament picker. Only admin keeps a system-level console.
+  // Entry is link-based now. Directors keep a picker for their own tournaments; admins keep the
+  // system console.
   const generalLinks = [
+    ...(director ? [{ href: "/", label: "รายการแข่งขันทั้งหมด", icon: Trophy }] : []),
     ...(isAdmin(auth) ? [{ href: "/admin", label: "ผู้ดูแลระบบ", icon: ShieldCheck }] : []),
     ...(isDirector(auth) ? [{ href: "/director", label: "จัดการเจ้าหน้าที่", icon: UserCog }] : []),
     ...(isAdmin(auth) ? [{ href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : []),
@@ -191,10 +196,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       await logout();
       setLogoutConfirm(false);
-      router.replace("/cards");
+      // Logging out returns to the public master page (watch links + login).
+      router.replace("/");
       router.refresh();
     } catch (failure) {
-      window.alert(failure instanceof Error ? failure.message : "ออกจากระบบไม่สำเร็จ");
+      toast.error(failure instanceof Error ? failure.message : "ออกจากระบบไม่สำเร็จ");
     } finally {
       setLoggingOut(false);
     }
@@ -267,7 +273,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   ))}
                 </>
               ) : (
-                <p className="nav-empty">เปิดการแข่งขันผ่านลิงก์ของรายการ หรือจัดการได้จากคอนโซลผู้ดูแล</p>
+                <p className="nav-empty">{director ? "เลือกรายการแข่งขันจาก “รายการแข่งขันทั้งหมด” เพื่อเริ่มจัดการ" : "เปิดการแข่งขันผ่านลิงก์ของรายการ หรือจัดการได้จากคอนโซลผู้ดูแล"}</p>
               )) : (
                 <>
                   <p className="nav-label nav-label--spaced">การ์ดที่เปิด{openedIds.length > 0 && ` · ${openedIds.length}`}</p>

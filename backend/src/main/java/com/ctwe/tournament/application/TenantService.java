@@ -185,6 +185,8 @@ public class TenantService {
             "SELECT COUNT(*) FROM tournament_members WHERE username = ? AND tournament_id = ?", Long.class, director, tournamentId);
         if (inScope == null || inScope == 0)
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "คุณไม่มีสิทธิ์ในรายการแข่งขันนี้ จึงมอบให้เจ้าหน้าที่ไม่ได้");
+        // A staff account is bound to exactly one tournament: granting a new one replaces the old.
+        jdbc.update("DELETE FROM staff_tournament_access WHERE username = ?", staff);
         jdbc.update("INSERT INTO staff_tournament_access (username, tournament_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
             staff, tournamentId);
         audit(director, "GRANT_STAFF_TOURNAMENT", null, Map.of("staff", staff, "tournament", tournamentId.toString()));
