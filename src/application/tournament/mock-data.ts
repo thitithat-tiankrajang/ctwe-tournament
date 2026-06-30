@@ -8,7 +8,7 @@ export function createMockPlayers(count: number, division: string, start = 1): P
   return Array.from({ length: count }, (_, index) => {
     const position = start + index;
     return {
-      id: `P${String(position).padStart(4, "0")}`,
+      id: `P${String(position).padStart(3, "0")}`,
       firstName: firstNames[index % firstNames.length],
       lastName: lastNames[(index * 3) % lastNames.length],
       school: schools[(index * 5 + Math.floor(index / 4)) % schools.length],

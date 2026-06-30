@@ -15,11 +15,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TournamentCardCacheEvictionTest {
     private static final Set<String> PUBLIC_MUTATIONS = Set.of(
         "updatePlayer", "removePlayer", "finishRegistration", "swapPlayers",
-        "confirmPairingPreview", "unpairToPreview", "publishResults", "publishFinalRound",
+        "confirmPairingPreview", "unpairToPreview", "submitResult", "publishResults", "publishFinalRound",
         "undoPairing", "overrideResult", "close", "generateTestPlayers", "resetRuntime", "simulate"
     );
     private static final Set<String> PRIVATE_MUTATIONS = Set.of(
-        "addPlayer", "addPlayersBulk", "generatePairingPreview", "submitResult",
+        "addPlayer", "addPlayersBulk", "generatePairingPreview",
         "reviewResults", "reopenResults", "startFinalRound", "submitFinalResult",
         "setFinalWinner", "autoResults"
     );

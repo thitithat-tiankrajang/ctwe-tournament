@@ -100,6 +100,16 @@ export interface Tournament {
   version: number;
   directors: string[];
   cardCount: number;
+  accessToken: string;
+}
+
+/** Anonymous view of an OPEN tournament shown on the public root landing + token resolver. */
+export interface PublicTournamentSummary {
+  id: string;
+  name: string;
+  accessToken: string;
+  cardCount: number;
+  publishedCardCount: number;
 }
 
 export type ManagedRole = "ROLE_ADMIN" | "ROLE_DIRECTOR" | "ROLE_STAFF";

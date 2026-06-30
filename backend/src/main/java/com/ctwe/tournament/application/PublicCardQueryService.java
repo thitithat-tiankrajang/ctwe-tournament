@@ -27,7 +27,18 @@ public class PublicCardQueryService {
         return cache.summaries();
     }
 
+    /** Published-card summaries scoped to one tournament (the link-scoped public viewer). */
+    public List<PublicCardDtos.CardSummary> summaries(UUID tournamentId) {
+        return cache.summaries().stream()
+            .filter(summary -> tournamentId.equals(summary.tournamentId()))
+            .toList();
+    }
+
     public List<PublicCardDtos.CardVersion> versions() {
         return cache.versions();
+    }
+
+    public long version(UUID cardId) {
+        return cache.version(cardId);
     }
 }

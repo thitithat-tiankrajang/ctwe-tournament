@@ -1,19 +1,21 @@
 package com.ctwe.tournament.web;
 
+import com.ctwe.tournament.application.CardEventPublisher;
 import com.ctwe.tournament.application.PublicCardQueryService;
-import com.ctwe.tournament.application.TournamentArchiveService;
 import com.ctwe.tournament.web.dto.CardDtos;
 import com.ctwe.tournament.web.dto.PublicCardDtos;
-import com.ctwe.tournament.web.dto.TenantDtos;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -32,11 +34,11 @@ public class PublicCardController {
         CacheControl.maxAge(Duration.ofSeconds(2)).cachePublic().mustRevalidate();
 
     private final PublicCardQueryService cards;
-    private final TournamentArchiveService archives;
+    private final CardEventPublisher events;
 
-    public PublicCardController(PublicCardQueryService cards, TournamentArchiveService archives) {
+    public PublicCardController(PublicCardQueryService cards, CardEventPublisher events) {
         this.cards = cards;
-        this.archives = archives;
+        this.events = events;
     }
 
     @GetMapping("/cards")
@@ -62,11 +64,11 @@ public class PublicCardController {
             "public-cards,card-" + cardId, edgePolicy);
     }
 
-    @GetMapping("/archives")
-    public ResponseEntity<List<TenantDtos.ArchiveSummary>> archives(HttpServletRequest request) {
-        List<TenantDtos.ArchiveSummary> body = archives.list();
-        return cached(request, body, etag("archives", body.stream()
-            .map(archive -> archive.id() + ":" + archive.archivedAt()).toList()), "public-archives");
+    @GetMapping(value = "/cards/{cardId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter events(@PathVariable UUID cardId, HttpServletResponse response) {
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+        response.setHeader("X-Accel-Buffering", "no");
+        return events.subscribePublic(cardId, () -> cards.get(cardId).version());
     }
 
     private <T> ResponseEntity<T> cached(

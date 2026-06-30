@@ -1,19 +1,39 @@
 "use client";
 
-import { FileDown, KeyRound, LockKeyhole, Plus, Shield, Trash2, Trophy, UserPlus } from "lucide-react";
+import { Copy, FileDown, KeyRound, Link2, Lock, LockKeyhole, LockOpen, Plus, Shield, Trash2, Trophy, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
+import { toast } from "@/application/ui/toast";
 import { isAdmin } from "@/domain/tournament/roles";
 import type { ManagedUser, Tournament } from "@/domain/tournament/types";
+import { copyText } from "@/lib/clipboard";
 import { ArchiveList } from "@/ui/components/archive-list";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
+import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { PromptDialog } from "@/ui/components/prompt-dialog";
+
+interface ConfirmState { title: string; description: string; confirmLabel: string; danger?: boolean; run: () => Promise<unknown>; }
+interface PromptState { title: string; description?: string; label: string; placeholder?: string; type?: "text" | "password"; confirmLabel: string; minLength?: number; run: (value: string) => Promise<unknown>; }
 
 export default function AdminConsolePage() {
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
-  const store = useTournamentStore();
+  const archives = useTournamentStore((state) => state.archives);
+  const loadTournaments = useTournamentStore((state) => state.loadTournaments);
+  const listDirectors = useTournamentStore((state) => state.listDirectors);
+  const loadArchives = useTournamentStore((state) => state.loadArchives);
+  const createTournament = useTournamentStore((state) => state.createTournament);
+  const archiveTournament = useTournamentStore((state) => state.archiveTournament);
+  const deleteArchive = useTournamentStore((state) => state.deleteArchive);
+  const assignDirector = useTournamentStore((state) => state.assignDirector);
+  const unassignDirector = useTournamentStore((state) => state.unassignDirector);
+  const createDirector = useTournamentStore((state) => state.createDirector);
+  const setAccountEnabled = useTournamentStore((state) => state.setAccountEnabled);
+  const resetAccountPassword = useTournamentStore((state) => state.resetAccountPassword);
+  const deleteDirector = useTournamentStore((state) => state.deleteDirector);
+  const setTournamentStatus = useTournamentStore((state) => state.setTournamentStatus);
 
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [directors, setDirectors] = useState<ManagedUser[]>([]);
@@ -22,23 +42,65 @@ export default function AdminConsolePage() {
   const [dUser, setDUser] = useState("");
   const [dPass, setDPass] = useState("");
   const [dTournaments, setDTournaments] = useState<string[]>([]);
+  // Our own confirm/prompt modals replace window.confirm / window.prompt.
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [prompt, setPrompt] = useState<PromptState | null>(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState("");
 
   const refresh = useCallback(async () => {
     if (!isAdmin(auth)) return;
     try {
-      const [t, d] = await Promise.all([store.loadTournaments(), store.listDirectors(), store.loadArchives()]);
+      const [t, d] = await Promise.all([loadTournaments(), listDirectors(), loadArchives()]);
       setTournaments(t);
       setDirectors(d);
     } catch { /* surfaced via store.error */ }
-  }, [auth, store]);
+  }, [auth, listDirectors, loadArchives, loadTournaments]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  const errorMessage = (error: unknown) => error instanceof Error ? error.message : "เกิดข้อผิดพลาด";
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try { await fn(); await refresh(); }
-    catch (error) { window.alert(error instanceof Error ? error.message : "เกิดข้อผิดพลาด"); }
+    catch (error) { toast.error(errorMessage(error)); }
     finally { setBusy(false); }
+  };
+
+  const submitConfirm = async () => {
+    if (!confirm) return;
+    setDialogBusy(true); setDialogError("");
+    try { await confirm.run(); await refresh(); setConfirm(null); }
+    catch (error) { setDialogError(errorMessage(error)); }
+    finally { setDialogBusy(false); }
+  };
+  const submitPrompt = async (value: string) => {
+    if (!prompt) return;
+    setDialogBusy(true); setDialogError("");
+    try { await prompt.run(value); await refresh(); setPrompt(null); }
+    catch (error) { setDialogError(errorMessage(error)); }
+    finally { setDialogBusy(false); }
+  };
+  const closeDialogs = () => { if (!dialogBusy) { setConfirm(null); setPrompt(null); setDialogError(""); } };
+
+  // The link is the public entry to a tournament; opening/closing it requires the admin's password.
+  const tournamentLink = (token: string) =>
+    typeof window === "undefined" ? `/t/${token}` : `${window.location.origin}/t/${token}`;
+  const copyLink = async (token: string) => {
+    const ok = await copyText(tournamentLink(token));
+    if (ok) toast.success("คัดลอกลิงก์แล้ว"); else toast.error("คัดลอกไม่สำเร็จ — กดค้างที่ลิงก์เพื่อคัดลอกเอง");
+  };
+  const toggleStatus = (t: Tournament) => {
+    const open = t.status !== "OPEN";
+    setDialogError("");
+    setPrompt({
+      title: `${open ? "เปิด" : "ปิด"}การใช้งานลิงก์`,
+      description: `ยืนยัน${open ? "เปิด" : "ปิด"}ลิงก์ของ "${t.name}" — ใส่รหัสผ่านผู้ดูแลระบบเพื่อยืนยัน`,
+      label: "รหัสผ่านผู้ดูแลระบบ",
+      type: "password",
+      confirmLabel: open ? "เปิดลิงก์" : "ปิดลิงก์",
+      run: (password) => setTournamentStatus(t.id, open, password),
+    });
   };
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
@@ -59,28 +121,35 @@ export default function AdminConsolePage() {
             <label className="form-label" htmlFor="t-name">ชื่อรายการแข่งขัน</label>
             <input className="input" id="t-name" value={tName} placeholder="เช่น CTWE 2026" onChange={(e) => setTName(e.target.value)} />
           </div>
-          <Button disabled={busy || tName.trim().length === 0} onClick={() => act(async () => { await store.createTournament(tName.trim()); setTName(""); })}><Plus size={16} />สร้าง Tournament</Button>
+          <Button disabled={busy || tName.trim().length === 0} onClick={() => act(async () => { await createTournament(tName.trim()); setTName(""); })}><Plus size={16} />สร้าง Tournament</Button>
         </div>
         <div className="panel-padding" style={{ display: "grid", gap: 12 }}>
           {tournaments.length === 0 && <p className="muted">ยังไม่มีรายการแข่งขัน</p>}
           {tournaments.map((t) => (
             <div key={t.id} className="notice" style={{ display: "block" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Trophy size={16} />{t.name}</strong>
+                <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Trophy size={16} />{t.name}<Badge tone={t.status === "OPEN" ? "success" : "danger"}>{t.status === "OPEN" ? "เปิด" : "ปิด"}</Badge></strong>
                 <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <Badge>{t.cardCount} การ์ด</Badge>
-                  <Button variant="secondary" size="sm" disabled={busy} title="เก็บเป็น Excel แล้วลบข้อมูลออกจากฐานข้อมูล" onClick={() => window.confirm(`เก็บทัวร์นาเมนต์ "${t.name}" เป็นไฟล์ Excel แล้วลบข้อมูลทั้งหมด (${t.cardCount} การ์ด) ออกจากฐานข้อมูล?\n\nไฟล์จะดาวน์โหลดได้ภายหลังในหน้าภาพรวม แต่ข้อมูลในระบบจะถูกลบถาวร`) && void act(() => store.archiveTournament(t.id))}><FileDown size={14} /> เก็บเข้าคลัง</Button>
+                  <Button variant="secondary" size="sm" disabled={busy} title={t.status === "OPEN" ? "ปิดลิงก์ (เข้าไม่ได้)" : "เปิดลิงก์ให้เข้าถึงได้"} onClick={() => toggleStatus(t)}>{t.status === "OPEN" ? <><Lock size={14} />ปิดลิงก์</> : <><LockOpen size={14} />เปิดลิงก์</>}</Button>
+                  <Button variant="secondary" size="sm" disabled={busy} title="เก็บเป็น Excel แล้วลบข้อมูลออกจากฐานข้อมูล" onClick={() => setConfirm({ title: `เก็บทัวร์นาเมนต์ "${t.name}" เข้าคลัง?`, description: `ระบบจะเก็บเป็นไฟล์ Excel แล้วลบข้อมูลทั้งหมด (${t.cardCount} การ์ด) ออกจากฐานข้อมูลอย่างถาวร — ไฟล์ยังดาวน์โหลดได้ภายหลัง`, confirmLabel: "เก็บเข้าคลัง", danger: true, run: () => archiveTournament(t.id) })}><FileDown size={14} /> เก็บเข้าคลัง</Button>
                 </span>
+              </div>
+              <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                <span className="muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}><Link2 size={13} />ลิงก์เข้าถึง:</span>
+                <code style={{ fontSize: 12, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6, padding: "2px 8px", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tournamentLink(t.accessToken)}</code>
+                <Button variant="ghost" size="sm" disabled={busy} title="คัดลอกลิงก์" onClick={() => void copyLink(t.accessToken)}><Copy size={14} />คัดลอก</Button>
+                {t.status !== "OPEN" && <span className="muted" style={{ fontSize: 12 }}>· ลิงก์ปิดอยู่ ผู้เข้าจะเข้าไม่ได้จนกว่าจะเปิด</span>}
               </div>
               <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
                 <span className="muted" style={{ fontSize: 13 }}>ผู้อำนวยการ:</span>
                 {t.directors.length === 0 && <span className="muted" style={{ fontSize: 13 }}>— ยังไม่ได้กำหนด —</span>}
                 {t.directors.map((d) => (
                   <Badge key={d} tone="info">{d}
-                    <button aria-label={`ถอด ${d}`} className="chip-remove" disabled={busy} onClick={() => act(() => store.unassignDirector(t.id, d))}>×</button>
+                    <button aria-label={`ถอด ${d}`} className="chip-remove" disabled={busy} onClick={() => act(() => unassignDirector(t.id, d))}>×</button>
                   </Badge>
                 ))}
-                <select className="select" style={{ maxWidth: 220 }} value="" disabled={busy} onChange={(e) => e.target.value && void act(() => store.assignDirector(t.id, e.target.value))}>
+                <select className="select" style={{ maxWidth: 220 }} value="" disabled={busy} onChange={(e) => e.target.value && void act(() => assignDirector(t.id, e.target.value))}>
                   <option value="">+ เพิ่มผู้อำนวยการ…</option>
                   {directors.filter((d) => !t.directors.includes(d.username)).map((d) => <option key={d.username} value={d.username}>{d.username}</option>)}
                 </select>
@@ -90,9 +159,9 @@ export default function AdminConsolePage() {
         </div>
       </Panel>
 
-      <Panel title="คลังที่เก็บถาวร (Excel)" description="ทัวร์นาเมนต์ที่ถูกเก็บเป็นไฟล์ Excel แล้ว — ดาวน์โหลดหรือลบไฟล์ถาวรได้ที่นี่ (ผู้ใช้ทั่วไปดาวน์โหลดได้ในหน้าภาพรวม)">
+      <Panel title="คลังที่เก็บถาวร (Excel)" description="เฉพาะผู้ดูแลระบบเท่านั้นที่ดาวน์โหลดหรือลบไฟล์ Excel ที่เก็บถาวรได้">
         <div className="panel-padding">
-          <ArchiveList archives={store.archives} onDelete={(archive) => window.confirm(`ลบไฟล์เก็บถาวร "${archive.tournamentName}" อย่างถาวร? กู้คืนไม่ได้`) && void act(() => store.deleteArchive(archive.id))} />
+          <ArchiveList archives={archives} onDelete={(archive) => setConfirm({ title: `ลบไฟล์เก็บถาวร "${archive.tournamentName}"?`, description: "ไฟล์ Excel นี้จะถูกลบอย่างถาวร — กู้คืนไม่ได้", confirmLabel: "ลบถาวร", danger: true, run: () => deleteArchive(archive.id) })} />
         </div>
       </Panel>
 
@@ -118,7 +187,7 @@ export default function AdminConsolePage() {
           </div>
           <div className="form-actions" style={{ paddingLeft: 0 }}>
             <Button disabled={busy || dUser.trim().length < 3 || dPass.length < 8} onClick={() => act(async () => {
-              await store.createDirector(dUser.trim(), dPass, dTournaments);
+              await createDirector(dUser.trim(), dPass, dTournaments);
               setDUser(""); setDPass(""); setDTournaments([]);
             })}><UserPlus size={16} />สร้างผู้อำนวยการ</Button>
           </div>
@@ -129,14 +198,40 @@ export default function AdminConsolePage() {
             <div key={d.username} className="notice" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Shield size={15} />{d.username} {!d.enabled && <Badge tone="warning">ปิดใช้งาน</Badge>}</strong>
               <span style={{ display: "flex", gap: 6 }}>
-                <Button variant="secondary" size="sm" disabled={busy} onClick={() => act(() => store.setAccountEnabled("directors", d.username, !d.enabled))}>{d.enabled ? "ปิดใช้งาน" : "เปิดใช้งาน"}</Button>
-                <Button variant="secondary" size="sm" disabled={busy} onClick={() => { const p = window.prompt("รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)"); if (p) void act(() => store.resetAccountPassword("directors", d.username, p)); }}><KeyRound size={14} /></Button>
-                <Button variant="danger" size="sm" disabled={busy} onClick={() => window.confirm(`ลบผู้อำนวยการ ${d.username} และ staff ทั้งหมดของเขา?`) && void act(() => store.deleteDirector(d.username))}><Trash2 size={14} /></Button>
+                <Button variant="secondary" size="sm" disabled={busy} onClick={() => act(() => setAccountEnabled("directors", d.username, !d.enabled))}>{d.enabled ? "ปิดใช้งาน" : "เปิดใช้งาน"}</Button>
+                <Button variant="secondary" size="sm" disabled={busy} title="ตั้งรหัสผ่านใหม่" onClick={() => { setDialogError(""); setPrompt({ title: `ตั้งรหัสผ่านใหม่ · ${d.username}`, label: "รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)", type: "password", placeholder: "อย่างน้อย 8 ตัวอักษร", minLength: 8, confirmLabel: "บันทึกรหัสผ่าน", run: (p) => resetAccountPassword("directors", d.username, p) }); }}><KeyRound size={14} /></Button>
+                <Button variant="danger" size="sm" disabled={busy} onClick={() => setConfirm({ title: `ลบผู้อำนวยการ ${d.username}?`, description: "บัญชีผู้อำนวยการและ staff ทั้งหมดของเขาจะถูกลบอย่างถาวร", confirmLabel: "ลบถาวร", danger: true, run: () => deleteDirector(d.username) })}><Trash2 size={14} /></Button>
               </span>
             </div>
           ))}
         </div>
       </Panel>
+
+      <ConfirmDialog
+        open={confirm !== null}
+        title={confirm?.title ?? ""}
+        description={confirm?.description ?? ""}
+        confirmLabel={confirm?.confirmLabel ?? "ยืนยัน"}
+        danger={confirm?.danger}
+        busy={dialogBusy}
+        error={dialogError || undefined}
+        onConfirm={() => void submitConfirm()}
+        onCancel={closeDialogs}
+      />
+      <PromptDialog
+        open={prompt !== null}
+        title={prompt?.title ?? ""}
+        description={prompt?.description}
+        label={prompt?.label ?? ""}
+        placeholder={prompt?.placeholder}
+        type={prompt?.type}
+        confirmLabel={prompt?.confirmLabel ?? "ยืนยัน"}
+        minLength={prompt?.minLength}
+        busy={dialogBusy}
+        error={dialogError || undefined}
+        onSubmit={(value) => void submitPrompt(value)}
+        onCancel={closeDialogs}
+      />
     </>
   );
 }

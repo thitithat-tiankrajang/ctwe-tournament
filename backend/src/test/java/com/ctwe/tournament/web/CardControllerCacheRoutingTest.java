@@ -6,6 +6,7 @@ import com.ctwe.tournament.application.TournamentCardService;
 import com.ctwe.tournament.domain.model.CardStatus;
 import com.ctwe.tournament.domain.model.RuntimeStage;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService;
+import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
 import com.ctwe.tournament.web.dto.CardDtos;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -26,8 +27,9 @@ class CardControllerCacheRoutingTest {
     private final TournamentCardService cards = mock(TournamentCardService.class);
     private final PublicCardQueryService publicCards = mock(PublicCardQueryService.class);
     private final AuthorizationService authz = mock(AuthorizationService.class);
+    private final ReauthenticationService reauthentication = mock(ReauthenticationService.class);
     private final CardController controller =
-        new CardController(cards, publicCards, authz, mock(CardEventPublisher.class));
+        new CardController(cards, publicCards, authz, reauthentication, mock(CardEventPublisher.class));
 
     @Test
     void anonymousCardReadUsesOnlyPublicCacheBoundary() {
@@ -80,6 +82,22 @@ class CardControllerCacheRoutingTest {
 
         verify(cards).list(true, Set.of(tournamentId));
         verify(publicCards, never()).list();
+    }
+
+    @Test
+    void pairingSwapRequiresCurrentPasswordBeforeMutation() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = new UsernamePasswordAuthenticationToken(
+            "director", "n/a", List.of(new SimpleGrantedAuthority("ROLE_DIRECTOR")));
+        var request = new CardDtos.SwapRequest("P001", "P002", "director-password", false);
+        CardDtos.CardResponse response = card(cardId);
+        when(cards.swapPlayers(cardId, request, "director")).thenReturn(response);
+
+        assertThat(controller.swap(cardId, request, authentication)).isSameAs(response);
+
+        verify(authz).requireCardCapability(authentication, cardId, AuthorizationService.Capability.RUN_TOURNAMENT);
+        verify(reauthentication).requireCurrentPassword(authentication, "director-password");
+        verify(cards).swapPlayers(cardId, request, "director");
     }
 
     private static CardDtos.CardResponse card(UUID id) {

@@ -14,7 +14,15 @@ import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 export default function DirectorConsolePage() {
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
-  const store = useTournamentStore();
+  const listStaff = useTournamentStore((state) => state.listStaff);
+  const loadTournaments = useTournamentStore((state) => state.loadTournaments);
+  const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
+  const createStaff = useTournamentStore((state) => state.createStaff);
+  const setAccountEnabled = useTournamentStore((state) => state.setAccountEnabled);
+  const resetAccountPassword = useTournamentStore((state) => state.resetAccountPassword);
+  const deleteStaff = useTournamentStore((state) => state.deleteStaff);
+  const grantStaffTournament = useTournamentStore((state) => state.grantStaffTournament);
+  const revokeStaffTournament = useTournamentStore((state) => state.revokeStaffTournament);
   const router = useRouter();
 
   const [staff, setStaff] = useState<ManagedUser[]>([]);
@@ -26,11 +34,11 @@ export default function DirectorConsolePage() {
   const refresh = useCallback(async () => {
     if (!isDirector(auth)) return;
     try {
-      const [s, t] = await Promise.all([store.listStaff(), store.loadTournaments()]);
+      const [s, t] = await Promise.all([listStaff(), loadTournaments()]);
       setStaff(s);
       setTournaments(t);
     } catch { /* surfaced via store.error */ }
-  }, [auth, store]);
+  }, [auth, listStaff, loadTournaments]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -60,7 +68,7 @@ export default function DirectorConsolePage() {
       <div style={{ marginTop: 18 }}>
         <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>สร้างการ์ดการแข่งขัน (Card)</h2>
         <p className="muted" style={{ margin: "0 0 10px", fontSize: 14 }}>ผู้อำนวยการสร้างการ์ดได้ที่นี่ — เลือกรายการแข่งขัน (tournament) ที่จะสร้างการ์ดเข้าไป</p>
-        <CardCreateForm tournaments={tournaments} onCreated={(id, tour) => { store.setActiveTournament(tour); router.push(`/cards/${id}/players`); }} />
+        <CardCreateForm tournaments={tournaments} onCreated={(id, tour) => { setActiveTournament(tour); router.push(`/cards/${id}/players`); }} />
       </div>
 
       <Panel title="เพิ่มเจ้าหน้าที่ (Staff)" description="staff จะกรอกผลได้ทุกการ์ดในรายการแข่งขันของคุณ">
@@ -76,7 +84,7 @@ export default function DirectorConsolePage() {
         </div>
         <div className="form-actions">
           <Button disabled={busy || sUser.trim().length < 3 || sPass.length < 8} onClick={() => act(async () => {
-            await store.createStaff(sUser.trim(), sPass);
+            await createStaff(sUser.trim(), sPass);
             setSUser(""); setSPass("");
           })}><UserPlus size={16} />สร้างเจ้าหน้าที่</Button>
         </div>
@@ -90,9 +98,9 @@ export default function DirectorConsolePage() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Users size={15} />{s.username} {!s.enabled && <Badge tone="warning">ปิดใช้งาน</Badge>}</strong>
                 <span style={{ display: "flex", gap: 6 }}>
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => act(() => store.setAccountEnabled("staff", s.username, !s.enabled))}>{s.enabled ? "ปิดใช้งาน" : "เปิดใช้งาน"}</Button>
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => { const p = window.prompt("รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)"); if (p) void act(() => store.resetAccountPassword("staff", s.username, p)); }}><KeyRound size={14} /></Button>
-                  <Button variant="danger" size="sm" disabled={busy} onClick={() => window.confirm(`ลบเจ้าหน้าที่ ${s.username}?`) && void act(() => store.deleteStaff(s.username))}><Trash2 size={14} /></Button>
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => act(() => setAccountEnabled("staff", s.username, !s.enabled))}>{s.enabled ? "ปิดใช้งาน" : "เปิดใช้งาน"}</Button>
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => { const p = window.prompt("รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)"); if (p) void act(() => resetAccountPassword("staff", s.username, p)); }}><KeyRound size={14} /></Button>
+                  <Button variant="danger" size="sm" disabled={busy} onClick={() => window.confirm(`ลบเจ้าหน้าที่ ${s.username}?`) && void act(() => deleteStaff(s.username))}><Trash2 size={14} /></Button>
                 </span>
               </div>
               <div style={{ marginTop: 10 }}>
@@ -103,7 +111,7 @@ export default function DirectorConsolePage() {
                     const granted = s.tournamentIds.includes(t.id);
                     return (
                       <label key={t.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <input type="checkbox" checked={granted} disabled={busy} onChange={() => act(() => granted ? store.revokeStaffTournament(s.username, t.id) : store.grantStaffTournament(s.username, t.id))} />{t.name}
+                        <input type="checkbox" checked={granted} disabled={busy} onChange={() => act(() => granted ? revokeStaffTournament(s.username, t.id) : grantStaffTournament(s.username, t.id))} />{t.name}
                       </label>
                     );
                   })}

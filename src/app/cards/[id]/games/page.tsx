@@ -192,13 +192,17 @@ export default function GamesPage() {
     try { await publishResults(id); router.push(finalGame ? `/cards/${id}` : `/cards/${id}/tables`); }
     catch (error) { window.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ"); } finally { setBusy(false); }
   };
-  // Director edit-pairing during result collection: swap (>=1 result) or unpair-to-preview (0 results).
-  const onSwapPairing = async (a: string, b: string): Promise<boolean> => {
-    try { await swapPlayers(id, a, b, false); return true; }
+  // Director edit-pairing during result collection. The API verifies the password again as well.
+  const onSwapPairing = async (a: string, b: string, password: string): Promise<boolean> => {
+    if (!await verifyPassword(password)) {
+      window.alert("รหัสผ่านไม่ถูกต้อง");
+      return false;
+    }
+    try { await swapPlayers(id, a, b, password, false); return true; }
     catch (error) {
       const message = error instanceof Error ? error.message : "สลับผู้เล่นไม่สำเร็จ";
       if (message.includes("SCHOOL_CONFLICT") && window.confirm(`${message.replace("SCHOOL_CONFLICT: ", "")}\n\nยืนยันสลับต่อหรือไม่?`)) {
-        try { await swapPlayers(id, a, b, true); return true; }
+        try { await swapPlayers(id, a, b, password, true); return true; }
         catch (retry) { window.alert(retry instanceof Error ? retry.message : "สลับผู้เล่นไม่สำเร็จ"); return false; }
       }
       if (!message.includes("SCHOOL_CONFLICT")) window.alert(message);

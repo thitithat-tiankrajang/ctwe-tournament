@@ -218,7 +218,7 @@ public class TournamentCardService {
         for (int index = 0; index < players.size(); index++) {
             CardDtos.BulkPlayerEntry entry = players.get(index);
             UUID playerId = UUID.randomUUID();
-            String externalId = "P" + String.format("%04d", start + index);
+            String externalId = "P" + String.format("%03d", start + index);
             jdbc.update("""
                 INSERT INTO players (id, card_id, external_id, first_name, last_name, school, division)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -226,7 +226,7 @@ public class TournamentCardService {
             jdbc.update("INSERT INTO standings (id, card_id, player_id) VALUES (?, ?, ?)", UUID.randomUUID(), cardId, playerId);
         }
         touch(cardId);
-        audit(cardId, actor, "IMPORT_PLAYERS", null, Map.of("count", players.size(), "fromCode", "P" + String.format("%04d", start)));
+        audit(cardId, actor, "IMPORT_PLAYERS", null, Map.of("count", players.size(), "fromCode", "P" + String.format("%03d", start)));
         return get(cardId, true);
     }
 
@@ -275,7 +275,7 @@ public class TournamentCardService {
         Map<String, String> renumbered = new LinkedHashMap<>();
         for (int index = 0; index < remaining.size(); index++) {
             PlayerCodeRow player = remaining.get(index);
-            String nextCode = "P" + String.format("%04d", index + 1);
+            String nextCode = "P" + String.format("%03d", index + 1);
             jdbc.update("UPDATE players SET external_id = ? WHERE id = ?", nextCode, player.id());
             if (!player.externalId().equals(nextCode)) renumbered.put(player.externalId(), nextCode);
         }
@@ -505,6 +505,7 @@ public class TournamentCardService {
     }
 
     @Transactional
+    @EvictPublicCard
     public CardDtos.ResultPatch submitResult(UUID cardId, UUID matchId, CardDtos.ResultRequest request, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
         int scoreOne = request.scoreOne();
@@ -564,6 +565,7 @@ public class TournamentCardService {
             match.gameNumber() == card.currentGame() && isOutgoingPairResult(cardId, card.currentGame());
         if (updatesPairResultDestination)
             syncPairResultSource(cardId, card.currentGame(), match.tableNumber());
+        publishPublic(cardId);
         // A normal save changes one row. PAIR_RESULT can additionally materialize/update two
         // destination rows. Broadcasting only those rows keeps SSE traffic bounded at O(1).
         int destinationGame = updatesPairResultDestination ? card.currentGame() + 1 : -1;
@@ -754,55 +756,24 @@ public class TournamentCardService {
     }
 
     /**
-     * Un-pairing: roll the workflow back to result collection of the most recently published block,
-     * discarding any in-progress pairing for the current game. The published snapshot is voided
-     * (kept for history), its matches become editable again, and standings are recalculated.
-     * When re-paired afterwards the latest standings are used. Director-only (enforced upstream).
+     * Un-pairing discards only the current, unpublished pairing preview. Published results and
+     * snapshots from earlier games are immutable here; correcting those uses the result override flow.
      */
     @Transactional
     @EvictPublicCard
     public CardDtos.CardResponse undoPairing(UUID cardId, String actor) {
-        CardRow card = cardRow(cardId);
-        if (card.status() == CardStatus.CLOSED)
-            throw new IllegalArgumentException("การ์ดนี้ปิดแล้ว ไม่สามารถยกเลิกการจับคู่ได้");
+        CardRow card = requireStage(cardId, RuntimeStage.PAIRING_PREVIEW);
         requireRegularEditable(cardId);
 
-        SnapshotBlock latest = jdbc.query("""
-            SELECT id, game_numbers FROM pairing_snapshots
-            WHERE card_id = ? AND voided_at IS NULL ORDER BY confirmed_at DESC LIMIT 1
-            """, (rs, row) -> new SnapshotBlock(rs.getObject("id", UUID.class), intArray(rs.getArray("game_numbers"))), cardId)
-            .stream().findFirst().orElse(null);
-
-        if (latest == null) {
-            // Nothing published yet: discard the game 1 preview and return to TABLE_PAIRING.
-            if (count("SELECT COUNT(*) FROM matches m JOIN games g ON g.id = m.game_id WHERE m.card_id = ? AND g.game_number = 1", cardId) == 0)
-                throw new IllegalArgumentException("ยังไม่มีการจับคู่ที่สามารถยกเลิกได้");
-            deleteUnpublishedMatches(cardId, 0);
-            jdbc.update("UPDATE games SET status = 'PENDING' WHERE card_id = ?", cardId);
-            recalculateStandings(cardId);
-            jdbc.update("UPDATE tournament_cards SET current_game = 1, status = 'READY', runtime_stage = 'TABLE_PAIRING', version = version + 1 WHERE id = ?", cardId);
-            publishPublic(cardId);
-            audit(cardId, actor, "UNDO_PAIRING", "game 1 preview", "กลับสู่ TABLE_PAIRING");
-            return get(cardId, true);
-        }
-
-        int firstGame = latest.gameNumbers().get(0);
-        int lastGame = latest.gameNumbers().get(latest.gameNumbers().size() - 1);
-
-        deleteUnpublishedMatches(cardId, lastGame);
-        jdbc.update("UPDATE pairing_snapshots SET voided_at = now(), voided_by = ? WHERE id = ?", actor, latest.id());
+        deleteUnpublishedMatches(cardId, card.currentGame() - 1);
+        if (card.currentGame() == 1)
+            jdbc.update("DELETE FROM competition_tables WHERE card_id = ?", cardId);
+        jdbc.update("UPDATE games SET status = 'PENDING' WHERE card_id = ? AND game_number >= ?", cardId, card.currentGame());
         jdbc.update("""
-            UPDATE matches m SET snapshot_id = NULL, pairing_published_at = NULL
-            FROM games g WHERE m.game_id = g.id AND m.card_id = ? AND g.game_number BETWEEN ? AND ?
-            """, cardId, firstGame, lastGame);
-        jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number BETWEEN ? AND ?", cardId, firstGame, lastGame);
-        jdbc.update("DELETE FROM competition_tables WHERE card_id = ?", cardId);
-        recalculateStandings(cardId);
-        jdbc.update("""
-            UPDATE tournament_cards SET current_game = ?, status = 'RUNNING', runtime_stage = 'RESULT_COLLECTION', version = version + 1 WHERE id = ?
-            """, firstGame, cardId);
+            UPDATE tournament_cards SET runtime_stage = 'TABLE_PAIRING', version = version + 1 WHERE id = ?
+            """, cardId);
         publishPublic(cardId);
-        audit(cardId, actor, "UNDO_PAIRING", "block " + latest.gameNumbers(), "เปิดกรอกผลเกม " + firstGame + " อีกครั้ง");
+        audit(cardId, actor, "UNDO_PAIRING", "preview เกม " + card.currentGame(), "กลับสู่ TABLE_PAIRING เกม " + card.currentGame());
         return get(cardId, true);
     }
 
@@ -933,7 +904,7 @@ public class TournamentCardService {
             jdbc.update("""
                 INSERT INTO players (id, card_id, external_id, first_name, last_name, school, division)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, playerId, cardId, "P" + String.format("%04d", index + 1), firstNames[index % firstNames.length],
+                """, playerId, cardId, "P" + String.format("%03d", index + 1), firstNames[index % firstNames.length],
                 lastNames[(index * 3) % lastNames.length], schools[(index * 5 + index / 4) % schools.length], division);
             jdbc.update("INSERT INTO standings (id, card_id, player_id) VALUES (?, ?, ?)", UUID.randomUUID(), cardId, playerId);
         }
@@ -1250,7 +1221,8 @@ public class TournamentCardService {
             String confirmedAt = group.get(0).confirmedAt() == null ? "" : group.get(0).confirmedAt().toInstant().toString();
             String id = entry.getKey().equals("preview") ? "preview-" + games.get(0) : entry.getKey();
             return new CardDtos.SnapshotResponse(id, games, group.stream()
-                .map(row -> toPairingResponse(row, staffView || row.snapshotId() != null)).toList(), confirmedAt);
+                .map(row -> toPairingResponse(row,
+                    staffView || row.snapshotId() != null || row.pairingPublishedAt() != null)).toList(), confirmedAt);
         }).toList();
     }
 
@@ -1359,7 +1331,7 @@ public class TournamentCardService {
             SELECT COALESCE(MAX(CASE WHEN external_id ~ '^P[0-9]+$' THEN substring(external_id from 2)::integer END), 0) + 1
             FROM players WHERE card_id = ?
             """, Integer.class, cardId);
-        return "P" + String.format("%04d", next == null ? 1 : next);
+        return "P" + String.format("%03d", next == null ? 1 : next);
     }
 
     private String cardDivision(UUID cardId) { return cardRow(cardId).division(); }
@@ -1415,11 +1387,6 @@ public class TournamentCardService {
     }
 
     private Integer nullableInt(ResultSet rs, String column) throws SQLException { int value = rs.getInt(column); return rs.wasNull() ? null : value; }
-    private List<Integer> intArray(Array array) throws SQLException {
-        List<Integer> values = new ArrayList<>(Arrays.asList((Integer[]) array.getArray()));
-        Collections.sort(values);
-        return values;
-    }
     private boolean hasInvalidPairResultChain(List<PairingRuleType> rules) {
         for (int i = 1; i < rules.size(); i++) if (rules.get(i) == PairingRuleType.PAIR_RESULT && rules.get(i - 1) == PairingRuleType.PAIR_RESULT) return true;
         return false;
@@ -1446,6 +1413,5 @@ public class TournamentCardService {
     private record PairResultSlots(UUID upper, UUID lower) {}
     private record PairResultDestination(UUID id, UUID oneId, UUID twoId, boolean hasResult) {}
     private record ScoreRow(UUID one, UUID two, UUID winner, String resultType, int calculatedDiff) {}
-    private record SnapshotBlock(UUID id, List<Integer> gameNumbers) {}
     private record AutoMatch(UUID id, String one, String two, int tableNumber) {}
 }

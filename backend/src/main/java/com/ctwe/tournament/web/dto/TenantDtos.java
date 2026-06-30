@@ -19,10 +19,16 @@ public final class TenantDtos {
 
     public record TournamentResponse(
         UUID id, String name, String status, String createdBy, Instant createdAt, long version,
-        List<String> directors, int cardCount
+        List<String> directors, int cardCount, String accessToken
     ) {}
 
-    public record TournamentStatusRequest(@NotNull Boolean open) {}
+    /** Admin OPEN/CLOSE toggle: password re-authenticates the admin before the status change. */
+    public record TournamentStatusRequest(@NotNull Boolean open, @NotBlank String password) {}
+
+    /** Public, anonymous view of an OPEN tournament shown on the root landing + token resolver. */
+    public record PublicTournamentResponse(
+        UUID id, String name, String accessToken, int cardCount, int publishedCardCount
+    ) {}
 
     public record GrantTournamentRequest(@NotNull UUID tournamentId) {}
 

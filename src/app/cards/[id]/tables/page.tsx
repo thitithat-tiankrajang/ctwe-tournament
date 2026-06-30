@@ -24,10 +24,12 @@ export default function TablesPage() {
   const generatePairings = useTournamentStore((state) => state.generatePairings);
   const confirmPairing = useTournamentStore((state) => state.confirmPairingPreview);
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
+  const verifyPassword = useTournamentStore((state) => state.verifyPassword);
   const undoPairing = useTournamentStore((state) => state.undoPairing);
   const card = selectCard(cards, id);
   const [firstId, setFirstId] = useState("");
   const [secondId, setSecondId] = useState("");
+  const [pairingPassword, setPairingPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [browseGame, setBrowseGame] = useState<number | null>(null);
 
@@ -72,15 +74,20 @@ export default function TablesPage() {
 
   const swap = async () => {
     if (!firstId || !secondId || firstId === secondId) return window.alert("เลือกรหัสผู้เล่น 2 คนที่ต่างกัน");
+    if (!pairingPassword) return window.alert("กรอกรหัสผ่านเพื่อยืนยันการแก้ไข pairing");
     setBusy(true);
     try {
-      await swapPlayers(id, firstId, secondId, false);
-      setFirstId(""); setSecondId("");
+      if (!await verifyPassword(pairingPassword)) {
+        window.alert("รหัสผ่านไม่ถูกต้อง");
+        return;
+      }
+      await swapPlayers(id, firstId, secondId, pairingPassword, false);
+      setFirstId(""); setSecondId(""); setPairingPassword("");
     } catch (error) {
       const message = error instanceof Error ? error.message : "สลับผู้เล่นไม่สำเร็จ";
       if (message.includes("SCHOOL_CONFLICT") && window.confirm(`${message.replace("SCHOOL_CONFLICT: ", "")}\n\nยืนยันสลับต่อหรือไม่?`)) {
-        await swapPlayers(id, firstId, secondId, true);
-        setFirstId(""); setSecondId("");
+        await swapPlayers(id, firstId, secondId, pairingPassword, true);
+        setFirstId(""); setSecondId(""); setPairingPassword("");
       } else if (!message.includes("SCHOOL_CONFLICT")) window.alert(message);
     } finally { setBusy(false); }
   };
@@ -94,13 +101,13 @@ export default function TablesPage() {
   };
 
   const undo = async () => {
-    if (!window.confirm("ยกเลิกการจับคู่ปัจจุบัน และย้อนกลับไปกรอกผลของเกมก่อนหน้า? ผลที่บันทึกไว้จะยังอยู่และแก้ไขได้ ส่วนคู่ที่จับใหม่จะถูกล้าง")) return;
+    if (!window.confirm(`ลบ Pairing preview เกม ${card.currentGame} และกลับไปสร้าง Pairing เกมนี้ใหม่? ผลและ Ranking ของเกมก่อนหน้าจะไม่เปลี่ยนแปลง`)) return;
     setBusy(true);
     try { await undoPairing(id); }
     catch (error) { window.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ"); }
     finally { setBusy(false); }
   };
-  const canUndo = canManageTournament(auth) && (preview || latestResultGame > 0 || card.runtimeStage === "TABLE_PAIRING");
+  const canUndo = canManageTournament(auth) && preview;
 
   return (
     <>
@@ -139,7 +146,11 @@ export default function TablesPage() {
                 <label className="form-label" htmlFor="swap-second">ผู้เล่นคนที่ 2</label>
                 <CustomCombobox id="swap-second" value={secondId} onChange={(value) => setSecondId(value.toUpperCase())} options={playerOptions.filter((option) => option.value !== firstId)} disabled={busy} placeholder="ค้นหารหัส ชื่อ หรือสถาบัน" caption="เลือกผู้เล่นคนที่ 2" emptyMessage="ไม่พบผู้เล่น" listLabel="รายชื่อผู้เล่นคนที่ 2" openButtonLabel="เปิดรายชื่อผู้เล่นคนที่ 2" closeButtonLabel="ปิดรายชื่อผู้เล่นคนที่ 2" />
               </div>
-              <Button onClick={swap} disabled={busy || !players.has(firstId) || !players.has(secondId)}><RefreshCw size={16} />สลับ</Button>
+              <div className="form-field">
+                <label className="form-label" htmlFor="pairing-password">รหัสผ่านยืนยัน</label>
+                <input id="pairing-password" className="input" type="password" autoComplete="current-password" value={pairingPassword} onChange={(event) => setPairingPassword(event.target.value)} placeholder="รหัสผ่านบัญชีของคุณ" disabled={busy} />
+              </div>
+              <Button onClick={swap} disabled={busy || !players.has(firstId) || !players.has(secondId) || !pairingPassword}><RefreshCw size={16} />ยืนยันการสลับ</Button>
             </div>
           </Panel>
 

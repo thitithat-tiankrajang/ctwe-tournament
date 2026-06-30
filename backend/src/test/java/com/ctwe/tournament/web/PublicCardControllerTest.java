@@ -1,7 +1,7 @@
 package com.ctwe.tournament.web;
 
+import com.ctwe.tournament.application.CardEventPublisher;
 import com.ctwe.tournament.application.PublicCardQueryService;
-import com.ctwe.tournament.application.TournamentArchiveService;
 import com.ctwe.tournament.domain.model.CardStatus;
 import com.ctwe.tournament.domain.model.RuntimeStage;
 import com.ctwe.tournament.web.dto.CardDtos;
@@ -22,7 +22,7 @@ import static org.mockito.Mockito.when;
 class PublicCardControllerTest {
     private final PublicCardQueryService cards = mock(PublicCardQueryService.class);
     private final PublicCardController controller =
-        new PublicCardController(cards, mock(TournamentArchiveService.class));
+        new PublicCardController(cards, mock(CardEventPublisher.class));
 
     @Test
     void marksOnlyPublicReadModelAsSharedCacheable() {

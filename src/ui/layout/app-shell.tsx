@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import {
   Activity,
+  Bell,
+  BellRing,
   ChevronRight,
   ClipboardList,
   Code2,
@@ -11,7 +13,6 @@ import {
   Folder,
   FolderOpen,
   Gamepad2,
-  LayoutDashboard,
   Lock,
   LockOpen,
   LoaderCircle,
@@ -32,13 +33,10 @@ import { usePublicSync } from "@/application/tournament/use-public-sync";
 import { hasStaffAccess, isAdmin, isDirector } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
+import { Toaster } from "@/ui/components/toaster";
 
 const OPENED_KEY = "ctwe.openedCards";
 const LOCKED_KEY = "ctwe.sidebarLocked";
-
-const publicGeneralLinks = [
-  { href: "/cards", label: "การ์ดแข่งขัน", icon: LayoutDashboard },
-];
 
 /** The page a staff member should work on next for a card at the given stage. */
 function stageHref(id: string, stage: RuntimeStage) {
@@ -124,6 +122,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [hovering, setHovering] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const isStaff = hasStaffAccess(auth);
+  const admin = isAdmin(auth);
+  // Entering a tournament via its private link scopes non-admins to it — no nav back to the master page.
+  const scopeLocked = !!activeTournament && !admin;
   const currentCard = id ? selectCard(cards, id) : undefined;
   const previousFlowRef = useRef<{ cardId?: string; stage?: RuntimeStage }>({
     cardId: id,
@@ -131,9 +132,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   });
   // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
   useCardSync(isStaff ? id : undefined);
-  usePublicSync(id, !isStaff);
+  const { notificationPermission, requestNotificationPermission } = usePublicSync(id, !isStaff);
+  // Entry is link-based now: no cross-tournament picker. Only admin keeps a system-level console.
   const generalLinks = [
-    ...(isStaff ? [{ href: "/tournaments", label: "รายการแข่งขัน", icon: Trophy }] : publicGeneralLinks),
     ...(isAdmin(auth) ? [{ href: "/admin", label: "ผู้ดูแลระบบ", icon: ShieldCheck }] : []),
     ...(isDirector(auth) ? [{ href: "/director", label: "จัดการเจ้าหน้าที่", icon: UserCog }] : []),
     ...(isAdmin(auth) ? [{ href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : []),
@@ -214,10 +215,17 @@ export function AppShell({ children }: { children: ReactNode }) {
         onMouseLeave={() => setHovering(false)}
       >
         <div className="sidebar__head">
-          <Link href="/cards" className="brand" aria-label="Tournament Control">
-            <span className="brand__mark"><Trophy size={20} /></span>
-            <span className="brand__text"><strong>Tournament Control</strong><small>ระบบจัดการแข่งขัน</small></span>
-          </Link>
+          {scopeLocked ? (
+            <span className="brand" aria-label="Tournament Control">
+              <span className="brand__mark"><Trophy size={20} /></span>
+              <span className="brand__text"><strong>{activeTournament?.name ?? "Tournament Control"}</strong><small>ระบบจัดการแข่งขัน</small></span>
+            </span>
+          ) : (
+            <Link href="/" className="brand" aria-label="Tournament Control">
+              <span className="brand__mark"><Trophy size={20} /></span>
+              <span className="brand__text"><strong>Tournament Control</strong><small>ระบบจัดการแข่งขัน</small></span>
+            </Link>
+          )}
           <button type="button" className={`sidebar__toggle${locked ? " sidebar__toggle--locked" : ""}`} onClick={() => setLocked((value) => !value)} aria-pressed={locked} aria-label={locked ? "ปลดล็อกเมนู (เลื่อนเมาส์เพื่อเปิด/หุบ)" : "ล็อกเมนูให้เปิดค้าง"} title={locked ? "ล็อกอยู่: เปิดค้างตลอด — กดเพื่อใช้โหมดเลื่อนเมาส์ชี้" : "โหมดเลื่อนเมาส์: ชี้เพื่อเปิด หุบเมื่อเอาเมาส์ออก — กดเพื่อล็อกเปิดค้าง"}>
             {locked ? <Lock size={16} /> : <LockOpen size={16} />}
           </button>
@@ -231,13 +239,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           ) : (
             <>
-              <p className="nav-label">ระบบ</p>
+              {generalLinks.length > 0 && <p className="nav-label">ระบบ</p>}
               {generalLinks.map((link) => <NavigationLink key={link.href} {...link} active={pathname === link.href} />)}
 
               {isStaff ? (activeTournament ? (
                 <>
                   <p className="nav-label nav-label--spaced">{activeTournament.name}</p>
-                  <button type="button" className="nav-empty nav-tournament-close" style={{ cursor: "pointer", background: "none", border: "none", textAlign: "left", width: "100%", display: "flex", alignItems: "center", gap: 6 }} onClick={() => { setActiveTournament(null); router.push("/tournaments"); }}><X size={12} /> ออกจากรายการแข่งขันนี้</button>
+                  {!scopeLocked && <button type="button" className="nav-empty nav-tournament-close" style={{ cursor: "pointer", background: "none", border: "none", textAlign: "left", width: "100%", display: "flex", alignItems: "center", gap: 6 }} onClick={() => { setActiveTournament(null); router.push("/"); }}><X size={12} /> ออกจากรายการแข่งขันนี้</button>}
                   {tournamentCards.length === 0 ? (
                     <p className="nav-empty">ยังไม่มีรุ่นการแข่งขัน — สร้างได้จากหน้าการ์ด</p>
                   ) : tournamentCards.map((card) => (
@@ -258,12 +266,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                   ))}
                 </>
               ) : (
-                <p className="nav-empty">เข้าสู่รายการแข่งขันจาก “รายการแข่งขัน” เพื่อจัดการรุ่นการแข่งขัน</p>
+                <p className="nav-empty">เปิดการแข่งขันผ่านลิงก์ของรายการ หรือจัดการได้จากคอนโซลผู้ดูแล</p>
               )) : (
                 <>
                   <p className="nav-label nav-label--spaced">การ์ดที่เปิด{openedIds.length > 0 && ` · ${openedIds.length}`}</p>
                   {openedIds.length === 0 ? (
-                    <p className="nav-empty">ยังไม่ได้เปิดการ์ด เลือกจาก “การ์ดแข่งขัน” แล้วการ์ดจะมาอยู่ที่นี่</p>
+                    <p className="nav-empty">ยังไม่ได้เปิดการ์ด เลือกการ์ดจากหน้ารายการแล้วการ์ดจะมาอยู่ที่นี่</p>
                   ) : openedIds.map((cardId) => {
                     const card = selectCard(cards, cardId);
                     return (
@@ -295,22 +303,53 @@ export function AppShell({ children }: { children: ReactNode }) {
         {isStaff ? (
           <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>
         ) : (
-          <Link href="/staff-login" className="sidebar__auth-wrap"><Button variant="secondary" size="sm" className="sidebar__auth" title="เข้าสู่ระบบเจ้าหน้าที่"><LogIn size={15} /><span className="sidebar__auth-label">เข้าสู่ระบบเจ้าหน้าที่</span></Button></Link>
+          <div className="sidebar__public-actions">
+            {(notificationPermission === "default" || notificationPermission === "granted") && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="sidebar__auth"
+                disabled={notificationPermission === "granted"}
+                onClick={() => void requestNotificationPermission()}
+                title={notificationPermission === "granted" ? "เปิดการแจ้งเตือนผลที่เผยแพร่แล้ว" : "อนุญาตการแจ้งเตือนเมื่อมีการเผยแพร่ผล"}
+              >
+                {notificationPermission === "granted" ? <BellRing size={15} /> : <Bell size={15} />}
+                <span className="sidebar__auth-label">{notificationPermission === "granted" ? "เปิดแจ้งเตือนแล้ว" : "เปิดแจ้งเตือน"}</span>
+              </Button>
+            )}
+            <Link href="/staff-login"><Button variant="secondary" size="sm" className="sidebar__auth" title="เข้าสู่ระบบเจ้าหน้าที่"><LogIn size={15} /><span className="sidebar__auth-label">เข้าสู่ระบบเจ้าหน้าที่</span></Button></Link>
+          </div>
         )}
       </aside>
-      <div className="app-main">
+      <div className={`app-main${id && !isStaff ? " app-main--public-card" : ""}`}>
         <div className="mobile-brand">
-          <div className="mobile-brand__title"><Trophy size={19} /><strong>Tournament Control</strong></div>
-          {isStaff ? (
-            <button type="button" className="mobile-brand__auth" onClick={() => setLogoutConfirm(true)}><LogOut size={15} />ออกจากระบบ</button>
-          ) : (
-            <Link href="/staff-login" className="mobile-brand__auth mobile-brand__auth--login"><LogIn size={15} />เข้าสู่ระบบ</Link>
-          )}
+          {scopeLocked
+            ? <span className="mobile-brand__title"><Trophy size={19} /><strong>{activeTournament?.name ?? "Tournament Control"}</strong></span>
+            : <Link href="/" className="mobile-brand__title" aria-label="ไปหน้ารวมการแข่งขัน"><Trophy size={19} /><strong>Tournament Control</strong></Link>}
+          {(isStaff || notificationPermission === "default" || notificationPermission === "granted") && <div className="mobile-brand__actions">
+            {!isStaff && (notificationPermission === "default" || notificationPermission === "granted") && (
+              <button
+                type="button"
+                className={`mobile-brand__auth${notificationPermission === "granted" ? " mobile-brand__auth--enabled" : ""}`}
+                disabled={notificationPermission === "granted"}
+                onClick={() => void requestNotificationPermission()}
+                aria-label={notificationPermission === "granted" ? "เปิดแจ้งเตือนแล้ว" : "เปิดแจ้งเตือน"}
+              >
+                {notificationPermission === "granted" ? <BellRing size={15} /> : <Bell size={15} />}
+              </button>
+            )}
+            {isStaff && (
+              <button type="button" className="mobile-brand__auth" onClick={() => setLogoutConfirm(true)}><LogOut size={15} />ออกจากระบบ</button>
+            )}
+          </div>}
         </div>
         <main className="content">{children}</main>
-        <nav className="mobile-nav" aria-label="เมนูมือถือ">
-          {railLinks.map((link) => <NavigationLink key={link.href} {...link} active={pathname === link.href} workflow={id ? link.href === workflowHrefFor(id) : false} />)}
-        </nav>
+        {isStaff && (
+          <nav className="mobile-nav" aria-label="เมนูมือถือ">
+            {railLinks.map((link) => <NavigationLink key={link.href} {...link} active={pathname === link.href} workflow={id ? link.href === workflowHrefFor(id) : false} />)}
+          </nav>
+        )}
       </div>
 
       {logoutConfirm && (
@@ -325,6 +364,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </section>
         </div>
       )}
+      <Toaster />
     </div>
   );
 }

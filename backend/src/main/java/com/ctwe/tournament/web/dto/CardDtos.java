@@ -53,7 +53,12 @@ public final class CardDtos {
         boolean editExisting
     ) {}
 
-    public record SwapRequest(@NotBlank String firstPlayerId, @NotBlank String secondPlayerId, boolean confirmSchoolConflict) {}
+    public record SwapRequest(
+        @NotBlank String firstPlayerId,
+        @NotBlank String secondPlayerId,
+        @NotBlank String password,
+        boolean confirmSchoolConflict
+    ) {}
 
     public record GameResponse(String id, int number, String name, String status, int maxDiff) {}
     public record RuleResponse(int fromGame, int toGame, PairingRuleType type) {}

@@ -28,7 +28,7 @@ export default function CreateCardPage() {
   }
   if (directorOnly) return <div className="panel panel-padding">กำลังพาไปหน้าจัดการเจ้าหน้าที่…</div>;
   if (!activeTournament) {
-    return <div className="panel"><EmptyState icon={<Trophy size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เข้าสู่รายการแข่งขัน (tournament) ก่อนจึงจะสร้างรุ่นการแข่งขันได้" action={<Link href="/tournaments"><Button>ไปหน้ารายการแข่งขัน</Button></Link>} /></div>;
+    return <div className="panel"><EmptyState icon={<Trophy size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เข้าสู่รายการแข่งขัน (tournament) ก่อนจึงจะสร้างรุ่นการแข่งขันได้" action={<Link href="/admin"><Button>ไปคอนโซลผู้ดูแล</Button></Link>} /></div>;
   }
 
   return (

@@ -16,7 +16,7 @@
 
 Backend บังคับลำดับงานด้วย `runtime_stage`:
 
-1. `PLAYER_REGISTRATION` — เพิ่ม/ลบผู้เล่น รหัส `P0001...` สร้างอัตโนมัติ ชื่อซ้ำได้หลังเจ้าหน้าที่ยืนยัน warning
+1. `PLAYER_REGISTRATION` — เพิ่ม/ลบผู้เล่น รหัส `P001...` สร้างอัตโนมัติ ชื่อซ้ำได้หลังเจ้าหน้าที่ยืนยัน warning
 2. `TABLE_PAIRING` — พร้อมสร้าง pairing ของเกมปัจจุบัน
 3. `PAIRING_PREVIEW` — ตรวจ pairing; เกม 1 สลับที่นั่งได้และมี school-conflict warning เกมถัดไปแก้ pairing เองไม่ได้
 4. `RESULT_COLLECTION` — บันทึกผลทีละคู่ ผลเดิมต้องกด Edit ก่อนแก้เพื่อเก็บ audit history

@@ -5,6 +5,7 @@ import com.ctwe.tournament.application.PublicCardQueryService;
 import com.ctwe.tournament.application.TournamentCardService;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService.Capability;
+import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
 import com.ctwe.tournament.web.dto.CardDtos;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -30,13 +31,16 @@ public class CardController {
     private final TournamentCardService service;
     private final PublicCardQueryService publicCards;
     private final AuthorizationService authz;
+    private final ReauthenticationService reauthentication;
     private final CardEventPublisher events;
 
     public CardController(TournamentCardService service, PublicCardQueryService publicCards,
-                          AuthorizationService authz, CardEventPublisher events) {
+                          AuthorizationService authz, ReauthenticationService reauthentication,
+                          CardEventPublisher events) {
         this.service = service;
         this.publicCards = publicCards;
         this.authz = authz;
+        this.reauthentication = reauthentication;
         this.events = events;
     }
 
@@ -130,6 +134,7 @@ public class CardController {
     @PostMapping("/{cardId}/tables/swap")
     public CardDtos.CardResponse swap(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.SwapRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        reauthentication.requireCurrentPassword(authentication, request.password());
         return changed(service.swapPlayers(cardId, request, authentication.getName()));
     }
 
@@ -157,6 +162,7 @@ public class CardController {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
         CardDtos.ResultPatch patch = service.submitResult(cardId, matchId, request, authentication.getName());
         events.publishResult(cardId, patch);
+        events.publishPublicResult(cardId, publicCards.version(cardId), patch.changedPairings());
         return patch;
     }
 

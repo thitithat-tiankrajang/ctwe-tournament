@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -71,6 +72,42 @@ class CardEventPublisherTest {
             assertThat(event.version()).isEqualTo(5);
             assertThat(event.changedPairings()).isSameAs(changed);
         });
+    }
+
+    @Test
+    void publicSubscribersReceiveOnlyPublicSafeEvents() {
+        UUID cardId = UUID.randomUUID();
+        CapturingEmitter staffEmitter = new CapturingEmitter();
+        CapturingEmitter publicEmitter = new CapturingEmitter();
+        AtomicInteger subscriptions = new AtomicInteger();
+        CardEventPublisher publisher = new CardEventPublisher() {
+            @Override SseEmitter createEmitter() {
+                return subscriptions.getAndIncrement() == 0 ? staffEmitter : publicEmitter;
+            }
+        };
+        publisher.subscribe(cardId, () -> 4);
+        publisher.subscribePublic(cardId, () -> 4);
+        var changed = List.of(new CardDtos.PairingResponse(
+            UUID.randomUUID().toString(), 1, 1, "P0001", "P0002",
+            "P0001", 100, 70, "WIN", 30));
+
+        publisher.publish(card(cardId, 5));
+        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed));
+
+        assertThat(publicEmitter.stateEvents()).isEmpty();
+        assertThat(publicEmitter.resultEvents()).isEmpty();
+        publisher.publishPublicResult(cardId, 6, changed);
+        publisher.publishPublic(cardId, 7);
+
+        assertThat(publicEmitter.resultEvents()).singleElement().satisfies(event -> {
+            assertThat(event.version()).isEqualTo(6);
+            assertThat(event.changedPairings()).isSameAs(changed);
+        });
+        assertThat(publicEmitter.changeEvents())
+            .extracting(CardEventPublisher.CardChangeEvent::version)
+            .containsExactly(4L, 7L);
+        assertThat(staffEmitter.stateEvents()).hasSize(1);
+        assertThat(staffEmitter.resultEvents()).hasSize(1);
     }
 
     private static CardDtos.CardResponse card(UUID id, long version) {

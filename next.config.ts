@@ -18,11 +18,18 @@ const nextConfig: NextConfig = {
   async headers() {
     const devEval = process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
     return [
-      {
-        // This opt-in applies only to anonymous, representation-stable responses. Staff/auth/SSE
-        // routes must always reach the origin and never share a CDN cache entry.
-        source: "/api/public/:path*",
+      // Opt in only the representation-stable public reads. The SSE route must always stream
+      // directly from the origin and must never share a CDN cache entry.
+      ...["/api/public/cards", "/api/public/cards/versions", "/api/public/cards/:cardId"].map((source) => ({
+        source,
         headers: [{ key: "x-vercel-enable-rewrite-caching", value: "1" }],
+      })),
+      {
+        source: "/api/public/cards/:cardId/events",
+        headers: [
+          { key: "Cache-Control", value: "no-store" },
+          { key: "X-Accel-Buffering", value: "no" },
+        ],
       },
       {
         source: "/:path*",

@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 
-export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: string; title: string; description?: string; actions?: ReactNode }) {
+export function PageHeader({ eyebrow, title, subtitle, description, actions, className = "" }: { eyebrow?: string; title: string; subtitle?: ReactNode; description?: string; actions?: ReactNode; className?: string }) {
   return (
-    <header className="page-header">
+    <header className={`page-header${className ? ` ${className}` : ""}`}>
       <div>
         {eyebrow && <p className="eyebrow">{eyebrow}</p>}
         <h1>{title}</h1>
+        {subtitle && <p className="page-subtitle">{subtitle}</p>}
         {description && <p className="page-description">{description}</p>}
       </div>
       {actions && <div className="page-actions">{actions}</div>}

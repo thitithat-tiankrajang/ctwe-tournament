@@ -70,7 +70,7 @@ public class PublicCardReadCache {
     @Cacheable(cacheNames = TournamentCaches.PUBLIC_CARD_DETAILS, key = "#cardId", sync = true)
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public CardDtos.CardResponse card(UUID cardId) {
-        long publicVersion = publicVersion(cardId);
+        long publicVersion = version(cardId);
         CardDtos.CardResponse source = cards.get(cardId, false);
         boolean finalPublished = source.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.FINAL_PUBLISHED
             || source.status() == com.ctwe.tournament.domain.model.CardStatus.FINISHED
@@ -101,7 +101,8 @@ public class PublicCardReadCache {
                 rs.getObject("id", UUID.class), rs.getLong("public_version"))));
     }
 
-    private long publicVersion(UUID cardId) {
+    @Transactional(readOnly = true)
+    public long version(UUID cardId) {
         List<Long> versions = jdbc.queryForList(
             "SELECT public_version FROM tournament_cards WHERE id = ?", Long.class, cardId);
         if (versions.isEmpty())

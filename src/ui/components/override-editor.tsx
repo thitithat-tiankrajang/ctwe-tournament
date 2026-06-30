@@ -92,7 +92,7 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onDo
           <section className="confirm-dialog confirm-dialog--wide" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
             <header><div className="confirm-dialog__icon"><ShieldCheck size={20} /></div><div><span>ตรวจสอบก่อนเผยแพร่</span><h2>ยืนยันการแก้ไขผล {changes.length} รายการ</h2></div><button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={committing} onClick={() => setConfirmOpen(false)}><X size={18} /></button></header>
             <p>รายการที่จะถูกบันทึกและเผยแพร่สาธารณะ · standing จะคำนวณใหม่ทุกเกม</p>
-            <div className="dense-table-wrap" style={{ maxHeight: 320 }}>
+            <div className="dense-table-wrap">
               <table className="data-table">
                 <thead><tr><th className="numeric">เกม</th><th className="numeric">คู่</th><th>ฝ่ายที่ 1</th><th>ฝ่ายที่ 2</th><th className="numeric">เดิม</th><th className="numeric">ใหม่</th></tr></thead>
                 <tbody>

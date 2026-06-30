@@ -52,26 +52,26 @@ public class TenantService {
         String where = restrictTo == null ? ""
             : " WHERE t.id IN (" + String.join(", ", java.util.Collections.nCopies(restrictTo.size(), "?")) + ")";
         String sql = """
-            SELECT t.id, t.name, t.status, t.created_by, t.created_at, t.version,
+            SELECT t.id, t.name, t.status, t.access_token, t.created_by, t.created_at, t.version,
                    (SELECT COUNT(*) FROM tournament_cards c WHERE c.tournament_id = t.id) AS card_count
             FROM tournaments t""" + where + " ORDER BY t.created_at DESC";
         List<TenantDtos.TournamentResponse> base = restrictTo == null
             ? jdbc.query(sql, this::mapTournament)
             : jdbc.query(sql, this::mapTournament, restrictTo.toArray());
         return base.stream().map(t -> new TenantDtos.TournamentResponse(
-            t.id(), t.name(), t.status(), t.createdBy(), t.createdAt(), t.version(), directorsOf(t.id()), t.cardCount())).toList();
+            t.id(), t.name(), t.status(), t.createdBy(), t.createdAt(), t.version(), directorsOf(t.id()), t.cardCount(), t.accessToken())).toList();
     }
 
     @Transactional(readOnly = true)
     public TenantDtos.TournamentResponse getTournament(UUID id) {
         try {
             TenantDtos.TournamentResponse base = jdbc.queryForObject("""
-                SELECT t.id, t.name, t.status, t.created_by, t.created_at, t.version,
+                SELECT t.id, t.name, t.status, t.access_token, t.created_by, t.created_at, t.version,
                        (SELECT COUNT(*) FROM tournament_cards c WHERE c.tournament_id = t.id) AS card_count
                 FROM tournaments t WHERE t.id = ?
                 """, this::mapTournament, id);
             return new TenantDtos.TournamentResponse(base.id(), base.name(), base.status(), base.createdBy(), base.createdAt(),
-                base.version(), directorsOf(id), base.cardCount());
+                base.version(), directorsOf(id), base.cardCount(), base.accessToken());
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament not found");
         }
@@ -277,7 +277,42 @@ public class TenantService {
     private TenantDtos.TournamentResponse mapTournament(java.sql.ResultSet rs, int row) throws java.sql.SQLException {
         return new TenantDtos.TournamentResponse(
             rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("status"), rs.getString("created_by"),
-            rs.getTimestamp("created_at").toInstant(), rs.getLong("version"), null, rs.getInt("card_count"));
+            rs.getTimestamp("created_at").toInstant(), rs.getLong("version"), null, rs.getInt("card_count"),
+            rs.getString("access_token"));
+    }
+
+    // ----------------------------------------------------------------- public (anonymous) read model
+
+    /** OPEN tournaments only, for the public root landing — published-card count drives "เปิดให้ติดตาม". */
+    @Transactional(readOnly = true)
+    public List<TenantDtos.PublicTournamentResponse> listOpenTournaments() {
+        return jdbc.query("""
+            SELECT t.id, t.name, t.access_token,
+                   (SELECT COUNT(*) FROM tournament_cards c WHERE c.tournament_id = t.id) AS card_count,
+                   (SELECT COUNT(*) FROM tournament_cards c WHERE c.tournament_id = t.id
+                        AND c.status IN ('FINISHED', 'CLOSED')) AS published_card_count
+            FROM tournaments t WHERE t.status = 'OPEN' ORDER BY t.created_at DESC
+            """, (rs, row) -> new TenantDtos.PublicTournamentResponse(
+                rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("access_token"),
+                rs.getInt("card_count"), rs.getInt("published_card_count")));
+    }
+
+    /** Resolve a shared access token to its OPEN tournament; 404 when missing or CLOSED (the link gate). */
+    @Transactional(readOnly = true)
+    public TenantDtos.PublicTournamentResponse resolveOpenTournament(String accessToken) {
+        try {
+            return jdbc.queryForObject("""
+                SELECT t.id, t.name, t.access_token,
+                       (SELECT COUNT(*) FROM tournament_cards c WHERE c.tournament_id = t.id) AS card_count,
+                       (SELECT COUNT(*) FROM tournament_cards c WHERE c.tournament_id = t.id
+                            AND c.status IN ('FINISHED', 'CLOSED')) AS published_card_count
+                FROM tournaments t WHERE t.access_token = ? AND t.status = 'OPEN'
+                """, (rs, row) -> new TenantDtos.PublicTournamentResponse(
+                    rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("access_token"),
+                    rs.getInt("card_count"), rs.getInt("published_card_count")), accessToken);
+        } catch (EmptyResultDataAccessException error) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament not found or not open");
+        }
     }
 
     private void audit(String actor, String action, Object oldValue, Object newValue) {

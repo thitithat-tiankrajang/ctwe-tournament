@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicTournamentSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
 
 export interface AuthState {
   authenticated: boolean;
@@ -35,8 +35,8 @@ interface TournamentState {
   archives: TournamentArchive[];
   setActiveTournament: (tournament: ActiveTournament | null) => void;
   load: () => Promise<void>;
-  refreshPublicCatalog: (versionToken?: string) => Promise<void>;
-  syncCard: (cardId: string) => Promise<void>;
+  refreshPublicCatalog: (versionToken?: string) => Promise<PublicCardSummary[]>;
+  syncCard: (cardId: string, publicVersion?: number) => Promise<void>;
   applyCardState: (card: TournamentCard) => void;
   applyResultPatch: (cardId: string, version: number, changedPairings: Pairing[]) => boolean;
   loadAudit: (cardId: string) => Promise<AuditEntry[]>;
@@ -52,7 +52,7 @@ interface TournamentState {
   finishRegistration: (cardId: string) => Promise<void>;
   generateMockPlayers: (cardId: string, count: number) => Promise<void>;
   generatePairings: (cardId: string) => Promise<void>;
-  swapPlayers: (cardId: string, firstId: string, secondId: string, confirmSchoolConflict?: boolean) => Promise<void>;
+  swapPlayers: (cardId: string, firstId: string, secondId: string, password: string, confirmSchoolConflict?: boolean) => Promise<void>;
   confirmPairingPreview: (cardId: string) => Promise<void>;
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
   overrideResult: (cardId: string, matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
@@ -70,6 +70,10 @@ interface TournamentState {
   deleteCard: (cardId: string) => Promise<void>;
   simulateTournament: (cardId: string) => Promise<void>;
   resetCard: (cardId: string) => Promise<void>;
+  // public (anonymous) link-scoped entry
+  loadPublicTournaments: () => Promise<PublicTournamentSummary[]>;
+  loadPublicArchives: () => Promise<TournamentArchive[]>;
+  resolveTournamentToken: (token: string) => Promise<PublicTournamentSummary>;
   // tenant + account management
   loadTournaments: () => Promise<Tournament[]>;
   createTournament: (name: string) => Promise<Tournament>;
@@ -77,7 +81,7 @@ interface TournamentState {
   loadArchives: () => Promise<TournamentArchive[]>;
   archiveTournament: (tournamentId: string) => Promise<void>;
   deleteArchive: (archiveId: string) => Promise<void>;
-  setTournamentStatus: (tournamentId: string, open: boolean) => Promise<void>;
+  setTournamentStatus: (tournamentId: string, open: boolean, password: string) => Promise<void>;
   grantStaffTournament: (username: string, tournamentId: string) => Promise<void>;
   revokeStaffTournament: (username: string, tournamentId: string) => Promise<void>;
   listDirectors: () => Promise<ManagedUser[]>;
@@ -95,6 +99,7 @@ interface TournamentState {
 const anonymous: AuthState = { authenticated: false, username: null, roles: [], csrfToken: "" };
 const ACTIVE_TOURNAMENT_KEY = "ctwe.activeTournament";
 const STAFF_SESSION_MARKER = "CTWE_STAFF";
+const CSRF_COOKIE = "XSRF-TOKEN";
 
 function hasStaffSessionHint() {
   return typeof document !== "undefined"
@@ -104,6 +109,11 @@ function hasStaffSessionHint() {
 function clearStaffSessionHint() {
   if (typeof document !== "undefined")
     document.cookie = `${STAFF_SESSION_MARKER}=; Path=/; Max-Age=0; SameSite=Strict`;
+}
+
+function clearCsrfCookie() {
+  if (typeof document !== "undefined")
+    document.cookie = `${CSRF_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict`;
 }
 
 export function readActiveTournament(): ActiveTournament | null {
@@ -288,11 +298,11 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       set({ activeTournament: tournament });
     },
     clearError: () => set({ error: null }),
-    async syncCard(cardId) {
+    async syncCard(cardId, publicVersion) {
       // Background live-sync for concurrent multi-user editing: pull the latest card, ignore transient errors.
       try {
         const backOffice = get().auth.authenticated;
-        const expectedPublicVersion = get().cards.find((card) => card.id === cardId)?.version;
+        const expectedPublicVersion = publicVersion ?? get().cards.find((card) => card.id === cardId)?.version;
         const publicVersionQuery = expectedPublicVersion === undefined
           ? ""
           : `?v=${encodeURIComponent(expectedPublicVersion)}`;
@@ -346,11 +356,24 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       }
     },
     async refreshPublicCatalog(versionToken) {
-      if (get().auth.authenticated) return;
-      mergePublicCatalog(await fetchPublicCatalog(versionToken));
+      if (get().auth.authenticated) return [];
+      const summaries = await fetchPublicCatalog(versionToken);
+      mergePublicCatalog(summaries);
+      return summaries;
     },
     async login(username, password) {
-      const body = new URLSearchParams({ username, password, _csrf: get().auth.csrfToken });
+      // Logout invalidates the server session. Always mint a token for the current anonymous
+      // session instead of reusing the token that existed before logout.
+      clearCsrfCookie();
+      const authResponse = await fetch("/api/auth/me", {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!authResponse.ok) throw new Error(`เตรียม session เข้าสู่ระบบไม่สำเร็จ (${authResponse.status})`);
+      const freshAuth = await authResponse.json() as AuthState;
+      set({ auth: freshAuth });
+
+      const body = new URLSearchParams({ username, password, _csrf: freshAuth.csrfToken });
       const response = await fetch("/login", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -373,6 +396,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`ออกจากระบบไม่สำเร็จ (${response.status})`);
+      clearStaffSessionHint();
+      clearCsrfCookie();
       set({ auth: anonymous });
       await get().load();
     },
@@ -405,10 +430,10 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async generatePairings(cardId) {
       await mutateCard(`/api/cards/${cardId}/pairings/preview`, cardId, { method: "POST" });
     },
-    async swapPlayers(cardId, firstId, secondId, confirmSchoolConflict = false) {
+    async swapPlayers(cardId, firstId, secondId, password, confirmSchoolConflict = false) {
       await mutateCard(`/api/cards/${cardId}/tables/swap`, cardId, {
         method: "POST",
-        body: JSON.stringify({ firstPlayerId: firstId, secondPlayerId: secondId, confirmSchoolConflict }),
+        body: JSON.stringify({ firstPlayerId: firstId, secondPlayerId: secondId, password, confirmSchoolConflict }),
       });
     },
     async confirmPairingPreview(cardId) {
@@ -479,6 +504,23 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       await mutateCard(`/api/dev/cards/${cardId}/reset`, cardId, { method: "POST" });
     },
 
+    // ---- public (anonymous) link-scoped entry ----
+    async loadPublicTournaments() {
+      const response = await fetch("/api/public/tournaments", { credentials: "omit", cache: "no-store" });
+      if (!response.ok) throw new Error(await readError(response));
+      return response.json() as Promise<PublicTournamentSummary[]>;
+    },
+    async loadPublicArchives() {
+      const response = await fetch("/api/public/archives", { credentials: "omit", cache: "no-store" });
+      if (!response.ok) throw new Error(await readError(response));
+      return response.json() as Promise<TournamentArchive[]>;
+    },
+    async resolveTournamentToken(token) {
+      const response = await fetch(`/api/public/tournaments/${encodeURIComponent(token)}`, { credentials: "omit", cache: "no-store" });
+      if (!response.ok) throw new Error(await readError(response));
+      return response.json() as Promise<PublicTournamentSummary>;
+    },
+
     // ---- tenant + account management ----
     async loadTournaments() {
       return request<Tournament[]>("/api/tournaments");
@@ -491,12 +533,11 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       set((state) => ({ cards: state.cards.filter((card) => card.tournamentId !== tournamentId), error: null }));
     },
     async loadArchives() {
-      const archives = get().auth.authenticated
-        ? await request<TournamentArchive[]>("/api/archives")
-        : await fetch("/api/public/archives", { credentials: "omit" }).then(async (response) => {
-            if (!response.ok) throw new Error(await readError(response));
-            return response.json() as Promise<TournamentArchive[]>;
-          });
+      if (!get().auth.roles.includes("ROLE_ADMIN")) {
+        set({ archives: [] });
+        return [];
+      }
+      const archives = await request<TournamentArchive[]>("/api/archives");
       set({ archives });
       return archives;
     },
@@ -509,8 +550,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       await request(`/api/admin/archives/${archiveId}`, { method: "DELETE" });
       set((state) => ({ archives: state.archives.filter((archive) => archive.id !== archiveId), error: null }));
     },
-    async setTournamentStatus(tournamentId, open) {
-      await request(`/api/admin/tournaments/${tournamentId}/status`, { method: "PATCH", body: JSON.stringify({ open }) });
+    async setTournamentStatus(tournamentId, open, password) {
+      await request(`/api/admin/tournaments/${tournamentId}/status`, { method: "PATCH", body: JSON.stringify({ open, password }) });
     },
     async grantStaffTournament(username, tournamentId) {
       await request(`/api/director/staff/${encodeURIComponent(username)}/tournaments`, { method: "POST", body: JSON.stringify({ tournamentId }) });

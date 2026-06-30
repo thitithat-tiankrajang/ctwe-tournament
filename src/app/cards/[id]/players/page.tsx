@@ -7,6 +7,7 @@ import { ArrowRight, FilterX, LoaderCircle, LockKeyhole, Pencil, Plus, Save, Tra
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { rankPlayers, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { matchesPlayerCode } from "@/domain/tournament/player-code";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { playerSchema, type PlayerForm } from "@/domain/tournament/schemas";
 import { rankingAfterGame } from "@/domain/tournament/history";
@@ -62,16 +63,20 @@ export default function PlayersPage() {
   const selectedRankingGame = rankingGame && publishedSnapshots.some((snapshot) => snapshot.gameNumbers.includes(rankingGame)) ? rankingGame : latestPublishedGame;
   const ranked = selectedRankingGame > 0 ? rankingAfterGame({ ...card, snapshots: publishedSnapshots }, selectedRankingGame) : rankPlayers(card.players);
   const rankingCard = { ...card, snapshots: publishedSnapshots };
-  const filtered = ranked.filter((player) => `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLowerCase().includes(query.toLowerCase()));
+  const filtered = ranked.filter((player) => {
+    const term = query.trim();
+    if (/^P?\d+$/i.test(term)) return matchesPlayerCode(player.id, term);
+    return `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLowerCase().includes(term.toLowerCase());
+  });
   const rankIndex = new Map(ranked.map((player, index) => [player.id, index + 1]));
-  const nextCode = `P${String(Math.max(0, ...card.players.map((player) => Number(player.id.match(/^P(\d+)$/)?.[1] ?? 0))) + 1).padStart(4, "0")}`;
+  const nextCode = `P${String(Math.max(0, ...card.players.map((player) => Number(player.id.match(/^P(\d+)$/)?.[1] ?? 0))) + 1).padStart(3, "0")}`;
   const busy = pending !== null || isSubmitting;
 
   const rankingColumns: DataColumn<{ player: Player; rank: number }>[] = [
     { key: "rank", label: "#", min: 42, width: 56, align: "right", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
-    { key: "id", label: "รหัสผู้เล่น", min: 80, width: 120, cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
-    { key: "name", label: "ชื่อ-นามสกุล", min: 130, width: 210, value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
-    { key: "school", label: "โรงเรียน/สถาบัน", min: 120, width: 200, value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
+    { key: "id", label: "รหัส", min: 58, width: 72, filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
+    { key: "name", label: "ชื่อ-นามสกุล", min: 130, width: 210, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
+    { key: "school", label: "โรงเรียน/สถาบัน", min: 120, width: 200, cellClassName: "cell-person-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
     { key: "wp", label: "คะแนนชัยชนะ", min: 90, width: 124, align: "right", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
     { key: "diff", label: "ผลต่างสะสม", min: 90, width: 124, align: "right", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
     { key: "wdl", label: "ชนะ / เสมอ / แพ้", min: 100, width: 142, align: "center", value: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}`, render: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}` },
@@ -186,7 +191,7 @@ export default function PlayersPage() {
       {showEditableTable ? (
         <>
           <section className="player-filter-bar" style={{ gridTemplateColumns: "minmax(240px, 1fr) auto" }} aria-label="ค้นหาผู้เล่น">
-            <div className="compact-field"><label htmlFor="player-search">ค้นหารหัส ชื่อ หรือโรงเรียน</label><input id="player-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="เช่น P0042 หรือชื่อโรงเรียน" /></div>
+            <div className="compact-field"><label htmlFor="player-search">ค้นหารหัส ชื่อ หรือโรงเรียน</label><input id="player-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="เช่น 42, P042 หรือชื่อโรงเรียน" /></div>
             <Button className="filter-reset" variant="secondary" size="sm" onClick={() => setQuery("")}><FilterX size={14} />ล้าง</Button>
           </section>
           <div className="dense-table-meta"><strong>{filtered.length.toLocaleString("th-TH")}</strong> จาก {card.players.length.toLocaleString("th-TH")} คน · {registrationOpen ? "รายชื่อก่อนเริ่มการแข่งขัน" : "ผู้อำนวยการแก้ข้อมูลส่วนตัวได้"}</div>

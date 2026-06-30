@@ -77,7 +77,7 @@ public class SecurityConfiguration {
                 .requestMatchers(HttpMethod.GET, "/api/cards/*/audit").hasAnyRole("ADMIN", "DIRECTOR")
                 .requestMatchers(HttpMethod.GET, "/api/cards/*/events").hasAnyRole("ADMIN", "DIRECTOR", "STAFF")
                 .requestMatchers(HttpMethod.GET, "/api/cards", "/api/cards/**").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/archives", "/api/archives/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/archives", "/api/archives/**").hasRole("ADMIN")
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/director/**").hasRole("DIRECTOR")
                 .requestMatchers("/api/dev/**").hasRole("ADMIN")
@@ -99,7 +99,7 @@ public class SecurityConfiguration {
                     response.setStatus(HttpStatus.NO_CONTENT.value());
                 })
                 .invalidateHttpSession(true)
-                .deleteCookies("JSESSIONID"))
+                .deleteCookies("JSESSIONID", "XSRF-TOKEN"))
             .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
                 new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED), new AntPathRequestMatcher("/api/**")))
             .headers(headers -> headers

@@ -1,11 +1,12 @@
 "use client";
 
 import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Pencil, Save, SaveAll, Shuffle, Undo2, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
+import { normalizePlayerCode } from "@/domain/tournament/player-code";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
-import { applyColumnControls, GridHead, GridPagination, uniqueColumnValues, usePagination, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
+import { applyColumnControls, GridHead, uniqueColumnValues, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
 
 /** Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair). */
 const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "id2", "name2", "school2"];
@@ -20,32 +21,33 @@ export interface EntrySlot {
 type RowStatus = "pending" | "empty" | "dirty" | "saved";
 
 const EDIT_COLUMNS: GridColumnBase[] = [
-  { key: "pair", label: "คู่", min: 44, width: 58 },
-  { key: "id1", label: "รหัสฝ่ายที่ 1", min: 76, width: 104 },
-  { key: "name1", label: "ชื่อ-นามสกุล", min: 110, width: 184 },
-  { key: "school1", label: "โรงเรียน/สถาบัน", min: 110, width: 172 },
-  { key: "id2", label: "รหัสฝ่ายที่ 2", min: 76, width: 104 },
-  { key: "name2", label: "ชื่อ-นามสกุล", min: 110, width: 184 },
-  { key: "school2", label: "โรงเรียน/สถาบัน", min: 110, width: 172 },
-  { key: "score1", label: "คะแนนฝ่ายที่ 1", min: 92, width: 120 },
-  { key: "score2", label: "คะแนนฝ่ายที่ 2", min: 92, width: 120 },
-  { key: "diff", label: "สรุปผลต่าง", min: 96, width: 140 },
-  { key: "action", label: "จัดการ", min: 104, width: 138 },
+  { key: "pair", label: "คู่", min: 32, width: 42, align: "center" },
+  { key: "id1", label: "รหัส 1", min: 58, width: 72, filterKind: "playerCode" },
+  { key: "name1", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
+  { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
+  { key: "id2", label: "รหัส 2", min: 58, width: 72, filterKind: "playerCode" },
+  { key: "name2", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
+  { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
+  { key: "score1", label: "คะแนน 1", min: 48, width: 62, align: "center" },
+  { key: "score2", label: "คะแนน 2", min: 48, width: 62, align: "center" },
+  { key: "diff", label: "Diff", min: 52, width: 68, align: "center" },
+  { key: "action", label: "จัดการ", min: 82, width: 106 },
 ];
 
 const VIEW_COLUMNS: GridColumnBase[] = [
-  { key: "pair", label: "คู่", min: 44, width: 58 },
-  { key: "id1", label: "รหัสฝ่ายที่ 1", min: 76, width: 104 },
-  { key: "name1", label: "ชื่อ-นามสกุล", min: 110, width: 184 },
-  { key: "school1", label: "โรงเรียน/สถาบัน", min: 110, width: 172 },
-  { key: "id2", label: "รหัสฝ่ายที่ 2", min: 76, width: 104 },
-  { key: "name2", label: "ชื่อ-นามสกุล", min: 110, width: 184 },
-  { key: "school2", label: "โรงเรียน/สถาบัน", min: 110, width: 172 },
-  { key: "score1", label: "คะแนนฝ่ายที่ 1", min: 88, width: 110 },
-  { key: "score2", label: "คะแนนฝ่ายที่ 2", min: 88, width: 110 },
-  { key: "diff", label: "Diff", min: 76, width: 96 },
-  { key: "winner", label: "รหัสผู้ชนะ", min: 92, width: 120 },
+  { key: "pair", label: "คู่", min: 32, width: 42, align: "center" },
+  { key: "id1", label: "รหัส 1", min: 58, width: 72, filterKind: "playerCode" },
+  { key: "name1", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
+  { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
+  { key: "id2", label: "รหัส 2", min: 58, width: 72, filterKind: "playerCode" },
+  { key: "name2", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
+  { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
+  { key: "score1", label: "คะแนน 1", min: 48, width: 62, align: "center" },
+  { key: "score2", label: "คะแนน 2", min: 48, width: 62, align: "center" },
+  { key: "diff", label: "Diff", min: 50, width: 64, align: "center" },
+  { key: "winner", label: "ผู้ชนะ", min: 58, width: 72, filterKind: "playerCode" },
 ];
+const VIEW_FILTER_KEYS = VIEW_COLUMNS.map((column) => column.key);
 
 const STATUS_OPTIONS: { value: "all" | RowStatus; label: string }[] = [
   { value: "all", label: "ทุกสถานะ" },
@@ -89,8 +91,8 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   /** Identifies the table so user-resized column widths persist per card+game in sessionStorage. */
   storageKey: string;
   onSubmit: (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => Promise<void>;
-  /** Director-only pairing edit during result collection: swap (>=1 result) or unpair-to-preview (0 results). */
-  pairingEdit?: { onSwap: (a: string, b: string) => Promise<boolean>; onUnpair: () => Promise<void> };
+  /** Director-only pairing edit during result collection. Swaps require password re-authentication. */
+  pairingEdit?: { onSwap: (a: string, b: string, password: string) => Promise<boolean>; onUnpair: () => Promise<void> };
 }) {
   const controls = useColumnControls();
   const [status, setStatus] = useState<"all" | RowStatus>("all");
@@ -100,7 +102,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [savingAll, setSavingAll] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
-  const [swapA, setSwapA] = useState(""); const [swapB, setSwapB] = useState(""); const [swapping, setSwapping] = useState(false);
+  const [swapA, setSwapA] = useState(""); const [swapB, setSwapB] = useState(""); const [swapPassword, setSwapPassword] = useState(""); const [swapping, setSwapping] = useState(false);
   // Quick key-in bar (รหัส A → คะแนน A → รหัส B → คะแนน B → save) + result toast/highlight.
   const [qIdA, setQIdA] = useState(""); const [qScoreA, setQScoreA] = useState("");
   const [qIdB, setQIdB] = useState(""); const [qScoreB, setQScoreB] = useState("");
@@ -144,16 +146,10 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   }), [players]);
   const uniqueValues = useMemo(() => uniqueColumnValues(rows, accessors, ENTRY_FILTER_KEYS), [rows, accessors]);
   const filtered = useMemo(() => {
-    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort);
+    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, ["id1", "id2"]);
     return status === "all" ? byColumn : byColumn.filter((row) => row.status === status);
-  }, [rows, accessors, controls.filters, controls.sort, status]);
+  }, [rows, accessors, controls.filters, controls.textFilters, controls.sort, status]);
 
-  const { pageSize, setPageSize, page, setPage, size, totalPages } = usePagination(filtered.length, `${JSON.stringify(controls.filters)}|${controls.sort ? controls.sort.key + controls.sort.dir : ""}|${status}`);
-  const pageRows = filtered.slice((page - 1) * size, page * size);
-
-  const total = slots.length;
-  const start = filtered.length === 0 ? 0 : (page - 1) * size + 1;
-  const end = Math.min(page * size, filtered.length);
   const filtersActive = controls.active || status !== "all";
   const savedCount = rows.filter((row) => row.status === "saved").length;
   const dirtyCount = rows.filter((row) => row.status === "dirty").length;
@@ -202,18 +198,18 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
 
   // Quick key-in: validate that A vs B is a real pairing this game (either side), then save + highlight.
   const quickSave = async () => {
-    const a = qIdA.trim().toUpperCase(); const b = qIdB.trim().toUpperCase();
+    const a = normalizePlayerCode(qIdA); const b = normalizePlayerCode(qIdB);
     if (!a || !b) { setHighlightId(null); setToast({ type: "error", message: "กรุณากรอกรหัสทั้งสองฝ่ายก่อนบันทึก" }); return; }
     const match = rows.find((row) => isCompletePairing(row.pairing)
-      && ((row.pairing.playerOneId.toUpperCase() === a && row.pairing.playerTwoId.toUpperCase() === b)
-        || (row.pairing.playerOneId.toUpperCase() === b && row.pairing.playerTwoId.toUpperCase() === a)));
+      && ((normalizePlayerCode(row.pairing.playerOneId) === a && normalizePlayerCode(row.pairing.playerTwoId) === b)
+        || (normalizePlayerCode(row.pairing.playerOneId) === b && normalizePlayerCode(row.pairing.playerTwoId) === a)));
     if (!match || !isCompletePairing(match.pairing)) {
       setHighlightId(null);
       setToast({ type: "error", message: `คู่นี้ไม่เจอกันจริงในเกม ${gameNumber} — รหัส ${a} กับ ${b} ไม่ใช่คู่ที่จับไว้ กรุณาตรวจสอบรหัสอีกครั้ง` });
       return;
     }
     const pairing = match.pairing;
-    const aIsOne = pairing.playerOneId.toUpperCase() === a;
+    const aIsOne = normalizePlayerCode(pairing.playerOneId) === a;
     const oneScore = aIsOne ? qScoreA : qScoreB;
     const twoScore = aIsOne ? qScoreB : qScoreA;
     if (!calcOutcome(oneScore, twoScore, maxDiff, pairing.playerOneId, pairing.playerTwoId)) {
@@ -224,8 +220,6 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
     const ok = await saveValues(pairing, oneScore, twoScore);
     setQuickSaving(false);
     if (!ok) { setToast({ type: "error", message: "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง" }); return; }
-    const idx = filtered.findIndex((row) => row.pairing?.id === pairing.id);
-    if (idx >= 0) setPage(Math.floor(idx / size) + 1);
     setHighlightId(pairing.id);
     const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
     setToast({ type: "success", message: `บันทึกคู่ที่ ${pairing.tableNumber} แล้ว · ${p1?.id} ${oneScore} : ${twoScore} ${p2?.id}` });
@@ -234,10 +228,12 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   };
 
   const doSwap = async () => {
-    if (!pairingEdit || !swapA.trim() || !swapB.trim()) return;
+    if (!pairingEdit || !swapA.trim() || !swapB.trim() || !swapPassword) return;
     setSwapping(true);
     try {
-      if (await pairingEdit.onSwap(swapA.trim().toUpperCase(), swapB.trim().toUpperCase())) { setSwapA(""); setSwapB(""); setSwapOpen(false); }
+      if (await pairingEdit.onSwap(normalizePlayerCode(swapA), normalizePlayerCode(swapB), swapPassword)) {
+        setSwapA(""); setSwapB(""); setSwapPassword(""); setSwapOpen(false);
+      }
     } finally { setSwapping(false); }
   };
 
@@ -275,14 +271,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
       )}
       <div className="entry-keyin">
         <span className="entry-keyin__label">คีย์เร็ว</span>
-        <input ref={idARef} className="entry-keyin__id" placeholder="รหัส A" value={qIdA} aria-label="รหัสฝ่าย A"
+        <input ref={idARef} className="entry-keyin__id" inputMode="numeric" placeholder="รหัส A เช่น 16" value={qIdA} aria-label="รหัสฝ่าย A"
           onChange={(event) => { clearFlash(); setQIdA(event.target.value.toUpperCase()); }}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreARef.current?.focus(); scoreARef.current?.select(); } }} />
         <input ref={scoreARef} type="number" inputMode="numeric" min={0} className="entry-keyin__score" placeholder="คะแนน A" value={qScoreA} aria-label="คะแนนฝ่าย A"
           onChange={(event) => { clearFlash(); setQScoreA(event.target.value); }} onFocus={(event) => event.target.select()}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); idBRef.current?.focus(); idBRef.current?.select(); } }} />
         <span className="entry-keyin__vs">พบ</span>
-        <input ref={idBRef} className="entry-keyin__id" placeholder="รหัส B" value={qIdB} aria-label="รหัสฝ่าย B"
+        <input ref={idBRef} className="entry-keyin__id" inputMode="numeric" placeholder="รหัส B เช่น 16" value={qIdB} aria-label="รหัสฝ่าย B"
           onChange={(event) => { clearFlash(); setQIdB(event.target.value.toUpperCase()); }}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreBRef.current?.focus(); scoreBRef.current?.select(); } }} />
         <input ref={scoreBRef} type="number" inputMode="numeric" min={0} className="entry-keyin__score" placeholder="คะแนน B" value={qScoreB} aria-label="คะแนนฝ่าย B"
@@ -297,20 +293,19 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
           <select id={`f-status-${gameNumber}`} className="select" value={status} onChange={(event) => setStatus(event.target.value as "all" | RowStatus)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           <Button variant="secondary" size="sm" disabled={!filtersActive} onClick={() => { controls.clearAll(); setStatus("all"); }}><X size={14} />ล้างตัวกรอง</Button>
           <Button size="sm" variant="success" disabled={savingAll || filteredSavable.length === 0} onClick={() => void saveAll()}>{savingAll ? <LoaderCircle className="loading-spinner" size={14} /> : <SaveAll size={14} />}บันทึกทั้งหมด ({filteredSavable.length})</Button>
-          {pairingEdit && (savedCount > 0
-            ? <Button size="sm" variant="secondary" onClick={() => setSwapOpen((open) => !open)} title="สลับผู้เล่นที่ยังไม่กรอกผล (เฉพาะผู้อำนวยการ)"><Shuffle size={14} />สลับผู้เล่น</Button>
-            : <Button size="sm" variant="secondary" onClick={() => void pairingEdit.onUnpair()} title="ยกเลิกการจับคู่ กลับไปหน้าแก้ pairing (เฉพาะผู้อำนวยการ)"><Undo2 size={14} />แก้การจับคู่</Button>
-          )}
+          {pairingEdit && <Button size="sm" variant="secondary" onClick={() => setSwapOpen((open) => !open)} title="สลับผู้เล่นในคู่ที่ยังไม่กรอกผล (เฉพาะผู้อำนวยการ)"><Shuffle size={14} />สลับผู้เล่น</Button>}
+          {pairingEdit && savedCount === 0 && <Button size="sm" variant="secondary" onClick={() => void pairingEdit.onUnpair()} title="ยกเลิกการยืนยันและกลับไปหน้า pairing preview (เฉพาะผู้อำนวยการ)"><Undo2 size={14} />กลับไปแก้ Pairing</Button>}
         </div>
       </div>
-      {pairingEdit && savedCount > 0 && swapOpen && (
+      {pairingEdit && swapOpen && (
         <div className="entry-swap">
           <span className="entry-swap__label">สลับผู้เล่น (เฉพาะคู่ที่ยังไม่กรอกผล)</span>
-          <input className="entry-keyin__id" placeholder="รหัส A" value={swapA} aria-label="รหัสผู้เล่น A ที่จะสลับ" onChange={(event) => setSwapA(event.target.value.toUpperCase())} />
+          <input className="entry-keyin__id" inputMode="numeric" placeholder="รหัส A เช่น 16" value={swapA} aria-label="รหัสผู้เล่น A ที่จะสลับ" onChange={(event) => setSwapA(event.target.value.toUpperCase())} />
           <span className="entry-keyin__vs">↔</span>
-          <input className="entry-keyin__id" placeholder="รหัส B" value={swapB} aria-label="รหัสผู้เล่น B ที่จะสลับ" onChange={(event) => setSwapB(event.target.value.toUpperCase())} />
-          <Button size="sm" variant="success" disabled={swapping || !swapA.trim() || !swapB.trim()} onClick={() => void doSwap()}>{swapping ? <LoaderCircle className="loading-spinner" size={14} /> : <Shuffle size={14} />}สลับ</Button>
-          <Button size="sm" variant="ghost" aria-label="ปิด" onClick={() => setSwapOpen(false)}><X size={14} /></Button>
+          <input className="entry-keyin__id" inputMode="numeric" placeholder="รหัส B เช่น 16" value={swapB} aria-label="รหัสผู้เล่น B ที่จะสลับ" onChange={(event) => setSwapB(event.target.value.toUpperCase())} />
+          <input className="entry-swap__password" type="password" autoComplete="current-password" placeholder="รหัสผ่านผู้อำนวยการ" value={swapPassword} aria-label="รหัสผ่านผู้อำนวยการเพื่อยืนยันการสลับคู่" onChange={(event) => setSwapPassword(event.target.value)} />
+          <Button size="sm" variant="success" disabled={swapping || !swapA.trim() || !swapB.trim() || !swapPassword} onClick={() => void doSwap()}>{swapping ? <LoaderCircle className="loading-spinner" size={14} /> : <Shuffle size={14} />}ยืนยันการสลับ</Button>
+          <Button size="sm" variant="ghost" aria-label="ปิด" onClick={() => { setSwapOpen(false); setSwapPassword(""); }}><X size={14} /></Button>
         </div>
       )}
 
@@ -321,35 +316,40 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
             filterable: (key) => ENTRY_FILTER_KEYS.includes(key),
             sort: controls.sort,
             filters: controls.filters,
+            textFilters: controls.textFilters,
+            editingKey: controls.editingKey,
             uniqueValues,
             openKey: controls.openKey,
             openAnchor: controls.openAnchor,
-            onToggleSort: controls.toggleSort,
+            onSetSort: controls.setColumnSort,
+            onStartTextFilter: controls.startTextFilter,
+            onTextFilter: controls.setTextFilter,
+            onStopTextFilter: () => controls.setEditingKey(null),
             onOpenFilter: controls.openFilter,
             onApply: (key, values) => controls.applyFilter(key, values, uniqueValues[key]?.length ?? 0),
             onClear: controls.clearFilter,
             onClose: () => controls.setOpenKey(null),
           }} />
           <tbody>
-            {pageRows.length === 0 ? (
+            {filtered.length === 0 ? (
               <tr><td className="egrid-empty" colSpan={EDIT_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
-            ) : pageRows.map((row) => {
+            ) : filtered.map((row) => {
               const { slot, pairing } = row;
               if (!isCompletePairing(pairing)) {
                 const p1 = pairing?.playerOneId ? players.get(pairing.playerOneId) : undefined;
                 const p2 = pairing?.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
                 const waitingText = pairing ? "รอคู่แข่งจากอีก row" : "รอผลจากเกมก่อนหน้า";
                 return <tr key={pairing?.id ?? `pending-${slot.tableNumber}`} className="egrid-row egrid-row--pending">
-                  <td className="egrid-td numeric cell-pair">{slot.tableNumber}</td>
+                  <td className="egrid-td egrid-td--center cell-pair">{slot.tableNumber}</td>
                   <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
-                  <td className="egrid-td" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : waitingText}</td>
-                  <td className="egrid-td" title={p1?.school}>{p1?.school ?? "—"}</td>
+                  <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : waitingText}</td>
+                  <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
                   <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
-                  <td className="egrid-td" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : waitingText}</td>
-                  <td className="egrid-td" title={p2?.school}>{p2?.school ?? "—"}</td>
+                  <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : waitingText}</td>
+                  <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
                   <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
                   <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
-                  <td className="egrid-td cell-diff">—</td>
+                  <td className="egrid-td egrid-td--center cell-diff">—</td>
                   <td className="egrid-td cell-action"><Badge tone="neutral">{pairing ? "รออีกฝั่ง" : "รอข้อมูล"}</Badge></td>
                 </tr>;
               }
@@ -364,16 +364,16 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
               const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
               const base = { one, two };
               return <tr key={pairing.id} className={`egrid-row${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}${highlightId === pairing.id ? " egrid-row--flash" : ""}`}>
-                <td className="egrid-td numeric cell-pair">{pairing.tableNumber}</td>
+                <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                 <td className="egrid-td cell-id">{p1?.id}</td>
-                <td className="egrid-td" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1?.firstName} {p1?.lastName}</td>
-                <td className="egrid-td" title={p1?.school}>{p1?.school}</td>
+                <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1?.firstName} {p1?.lastName}</td>
+                <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school}</td>
                 <td className="egrid-td cell-id">{p2?.id}</td>
-                <td className="egrid-td" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2?.firstName} {p2?.lastName}</td>
-                <td className="egrid-td" title={p2?.school}>{p2?.school}</td>
+                <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2?.firstName} {p2?.lastName}</td>
+                <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school}</td>
                 <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => setDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); focusNext(event.currentTarget, "other"); } }} /></td>
                 <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => setDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await saveRow(pairing)) focusNext(origin, "next"); }} /></td>
-                <td className={`egrid-td cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>{outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ±${outcome.diff}`) : "—"}</td>
+                <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>{outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ±${outcome.diff}`) : "—"}</td>
                 <td className="egrid-td cell-action">
                   {locked ? (
                     <Button size="sm" variant="secondary" onClick={() => startEdit(pairing.id)}><Pencil size={13} />แก้ไข</Button>
@@ -392,85 +392,94 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
 
       {pendingNote && rows.some((row) => row.status === "pending") && <div className="notice notice--info entry-grid-note"><p><span>{pendingNote}</span></p></div>}
 
-      <GridPagination idBase={`edit-${gameNumber}`} pageSize={pageSize} setPageSize={setPageSize} page={page} totalPages={totalPages} setPage={setPage} total={filtered.length} grandTotal={total} start={start} end={end} unit="คู่" />
     </div>
   );
 }
 
 /** Read-only twin of the entry grid: same Excel look, no score inputs, no save/edit, diff-range filter. */
-export function ResultViewGrid({ pairings, players, storageKey }: {
+export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveChange }: {
   pairings: Pairing[];
   players: Map<string, Player>;
   storageKey: string;
+  onFilterActiveChange?: (active: boolean) => void;
 }) {
-  const [fPair, setFPair] = useState(""); const [fId, setFId] = useState(""); const [fSchool, setFSchool] = useState(""); const [fName, setFName] = useState("");
-  const [dMin, setDMin] = useState(""); const [dMax, setDMax] = useState("");
+  const controls = useColumnControls();
   const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(VIEW_COLUMNS, storageKey);
+  const filterActiveCallback = useRef(onFilterActiveChange);
+  filterActiveCallback.current = onFilterActiveChange;
+  useEffect(() => { filterActiveCallback.current?.(controls.active); }, [controls.active]);
 
-  const filtered = useMemo(() => pairings.filter((pairing) => {
-    if (fPair.trim() && !`${pairing.tableNumber}`.includes(fPair.trim())) return false;
-    const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
-    const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
-    const idText = `${p1?.id ?? ""} ${p2?.id ?? ""}`.toLocaleLowerCase("th");
-    const schoolText = `${p1?.school ?? ""} ${p2?.school ?? ""}`.toLocaleLowerCase("th");
-    const nameText = `${p1?.firstName ?? ""} ${p1?.lastName ?? ""} ${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`.toLocaleLowerCase("th");
-    if (fId.trim() && !idText.includes(fId.trim().toLocaleLowerCase("th"))) return false;
-    if (fSchool.trim() && !schoolText.includes(fSchool.trim().toLocaleLowerCase("th"))) return false;
-    if (fName.trim() && !nameText.includes(fName.trim().toLocaleLowerCase("th"))) return false;
-    const min = dMin.trim() === "" ? null : Number(dMin);
-    const max = dMax.trim() === "" ? null : Number(dMax);
-    if (min !== null || max !== null) {
-      const diff = recordedDiff(pairing);
-      if (diff === null) return false;
-      if (min !== null && diff < min) return false;
-      if (max !== null && diff > max) return false;
-    }
-    return true;
-  }), [pairings, players, fPair, fId, fSchool, fName, dMin, dMax]);
-
-  const { pageSize, setPageSize, page, setPage, size, totalPages } = usePagination(filtered.length, `${fPair}|${fId}|${fSchool}|${fName}|${dMin}|${dMax}`);
-  const pageRows = filtered.slice((page - 1) * size, page * size);
-  const start = filtered.length === 0 ? 0 : (page - 1) * size + 1;
-  const end = Math.min(page * size, filtered.length);
-  const filtersActive = Boolean(fPair || fId || fSchool || fName || dMin || dMax);
+  const accessors = useMemo<Record<string, (pairing: Pairing) => string | number>>(() => ({
+    pair: (pairing) => pairing.tableNumber,
+    id1: (pairing) => pairing.playerOneId ? players.get(pairing.playerOneId)?.id ?? "—" : "—",
+    name1: (pairing) => {
+      const player = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
+      return player ? `${player.firstName} ${player.lastName}` : "—";
+    },
+    school1: (pairing) => pairing.playerOneId ? players.get(pairing.playerOneId)?.school ?? "—" : "—",
+    id2: (pairing) => pairing.playerTwoId ? players.get(pairing.playerTwoId)?.id ?? "—" : "—",
+    name2: (pairing) => {
+      const player = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
+      return player ? `${player.firstName} ${player.lastName}` : "—";
+    },
+    school2: (pairing) => pairing.playerTwoId ? players.get(pairing.playerTwoId)?.school ?? "—" : "—",
+    score1: (pairing) => pairing.scoreOne ?? "—",
+    score2: (pairing) => pairing.scoreTwo ?? "—",
+    diff: (pairing) => recordedDiff(pairing) ?? "—",
+    winner: (pairing) => pairing.resultType === "DRAW" ? "เสมอ" : pairing.winnerId ?? "—",
+  }), [players]);
+  const uniqueValues = useMemo(
+    () => uniqueColumnValues(pairings, accessors, VIEW_FILTER_KEYS),
+    [pairings, accessors],
+  );
+  const filtered = useMemo(
+    () => applyColumnControls(pairings, accessors, controls.filters, controls.sort, controls.textFilters, ["id1", "id2", "winner"]),
+    [pairings, accessors, controls.filters, controls.sort, controls.textFilters],
+  );
 
   return (
     <div className="entry-grid-wrap">
-      <div className="entry-toolbar">
-        <div className="entry-filter"><label htmlFor={`v-pair-${storageKey}`}>หาคู่ที่</label><input id={`v-pair-${storageKey}`} inputMode="numeric" value={fPair} placeholder="เลขคู่" onChange={(event) => setFPair(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`v-id-${storageKey}`}>หารหัส</label><input id={`v-id-${storageKey}`} value={fId} placeholder="เช่น P0042" onChange={(event) => setFId(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`v-school-${storageKey}`}>หาโรงเรียน</label><input id={`v-school-${storageKey}`} value={fSchool} placeholder="ชื่อสถาบัน" onChange={(event) => setFSchool(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`v-name-${storageKey}`}>หาจากชื่อ</label><input id={`v-name-${storageKey}`} value={fName} placeholder="ชื่อหรือนามสกุล" onChange={(event) => setFName(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`v-dmin-${storageKey}`}>Diff ตั้งแต่</label><input id={`v-dmin-${storageKey}`} type="number" inputMode="numeric" min={0} value={dMin} placeholder="ต่ำสุด" onChange={(event) => setDMin(event.target.value)} /></div>
-        <div className="entry-filter"><label htmlFor={`v-dmax-${storageKey}`}>Diff ถึง</label><input id={`v-dmax-${storageKey}`} type="number" inputMode="numeric" min={0} value={dMax} placeholder="สูงสุด" onChange={(event) => setDMax(event.target.value)} /></div>
-        <div className="entry-toolbar__actions">
-          <Button variant="secondary" size="sm" disabled={!filtersActive} onClick={() => { setFPair(""); setFId(""); setFSchool(""); setFName(""); setDMin(""); setDMax(""); }}><X size={14} />ล้างตัวกรอง</Button>
-        </div>
-      </div>
-
       <div className="entry-grid-scroll" ref={scrollRef}>
         <table className="entry-grid" style={{ width: totalWidth }}>
-          <GridHead columns={VIEW_COLUMNS} colWidths={colWidths} startResize={startResize} />
+          <GridHead columns={VIEW_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
+            sortable: (key) => VIEW_FILTER_KEYS.includes(key),
+            filterable: (key) => VIEW_FILTER_KEYS.includes(key),
+            sort: controls.sort,
+            filters: controls.filters,
+            textFilters: controls.textFilters,
+            editingKey: controls.editingKey,
+            uniqueValues,
+            openKey: controls.openKey,
+            openAnchor: controls.openAnchor,
+            onSetSort: controls.setColumnSort,
+            onStartTextFilter: controls.startTextFilter,
+            onTextFilter: controls.setTextFilter,
+            onStopTextFilter: () => controls.setEditingKey(null),
+            onOpenFilter: controls.openFilter,
+            onApply: (key, values) => controls.applyFilter(key, values, uniqueValues[key]?.length ?? 0),
+            onClear: controls.clearFilter,
+            onClose: () => controls.setOpenKey(null),
+          }} />
           <tbody>
-            {pageRows.length === 0 ? (
-              <tr><td className="egrid-empty" colSpan={VIEW_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
-            ) : pageRows.map((pairing) => {
+            {filtered.length === 0 ? (
+              <tr><td className="egrid-empty" colSpan={VIEW_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>กด “ล้างตัวกรอง” ด้านบนเพื่อดูทุกคู่</span></td></tr>
+            ) : filtered.map((pairing) => {
               const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
               const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
               const recorded = isRecorded(pairing);
               const draw = pairing.resultType === "DRAW";
               const diff = recordedDiff(pairing);
               return <tr key={pairing.id} className="egrid-row">
-                <td className="egrid-td numeric cell-pair">{pairing.tableNumber}</td>
+                <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                 <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
-                <td className="egrid-td" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : "รอคู่แข่ง"}</td>
-                <td className="egrid-td" title={p1?.school}>{p1?.school ?? "—"}</td>
+                <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : "รอคู่แข่ง"}</td>
+                <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
                 <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
-                <td className="egrid-td" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : "รอคู่แข่ง"}</td>
-                <td className="egrid-td" title={p2?.school}>{p2?.school ?? "—"}</td>
-                <td className="egrid-td numeric cell-score">{pairing.scoreOne ?? "—"}</td>
-                <td className="egrid-td numeric cell-score">{pairing.scoreTwo ?? "—"}</td>
-                <td className={`egrid-td numeric cell-diff cell-diff--${!recorded ? "pending" : draw ? "draw" : "win"}`}>{!recorded ? "—" : draw ? "0" : `±${diff}`}</td>
+                <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : "รอคู่แข่ง"}</td>
+                <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
+                <td className="egrid-td egrid-td--center cell-score">{pairing.scoreOne ?? "—"}</td>
+                <td className="egrid-td egrid-td--center cell-score">{pairing.scoreTwo ?? "—"}</td>
+                <td className={`egrid-td egrid-td--center cell-diff cell-diff--${!recorded ? "pending" : draw ? "draw" : "win"}`}>{!recorded ? "—" : draw ? "0" : `±${diff}`}</td>
                 <td className={`egrid-td${recorded && !draw ? " cell-id" : ""}`}>{!recorded ? "—" : draw ? "เสมอ" : pairing.winnerId ?? "—"}</td>
               </tr>;
             })}
@@ -478,7 +487,6 @@ export function ResultViewGrid({ pairings, players, storageKey }: {
         </table>
       </div>
 
-      <GridPagination idBase={`view-${storageKey}`} pageSize={pageSize} setPageSize={setPageSize} page={page} totalPages={totalPages} setPage={setPage} total={filtered.length} grandTotal={pairings.length} start={start} end={end} unit="คู่" />
     </div>
   );
 }

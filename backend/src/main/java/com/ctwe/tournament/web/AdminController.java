@@ -2,6 +2,7 @@ package com.ctwe.tournament.web;
 
 import com.ctwe.tournament.application.TenantService;
 import com.ctwe.tournament.application.TournamentArchiveService;
+import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
 import com.ctwe.tournament.web.dto.TenantDtos;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -17,10 +18,12 @@ import java.util.UUID;
 public class AdminController {
     private final TenantService tenant;
     private final TournamentArchiveService archive;
+    private final ReauthenticationService reauth;
 
-    public AdminController(TenantService tenant, TournamentArchiveService archive) {
+    public AdminController(TenantService tenant, TournamentArchiveService archive, ReauthenticationService reauth) {
         this.tenant = tenant;
         this.archive = archive;
+        this.reauth = reauth;
     }
 
     // --- tournaments ---
@@ -42,7 +45,7 @@ public class AdminController {
         tenant.deleteTournament(tournamentId, auth.getName());
     }
 
-    /** Export the whole tournament to an .xlsx (kept for public download), then delete the live data. */
+    /** Export the whole tournament to an admin-only .xlsx archive, then delete the live data. */
     @PostMapping("/tournaments/{tournamentId}/archive")
     public TenantDtos.ArchiveSummary archiveTournament(@PathVariable UUID tournamentId, Authentication auth) {
         return archive.archiveAndDelete(tournamentId, auth.getName());
@@ -58,6 +61,8 @@ public class AdminController {
     public TenantDtos.TournamentResponse setTournamentStatus(@PathVariable UUID tournamentId,
                                                              @Valid @RequestBody TenantDtos.TournamentStatusRequest request,
                                                              Authentication auth) {
+        // Opening/closing a tournament toggles its public access link, so re-authenticate the admin.
+        reauth.requireCurrentPassword(auth, request.password());
         return tenant.setTournamentStatus(tournamentId, request.open(), auth.getName());
     }
 

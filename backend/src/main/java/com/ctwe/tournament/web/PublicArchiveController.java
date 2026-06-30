@@ -15,13 +15,18 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 
-/** Admin-only access to archived (exported-to-Excel) tournaments. */
+/**
+ * Anonymous access to archived (exported-to-Excel) tournaments shown on the root landing. Archive
+ * blobs are intentionally retained as a permanent, publicly downloadable backup of finished events.
+ */
 @RestController
-@RequestMapping("/api/archives")
-public class ArchiveController {
+@RequestMapping("/api/public/archives")
+public class PublicArchiveController {
     private final TournamentArchiveService archive;
 
-    public ArchiveController(TournamentArchiveService archive) { this.archive = archive; }
+    public PublicArchiveController(TournamentArchiveService archive) {
+        this.archive = archive;
+    }
 
     @GetMapping
     public List<TenantDtos.ArchiveSummary> list() {

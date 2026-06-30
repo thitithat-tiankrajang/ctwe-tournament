@@ -1,37 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, DoorOpen, Plus, Trash2, Trophy } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronRight, DoorOpen, Plus, Trash2, Trophy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
-import { hasStaffAccess, isDirector } from "@/domain/tournament/roles";
+import { hasStaffAccess, isAdmin, isDirector } from "@/domain/tournament/roles";
 import type { TournamentCard } from "@/domain/tournament/types";
-import { ArchiveList } from "@/ui/components/archive-list";
-import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
-import { EmptyState, PageHeader, Panel, Stat } from "@/ui/components/page";
+import { EmptyState, PageHeader } from "@/ui/components/page";
 
 export default function CardsPage() {
+  const router = useRouter();
   const cards = useTournamentStore((state) => state.cards);
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
   const error = useTournamentStore((state) => state.error);
   const deleteCard = useTournamentStore((state) => state.deleteCard);
   const activeTournament = useTournamentStore((state) => state.activeTournament);
-  const archives = useTournamentStore((state) => state.archives);
-  const loadArchives = useTournamentStore((state) => state.loadArchives);
   const isStaff = hasStaffAccess(auth);
-  useEffect(() => { void loadArchives(); }, [loadArchives]);
+  const admin = isAdmin(auth);
   // Directors create cards from their own console; admins use the standalone create page.
   const createHref = isDirector(auth) ? "/director" : "/cards/create";
   const [deleting, setDeleting] = useState<TournamentCard | null>(null);
   const [pending, setPending] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
+  // The card list only exists inside a tournament scope. Anyone non-admin who lands here without a
+  // tournament link has no business browsing every tournament, so send them to the master landing.
+  useEffect(() => {
+    if (!loading && !admin && !activeTournament) router.replace("/");
+  }, [loading, admin, activeTournament, router]);
+
   // Back-office users must enter a tournament first; public viewers see all published cards.
   const needsTournament = isStaff && !activeTournament;
   const visibleCards = activeTournament ? cards.filter((card) => card.tournamentId === activeTournament.id) : cards;
+  const groupedCards = [...visibleCards]
+    .sort((a, b) => a.name.localeCompare(b.name, "th", { numeric: true })
+      || a.division.localeCompare(b.division, "th", { numeric: true }))
+    .reduce<Map<string, TournamentCard[]>>((groups, card) => {
+      const group = groups.get(card.name) ?? [];
+      group.push(card);
+      groups.set(card.name, group);
+      return groups;
+    }, new Map());
 
   const confirmDelete = async () => {
     if (!deleting) return;
@@ -40,9 +53,6 @@ export default function CardsPage() {
     catch (failure) { setDeleteError(failure instanceof Error ? failure.message : "ลบการ์ดไม่สำเร็จ"); }
     finally { setPending(false); }
   };
-  const running = visibleCards.filter((card) => card.status === "RUNNING").length;
-  const totalPlayers = visibleCards.reduce((sum, card) => sum + (card.playerCount ?? card.players.length), 0);
-  const finished = visibleCards.filter((card) => ["FINISHED", "CLOSED"].includes(card.status)).length;
   const cardHref = (card: typeof cards[number]) => {
     if (!isStaff || card.runtimeStage === "FINAL_PUBLISHED") return `/cards/${card.id}`;
     if (card.runtimeStage === "PLAYER_REGISTRATION") return `/cards/${card.id}/players`;
@@ -53,54 +63,40 @@ export default function CardsPage() {
   return (
     <>
       <PageHeader
+        className="cards-page-header"
         eyebrow={activeTournament ? "รายการแข่งขัน" : "Tournament cards"}
-        title={activeTournament ? activeTournament.name : "การ์ดการแข่งขัน"}
+        title={activeTournament ? activeTournament.name : "ติดตามการแข่งขัน"}
         description={activeTournament ? "รุ่นการแข่งขัน (card) ทั้งหมดของรายการนี้ — จัดการผู้เล่น เกม และผลลัพธ์แยกแต่ละรุ่น" : "หนึ่งการ์ดต่อหนึ่งรุ่นการแข่งขัน จัดการผู้เล่น เกม และผลลัพธ์แยกจากกันอย่างชัดเจน"}
         actions={activeTournament ? <Link href={createHref}><Button><Plus size={17} />สร้างการ์ด</Button></Link> : undefined}
       />
       {error && <div className="notice notice--warning"><p><strong>เชื่อมต่อฐานข้อมูลไม่สำเร็จ</strong><span>{error}</span></p></div>}
-      {!needsTournament && (
-        <div className="stat-grid">
-          <Stat label="การ์ดทั้งหมด" value={visibleCards.length} note="ทุกสถานะ" />
-          <Stat label="กำลังแข่งขัน" value={running} tone="yellow" note="ต้องติดตามผล" />
-          <Stat label="ผู้เล่นในระบบ" value={totalPlayers.toLocaleString("th-TH")} tone="blue" note="รวมทุกการ์ด" />
-          <Stat label="แข่งขันเสร็จแล้ว" value={finished} tone="green" note="พร้อมส่งออกข้อมูล" />
-        </div>
-      )}
       {loading ? <div className="panel panel-padding">กำลังโหลดข้อมูลจากฐานข้อมูล…</div> : needsTournament ? (
-        <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เลือกและเปิดรายการแข่งขัน (tournament) ก่อน จึงจะจัดการรุ่นการแข่งขันได้" action={<Link href="/tournaments"><Button><Trophy size={16} />ไปหน้ารายการแข่งขัน</Button></Link>} />
+        <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เปิดการแข่งขันผ่านลิงก์ของรายการนั้น หรือจัดการได้จากคอนโซลผู้ดูแล" action={<Link href="/admin"><Button><Trophy size={16} />ไปคอนโซลผู้ดูแล</Button></Link>} />
       ) : visibleCards.length === 0 ? (
         <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้" description={activeTournament ? "สร้างรุ่นการแข่งขันแรกของรายการนี้ได้เลย" : "ยังไม่มีการแข่งขันที่เผยแพร่"} action={activeTournament ? <Link href={createHref}><Button>สร้างการ์ด</Button></Link> : undefined} />
       ) : (
-        <div className="card-grid">
-          {visibleCards.map((card) => (
-            <article className="competition-card" key={card.id}>
-              <div className="competition-card__header">
-                <div><h2>{card.name}</h2><span className="competition-card__division">{card.division}</span></div>
-                <div className="competition-card__header-actions">
-                  <Badge>{card.status}</Badge>
-                  {isStaff && <Button variant="ghost" size="sm" className="card-delete" aria-label={`ลบการ์ด ${card.name}`} title="ลบการ์ดและข้อมูลทั้งหมด" onClick={() => { setDeleteError(""); setDeleting(card); }}><Trash2 size={15} /></Button>}
-                </div>
+        <div className="card-groups">
+          {[...groupedCards.entries()].map(([name, group]) => (
+            <section className="card-group" key={name}>
+              <h2 className="card-group__title">{name}</h2>
+              <div className="card-group__rows">
+                {group.map((card) => (
+                  <article className="card-select-row" key={card.id}>
+                    <Link href={cardHref(card)} className="card-select-row__link">
+                      <span className="card-select-row__name">{card.name}</span>
+                      <span className="card-select-row__division">{card.division}</span>
+                      <ChevronRight size={19} aria-hidden />
+                    </Link>
+                    {isStaff && (
+                      <Button variant="ghost" size="sm" className="card-select-row__delete" aria-label={`ลบการ์ด ${card.name} ${card.division}`} title="ลบการ์ดและข้อมูลทั้งหมด" onClick={() => { setDeleteError(""); setDeleting(card); }}>
+                        <Trash2 size={15} />
+                      </Button>
+                    )}
+                  </article>
+                ))}
               </div>
-              <div className="competition-card__metrics">
-                <div className="competition-card__metric"><span>ผู้เล่น</span><strong>{card.playerCount ?? card.players.length}</strong></div>
-                <div className="competition-card__metric"><span>เกม</span><strong>{card.gameCount ?? card.games.length}</strong></div>
-                <div className="competition-card__metric"><span>เกมปัจจุบัน</span><strong>{card.currentGame}/{card.gameCount ?? card.games.length}</strong></div>
-              </div>
-              <div className="competition-card__footer">
-                <small>สร้างเมื่อ {new Intl.DateTimeFormat("th-TH", { dateStyle: "medium" }).format(new Date(card.createdAt))}</small>
-                <Link href={cardHref(card)}><Button variant="ghost" size="sm">{isStaff && card.runtimeStage !== "FINAL_PUBLISHED" ? "ทำงานต่อ" : "ดูภาพรวม"} <ArrowRight size={15} /></Button></Link>
-              </div>
-            </article>
+            </section>
           ))}
-        </div>
-      )}
-
-      {archives.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <Panel title="คลังผลย้อนหลัง (ดาวน์โหลด Excel)" description="ทัวร์นาเมนต์ที่ถูกเก็บถาวรเป็นไฟล์ Excel — ดาวน์โหลดดูข้อมูลย้อนหลังได้ทุกเมื่อ">
-            <div className="panel-padding"><ArchiveList archives={archives} /></div>
-          </Panel>
         </div>
       )}
 
