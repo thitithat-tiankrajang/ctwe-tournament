@@ -75,12 +75,12 @@ export default function PlayersPage() {
   const busy = pending !== null || isSubmitting;
 
   const rankingColumns: DataColumn<{ player: Player; rank: number }>[] = [
-    { key: "rank", label: "อันดับ", min: 68, width: 84, align: "right", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
-    { key: "id", label: "รหัส", min: 54, width: 70, filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
-    { key: "name", label: "ชื่อ-นามสกุล", min: 110, width: 170, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
-    { key: "school", label: "โรงเรียน/สถาบัน", min: 110, width: 170, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
-    { key: "wp", label: "คะแนนสะสม", min: 104, width: 132, align: "right", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
-    { key: "diff", label: "ผลต่างสะสม", min: 104, width: 132, align: "right", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
+    { key: "rank", label: "อันดับ", min: 48, width: 58, align: "right", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
+    { key: "id", label: "รหัส", min: 50, width: 60, filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
+    { key: "name", label: "ชื่อ-นามสกุล", min: 110, width: 200, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
+    { key: "school", label: "โรงเรียน/สถาบัน", min: 110, width: 200, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
+    { key: "wp", label: "คะแนนสะสม", min: 76, width: 90, align: "right", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
+    { key: "diff", label: "ผลต่างสะสม", min: 82, width: 96, align: "right", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
     { key: "wdl", label: "ชนะ / เสมอ / แพ้", min: 100, width: 142, align: "center", value: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}`, render: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}` },
   ];
 
@@ -231,7 +231,7 @@ export default function PlayersPage() {
           columns={rankingColumns}
           rows={ranked.map((player, index) => ({ player, rank: index + 1 }))}
           getRowKey={(row) => row.player.id}
-          storageKey={`${id}:players:ranking-v2`}
+          storageKey={`${id}:players:ranking-v3`}
           resetKey={String(selectedRankingGame)}
           tableClassName="entry-grid--ranking"
           emptyText="ไม่พบผู้เล่นตามตัวกรอง"

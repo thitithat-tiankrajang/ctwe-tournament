@@ -964,17 +964,12 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .egrid-th__label--btn:disabled, .egrid-th__label--plain { cursor: default; }
 .egrid-th__label--btn { width: 100%; }
 .egrid-th__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Menu caret: signals the header is interactive (click = menu, click again = type to search). */
-.egrid-th__label--btn:not(:disabled)::after { color: var(--blue); content: "▾"; flex: 0 0 auto; font-size: .82em; line-height: 1; margin-left: auto; opacity: .5; transition: opacity .12s ease; }
-.egrid-th--center .egrid-th__label--btn:not(:disabled)::after,
-.egrid-th--right .egrid-th__label--btn:not(:disabled)::after { margin-left: 4px; }
 .entry-grid thead th,
 .entry-grid thead th.egrid-th--center,
 .entry-grid thead th.egrid-th--right { text-align: left; }
 .entry-grid thead .egrid-th__label--btn,
 .entry-grid thead .egrid-th--center .egrid-th__label--btn,
 .entry-grid thead .egrid-th--right .egrid-th__label--btn { justify-content: flex-start; padding-left: 0; text-align: left; }
-.egrid-th__label--btn:not(:disabled):hover::after, .egrid-th--popup .egrid-th__label--btn::after { opacity: 1; }
 .egrid-th__label--btn:not(:disabled):hover .egrid-th__text { color: var(--blue-dark); }
 .egrid-th__inline-filter { background: #fff; border: 1px solid var(--blue); box-sizing: border-box; color: var(--ink); font-size: inherit; font-weight: 700; height: 100%; inset: 0; min-width: 0; outline: 2px solid rgba(47, 111, 219, .18); padding: 2px 4px; position: absolute; width: 100%; }
 .egrid-th--filtered { background: #dce8fb !important; color: var(--blue-dark) !important; }
