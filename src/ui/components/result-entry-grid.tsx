@@ -16,6 +16,8 @@ export interface EntrySlot {
   tableNumber: number;
   /** Undefined while the matchup is still unknown (waiting on the source game). */
   pairing?: Pairing;
+  /** A finalized one-player pairing: the lone player must win. Distinct from a still-pending row. */
+  isBye?: boolean;
 }
 
 type RowStatus = "pending" | "empty" | "dirty" | "saved";
@@ -67,6 +69,14 @@ function isCompletePairing(pairing: Pairing | undefined): pairing is CompletePai
   return Boolean(pairing?.playerOneId && pairing?.playerTwoId);
 }
 
+/** For a bye (exactly one player present), which slot holds that player. */
+function byeSide(pairing: Pairing | undefined): "one" | "two" | null {
+  if (!pairing) return null;
+  const one = Boolean(pairing.playerOneId);
+  const two = Boolean(pairing.playerTwoId);
+  return one && !two ? "one" : two && !one ? "two" : null;
+}
+
 interface Outcome { resultType: "WIN" | "DRAW"; winnerId?: string; diff: number; }
 
 function calcOutcome(one: string, two: string, maxDiff: number, p1: string, p2: string): Outcome | null {
@@ -82,7 +92,7 @@ function recordedDiff(pairing: Pairing) {
   return pairing.resultType === "DRAW" ? 0 : pairing.calculatedDiff ?? 0;
 }
 
-export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNote, storageKey, onSubmit, pairingEdit }: {
+export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNote, storageKey, onSubmit, onPenalty, pairingEdit }: {
   gameNumber: number;
   slots: EntrySlot[];
   players: Map<string, Player>;
@@ -91,6 +101,8 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
   /** Identifies the table so user-resized column widths persist per card+game in sessionStorage. */
   storageKey: string;
   onSubmit: (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => Promise<void>;
+  /** Director-only "ลงดาบ" penalty for a pairing (incl. a bye). Opens the page's penalty dialog. */
+  onPenalty?: (pairing: Pairing) => void;
   /** Director-only pairing edit during result collection. Swaps require password re-authentication. */
   pairingEdit?: { onSwap: (a: string, b: string, password: string) => Promise<boolean>; onUnpair: () => Promise<void> };
 }) {
@@ -124,6 +136,16 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
 
   const rows = useMemo(() => slots.map((slot) => {
     const pairing = slot.pairing;
+    const side = slot.isBye ? byeSide(pairing) : null;
+    if (side && pairing) {
+      // A finalized bye: one editable score for the lone player (they must win).
+      const savedScore = (side === "one" ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "";
+      const value = drafts[pairing.id]?.[side] ?? savedScore;
+      const saved = isRecorded(pairing);
+      const changed = value !== savedScore;
+      const rowStatus: RowStatus = saved && !changed ? "saved" : changed ? "dirty" : "empty";
+      return { slot, pairing, status: rowStatus, saved, changed, bye: true as const, byeSlot: side };
+    }
     if (!isCompletePairing(pairing)) return { slot, pairing, status: "pending" as RowStatus };
     const draft = drafts[pairing.id];
     const one = draft?.one ?? pairing.scoreOne?.toString() ?? "";
@@ -182,6 +204,31 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
     if (!isCompletePairing(pairing)) return false;
     const { one, two } = valueOf(pairing);
     return saveValues(pairing, one, two);
+  };
+
+  // A bye: the lone player must win. We send their entered score in their slot and 0 in the empty slot.
+  const byeValue = (pairing: Pairing, side: "one" | "two") =>
+    drafts[pairing.id]?.[side] ?? (side === "one" ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "";
+  const saveByeRow = async (pairing: Pairing): Promise<boolean> => {
+    const side = byeSide(pairing);
+    if (!side) return false;
+    const score = Number(byeValue(pairing, side));
+    if (!Number.isInteger(score) || score <= 0) return false;
+    const scoreOne = side === "one" ? score : 0;
+    const scoreTwo = side === "one" ? 0 : score;
+    setSavingIds((prev) => new Set(prev).add(pairing.id));
+    try {
+      await onSubmit(pairing, scoreOne, scoreTwo, isRecorded(pairing));
+      setDrafts((prev) => { const next = { ...prev }; delete next[pairing.id]; return next; });
+      setEditing((prev) => { if (!prev.has(pairing.id)) return prev; const next = new Set(prev); next.delete(pairing.id); return next; });
+      setFailedIds((prev) => { if (!prev.has(pairing.id)) return prev; const next = new Set(prev); next.delete(pairing.id); return next; });
+      return true;
+    } catch {
+      setFailedIds((prev) => new Set(prev).add(pairing.id));
+      return false;
+    } finally {
+      setSavingIds((prev) => { const next = new Set(prev); next.delete(pairing.id); return next; });
+    }
   };
 
   const saveAll = async () => {
@@ -310,7 +357,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
       )}
 
       <div className="entry-grid-scroll" ref={scrollRef}>
-        <table className="entry-grid" style={{ width: totalWidth }}>
+        <table className="entry-grid entry-grid--match" style={{ width: totalWidth }}>
           <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => ENTRY_FILTER_KEYS.includes(key),
             filterable: (key) => ENTRY_FILTER_KEYS.includes(key),
@@ -335,6 +382,62 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
               <tr><td className="egrid-empty" colSpan={EDIT_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
             ) : filtered.map((row) => {
               const { slot, pairing } = row;
+              const side = slot.isBye ? byeSide(pairing) : null;
+              if (side && pairing) {
+                const present = players.get((side === "one" ? pairing.playerOneId : pairing.playerTwoId) ?? "");
+                const value = byeValue(pairing, side);
+                const saved = isRecorded(pairing);
+                const isEditing = editing.has(pairing.id);
+                const saving = savingIds.has(pairing.id);
+                const failed = failedIds.has(pairing.id);
+                const locked = saved && !isEditing;
+                const disabled = locked || saving || savingAll;
+                const scoreNum = Number(value);
+                const valid = value.trim() !== "" && Number.isInteger(scoreNum) && scoreNum > 0;
+                const changed = value !== ((side === "one" ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "");
+                const base = { one: drafts[pairing.id]?.one ?? "", two: drafts[pairing.id]?.two ?? "" };
+                const presentCell = (
+                  <>
+                    <td className="egrid-td cell-id">{present?.id ?? "—"}</td>
+                    <td className="egrid-td cell-person-name" title={`${present?.firstName ?? ""} ${present?.lastName ?? ""}`}>{present ? `${present.firstName} ${present.lastName}` : "—"}</td>
+                    <td className="egrid-td cell-person-school" title={present?.school}>{present?.school ?? "—"}</td>
+                  </>
+                );
+                const byeCell = (
+                  <>
+                    <td className="egrid-td cell-id">—</td>
+                    <td className="egrid-td cell-person-name cell-bye">บาย (ไม่มีคู่แข่ง)</td>
+                    <td className="egrid-td cell-person-school">—</td>
+                  </>
+                );
+                const scoreInput = (
+                  <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={1} aria-label={`คะแนน ${present?.id}`} placeholder="คะแนน" value={value} disabled={disabled}
+                    onChange={(event) => setDraft(pairing.id, side, event.target.value, base)} onFocus={(event) => event.target.select()}
+                    onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); await saveByeRow(pairing); }} /></td>
+                );
+                const byeScore = <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="บาย" /></td>;
+                return <tr key={pairing.id} className={`egrid-row egrid-row--bye${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}`}>
+                  <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
+                  {side === "one" ? presentCell : byeCell}
+                  {side === "one" ? byeCell : presentCell}
+                  {side === "one" ? scoreInput : byeScore}
+                  {side === "one" ? byeScore : scoreInput}
+                  <td className={`egrid-td egrid-td--center cell-diff cell-diff--${valid ? "win" : "pending"}`}>{valid ? `${present?.id} · ${Math.min(scoreNum, maxDiff)}` : "ต้องชนะ"}</td>
+                  <td className="egrid-td cell-action">
+                    {locked ? (
+                      <div className="cell-action__group">
+                        <Button size="sm" variant="secondary" onClick={() => startEdit(pairing.id)}><Pencil size={13} />แก้ไข</Button>
+                        {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
+                      </div>
+                    ) : (
+                      <div className="cell-action__group">
+                        <Button size="sm" variant="success" disabled={!valid || !changed || saving || savingAll} onClick={() => void saveByeRow(pairing)}>{saving ? <LoaderCircle className="loading-spinner" size={13} /> : saved ? <Check size={13} /> : <Save size={13} />}เซฟ</Button>
+                        {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
+                      </div>
+                    )}
+                  </td>
+                </tr>;
+              }
               if (!isCompletePairing(pairing)) {
                 const p1 = pairing?.playerOneId ? players.get(pairing.playerOneId) : undefined;
                 const p2 = pairing?.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
@@ -373,14 +476,18 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, pendingNo
                 <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school}</td>
                 <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => setDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); focusNext(event.currentTarget, "other"); } }} /></td>
                 <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => setDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await saveRow(pairing)) focusNext(origin, "next"); }} /></td>
-                <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>{outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ±${outcome.diff}`) : "—"}</td>
+                <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>{outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ${outcome.diff}`) : "—"}</td>
                 <td className="egrid-td cell-action">
                   {locked ? (
-                    <Button size="sm" variant="secondary" onClick={() => startEdit(pairing.id)}><Pencil size={13} />แก้ไข</Button>
+                    <div className="cell-action__group">
+                      <Button size="sm" variant="secondary" onClick={() => startEdit(pairing.id)}><Pencil size={13} />แก้ไข</Button>
+                      {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้ทั้งคู่)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
+                    </div>
                   ) : (
                     <div className="cell-action__group">
                       <Button size="sm" variant="success" disabled={!outcome || !changed || saving || savingAll} onClick={() => void saveRow(pairing)}>{saving ? <LoaderCircle className="loading-spinner" size={13} /> : saved ? <Check size={13} /> : <Save size={13} />}เซฟ</Button>
                       {saved && isEditing && <Button size="sm" variant="ghost" aria-label="ยกเลิกแก้ไข" disabled={saving || savingAll} onClick={() => cancelEdit(pairing.id)}><X size={13} /></Button>}
+                      {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้ทั้งคู่)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
                     </div>
                   )}
                 </td>
@@ -440,7 +547,7 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
   return (
     <div className="entry-grid-wrap">
       <div className="entry-grid-scroll" ref={scrollRef}>
-        <table className="entry-grid" style={{ width: totalWidth }}>
+        <table className="entry-grid entry-grid--match" style={{ width: totalWidth }}>
           <GridHead columns={VIEW_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => VIEW_FILTER_KEYS.includes(key),
             filterable: (key) => VIEW_FILTER_KEYS.includes(key),
@@ -468,19 +575,21 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
               const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
               const recorded = isRecorded(pairing);
               const draw = pairing.resultType === "DRAW";
+              const penalty = pairing.resultType === "PENALTY";
               const diff = recordedDiff(pairing);
+              const absentText = recorded ? "บาย" : "รอคู่แข่ง";
               return <tr key={pairing.id} className="egrid-row">
                 <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                 <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
-                <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : "รอคู่แข่ง"}</td>
+                <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : absentText}</td>
                 <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
                 <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
-                <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : "รอคู่แข่ง"}</td>
+                <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : absentText}</td>
                 <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
-                <td className="egrid-td egrid-td--center cell-score">{pairing.scoreOne ?? "—"}</td>
-                <td className="egrid-td egrid-td--center cell-score">{pairing.scoreTwo ?? "—"}</td>
-                <td className={`egrid-td egrid-td--center cell-diff cell-diff--${!recorded ? "pending" : draw ? "draw" : "win"}`}>{!recorded ? "—" : draw ? "0" : `±${diff}`}</td>
-                <td className={`egrid-td${recorded && !draw ? " cell-id" : ""}`}>{!recorded ? "—" : draw ? "เสมอ" : pairing.winnerId ?? "—"}</td>
+                <td className="egrid-td egrid-td--center cell-score">{penalty ? "—" : pairing.scoreOne ?? "—"}</td>
+                <td className="egrid-td egrid-td--center cell-score">{penalty ? "—" : pairing.scoreTwo ?? "—"}</td>
+                <td className={`egrid-td egrid-td--center cell-diff cell-diff--${!recorded ? "pending" : penalty ? "draw" : draw ? "draw" : "win"}`}>{!recorded ? "—" : penalty ? `−${diff ?? 0}` : draw ? "0" : `${diff}`}</td>
+                <td className={`egrid-td${recorded && !draw && !penalty ? " cell-id" : ""}`}>{!recorded ? "—" : penalty ? "ลงดาบ" : draw ? "เสมอ" : pairing.winnerId ?? "—"}</td>
               </tr>;
             })}
           </tbody>

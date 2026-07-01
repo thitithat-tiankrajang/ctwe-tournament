@@ -56,6 +56,7 @@ interface TournamentState {
   confirmPairingPreview: (cardId: string) => Promise<void>;
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
   overrideResult: (cardId: string, matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
+  applyPenalty: (cardId: string, matchId: string, points: number, password: string) => Promise<void>;
   verifyPassword: (password: string) => Promise<boolean>;
   reviewResults: (cardId: string) => Promise<void>;
   reopenResults: (cardId: string) => Promise<void>;
@@ -453,6 +454,12 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       await mutateCard(`/api/cards/${cardId}/matches/${matchId}/override`, cardId, {
         method: "PUT",
         body: JSON.stringify({ scoreOne, scoreTwo, editExisting: true }),
+      });
+    },
+    async applyPenalty(cardId, matchId, points, password) {
+      await mutateCard(`/api/cards/${cardId}/matches/${matchId}/penalty`, cardId, {
+        method: "POST",
+        body: JSON.stringify({ points, password }),
       });
     },
     async verifyPassword(password) {

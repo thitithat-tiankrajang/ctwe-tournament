@@ -89,10 +89,13 @@ public class AuthorizationService {
 
     private void enforceRole(Authentication auth, Capability capability) {
         if (isAdmin(auth) || isDirector(auth)) return; // operators may do everything within scope
-        // Remaining principals are result-entry staff.
-        if (capability == Capability.RUN_TOURNAMENT)
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "การดำเนินการนี้สงวนสำหรับผู้อำนวยการเท่านั้น");
-        // MANAGE_PLAYERS and SUBMIT_RESULT are permitted; the stage window is enforced downstream.
+        // Remaining principals are result-entry staff. They may submit match results only;
+        // player registration and every tournament-control action belong to directors/admins.
+        if (capability != Capability.SUBMIT_RESULT)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                capability == Capability.MANAGE_PLAYERS
+                    ? "การจัดการผู้เล่นสงวนสำหรับผู้อำนวยการเท่านั้น"
+                    : "การดำเนินการนี้สงวนสำหรับผู้อำนวยการเท่านั้น");
     }
 
     private Set<UUID> idSet(String sql, Object... args) {

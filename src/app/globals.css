@@ -678,6 +678,11 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .col-resizing { cursor: col-resize; user-select: none; }
 
 .entry-grid td.egrid-td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); font-size: clamp(7px, .86vw, 12.5px); font-weight: 400; height: clamp(25px, 2.5vw, 34px); overflow: hidden; padding: 1px clamp(2px, .45vw, 6px); text-overflow: ellipsis; white-space: nowrap; }
+.entry-grid.entry-grid--ranking td.egrid-td { height: clamp(24px, 2.15vw, 31px); line-height: 1.35; padding-block: 2px; }
+.entry-grid.entry-grid--match td.egrid-td { height: clamp(36px, 3.4vw, 46px); line-height: 1.5; padding-block: clamp(3px, .45vw, 6px); }
+.entry-grid.entry-grid--match .cell-athlete { gap: 2px; line-height: 1.4; }
+.entry-grid.entry-grid--match .cell-person-name,
+.entry-grid.entry-grid--match .cell-person-school { line-height: 1.5; }
 .entry-grid tbody tr:hover td.egrid-td { background: #f6f8fb; }
 .egrid-row--dirty td.egrid-td { background: #f1f7ff; }
 .egrid-row--dirty:hover td.egrid-td { background: #e8f1ff; }
@@ -697,7 +702,12 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .entry-grid tbody tr:hover td.cell-seat { background: #eceff2; }
 .cell-person-name { color: #20252b; font-size: clamp(7px, .78vw, 11.5px) !important; font-weight: 400 !important; }
 .cell-person-school { color: var(--muted); font-size: clamp(6.5px, .65vw, 9.5px) !important; font-weight: 400 !important; }
-.cell-person-school.cell-ranking-school { color: #20252b; }
+.cell-person-school.cell-ranking-school {
+  color: #20252b;
+  font-family: inherit;
+  font-size: clamp(7px, .78vw, 11.5px) !important;
+  font-weight: 400 !important;
+}
 .cell-athlete { display: flex; flex-direction: column; justify-content: center; line-height: 1.22; min-width: 0; gap: 1px; }
 .cell-athlete__name { color: #20252b; font-size: clamp(8px, .82vw, 12px); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell-athlete__school { color: var(--muted); font-size: clamp(7px, .68vw, 10px); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -705,6 +715,11 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .cell-diff--win { color: var(--green-dark); }
 .cell-diff--draw { color: #806000; }
 .cell-diff--pending { color: var(--muted); }
+.cell-diff--penalty { color: var(--red-dark, #b3261e); font-weight: 800; }
+/* Bye (one-player pairing): the empty seat + lone-player rows. */
+.cell-bye { color: var(--muted); font-style: italic; }
+.egrid-row--bye td.egrid-td { background: #fbfcfe; }
+.egrid-row--bye:hover td.egrid-td { background: #f3f7fc; }
 .cell-action.egrid-td { overflow: visible; }
 .cell-action__group { align-items: center; display: flex; gap: 4px; }
 .cell-action .button { min-height: 28px; }

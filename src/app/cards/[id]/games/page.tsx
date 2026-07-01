@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, Eye, Gamepad2, LockKeyhole, Trophy } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Eye, Gamepad2, Gavel, LockKeyhole, Trophy } from "lucide-react";
 import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
@@ -140,6 +140,7 @@ export default function GamesPage() {
   const submitResult = useTournamentStore((state) => state.submitResult); const reviewResults = useTournamentStore((state) => state.reviewResults);
   const reopenResults = useTournamentStore((state) => state.reopenResults); const publishResults = useTournamentStore((state) => state.publishResults);
   const overrideResult = useTournamentStore((state) => state.overrideResult);
+  const applyPenalty = useTournamentStore((state) => state.applyPenalty);
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
   const unpairToPreview = useTournamentStore((state) => state.unpairToPreview);
   const verifyPassword = useTournamentStore((state) => state.verifyPassword);
@@ -151,6 +152,10 @@ export default function GamesPage() {
   const [viewKey, setViewKey] = useState<string | null>(null);
   const [editUnlocked, setEditUnlocked] = useState(false);
   const [pwOpen, setPwOpen] = useState(false); const [pwInput, setPwInput] = useState(""); const [pwBusy, setPwBusy] = useState(false); const [pwError, setPwError] = useState("");
+  // Director "ลงดาบ" penalty dialog.
+  const [penaltyMatch, setPenaltyMatch] = useState<string | null>(null);
+  const [penaltyPoints, setPenaltyPoints] = useState(""); const [penaltyPw, setPenaltyPw] = useState("");
+  const [penaltyBusy, setPenaltyBusy] = useState(false); const [penaltyError, setPenaltyError] = useState("");
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
   const isStaff = hasStaffAccess(auth);
@@ -164,7 +169,7 @@ export default function GamesPage() {
   const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.includes(card.currentGame));
   const pairings = currentSnapshot?.pairings.filter((pairing) => activeGames.includes(pairing.gameNumber ?? card.currentGame)) ?? [];
   const resultCollection = card.runtimeStage === "RESULT_COLLECTION"; const reviewing = card.runtimeStage === "RESULT_REVIEW";
-  const expectedCount = (card.players.length / 2) * activeGames.length;
+  const expectedCount = Math.ceil(card.players.length / 2) * activeGames.length; // ceil accounts for a bye
   const completedCount = pairings.filter(isRecorded).length;
   const allComplete = pairings.length === expectedCount && completedCount === expectedCount;
   const pairingsForGame = (gameNumber: number) => pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === gameNumber);
@@ -224,6 +229,19 @@ export default function GamesPage() {
     finally { setPwBusy(false); }
   };
 
+  const oneOnly = (pairing?: Pairing) => Boolean(pairing) && (Boolean(pairing!.playerOneId) !== Boolean(pairing!.playerTwoId));
+  const openPenalty = (pairing: Pairing) => { setPenaltyMatch(pairing.id); setPenaltyPoints(""); setPenaltyPw(""); setPenaltyError(""); };
+  const submitPenalty = async () => {
+    if (!penaltyMatch) return;
+    const points = Number(penaltyPoints);
+    if (!Number.isInteger(points) || points < 0) { setPenaltyError("แต้มต้องเป็นจำนวนเต็ม ≥ 0"); return; }
+    if (!penaltyPw) { setPenaltyError("กรุณาใส่รหัสผ่านผู้อำนวยการ"); return; }
+    setPenaltyBusy(true); setPenaltyError("");
+    try { await applyPenalty(id, penaltyMatch, points, penaltyPw); setPenaltyMatch(null); }
+    catch (error) { setPenaltyError(error instanceof Error ? error.message : "ลงดาบไม่สำเร็จ"); }
+    finally { setPenaltyBusy(false); }
+  };
+
   if (card.runtimeStage === "FINAL_SEEDING" || card.runtimeStage === "FINAL_COLLECTION" || (card.runtimeStage === "FINAL_PUBLISHED" && card.finalType !== "NONE")) {
     return <FinalRoundView card={card} canManage={isDirector}
       onStart={() => startFinal(id)}
@@ -268,13 +286,15 @@ export default function GamesPage() {
           const gamePairings = pairingsForGame(gameNumber);
           const maxDiff = maxDiffForGame(gameNumber);
           const isDestination = pairResultBlock && gameNumber === activeGames[1];
+          // A one-player game-1 row is a bye; a one-player destination row is a bye once the whole source game is recorded.
+          const sourceComplete = isDestination && pairingsForGame(activeGames[0]).every(isRecorded);
           const slots: EntrySlot[] = isDestination
-            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => ({ tableNumber: source.tableNumber, pairing: gamePairings.find((dest) => dest.tableNumber === source.tableNumber) }))
-            : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing }));
+            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => { const dest = gamePairings.find((d) => d.tableNumber === source.tableNumber); return { tableNumber: source.tableNumber, pairing: dest, isBye: oneOnly(dest) && sourceComplete }; })
+            : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing, isBye: oneOnly(pairing) }));
           const completed = gamePairings.filter(isRecorded).length;
           if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`Game ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยัน pairing เกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
           return <Panel key={gameNumber} title={`กรอกผล Game ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === slots.length ? "success" : "warning"}>{completed}/{slots.length} คู่</Badge>}>
-            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} pendingNote={isDestination ? `เมื่อบันทึกผลแต่ละ row ของ Game ${activeGames[0]} ระบบจะเติมผู้ชนะไว้คู่บน และผู้แพ้ไว้คู่ล่างทันที; row ปลายทางจะกรอกคะแนนได้เมื่อมีคู่แข่งครบสองฝั่ง` : undefined} onSubmit={saveResult} pairingEdit={canManageTournament(auth) && gameNumber === card.currentGame ? { onSwap: onSwapPairing, onUnpair: onUnpairToPreview } : undefined} />
+            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} pendingNote={isDestination ? `เมื่อบันทึกผลแต่ละ row ของ Game ${activeGames[0]} ระบบจะเติมผู้ชนะไว้คู่บน และผู้แพ้ไว้คู่ล่างทันที; row ปลายทางจะกรอกคะแนนได้เมื่อมีคู่แข่งครบสองฝั่ง` : undefined} onSubmit={saveResult} onPenalty={canManageTournament(auth) ? openPenalty : undefined} pairingEdit={canManageTournament(auth) && gameNumber === card.currentGame ? { onSwap: onSwapPairing, onUnpair: onUnpairToPreview } : undefined} />
           </Panel>;
         })}
       </> : (
@@ -301,6 +321,24 @@ export default function GamesPage() {
             <footer>
               <Button variant="secondary" disabled={pwBusy} onClick={() => setPwOpen(false)}>ยกเลิก</Button>
               <Button disabled={pwBusy || !pwInput} onClick={() => void confirmPw()}>{pwBusy ? "กำลังตรวจสอบ…" : "ยืนยัน"}</Button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {penaltyMatch && (
+        <div className="dialog-backdrop" role="presentation" onMouseDown={() => !penaltyBusy && setPenaltyMatch(null)}>
+          <section className="confirm-dialog confirm-dialog--danger" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header><div className="confirm-dialog__icon"><Gavel size={20} /></div><div><span>ลงดาบ</span><h2>บังคับแพ้ทั้งคู่</h2></div></header>
+            <p>กำหนดแต้มที่หัก (diff −X) ให้ทั้งคู่ของคู่นี้ (รวมคู่บายที่มีคนเดียว) แล้วยืนยันด้วยรหัสผ่านผู้อำนวยการ ({auth.username})</p>
+            <label className="form-label" htmlFor="penalty-points">แต้มที่หัก (X)</label>
+            <input className="input" id="penalty-points" type="number" min={0} autoFocus value={penaltyPoints} placeholder="เช่น 100" onChange={(event) => setPenaltyPoints(event.target.value)} />
+            <label className="form-label" htmlFor="penalty-pw">รหัสผ่านผู้อำนวยการ</label>
+            <input className="input" id="penalty-pw" type="password" value={penaltyPw} placeholder="รหัสผ่าน" onChange={(event) => setPenaltyPw(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submitPenalty(); }} />
+            {penaltyError && <div className="confirm-dialog__error" role="alert">{penaltyError}</div>}
+            <footer>
+              <Button variant="secondary" disabled={penaltyBusy} onClick={() => setPenaltyMatch(null)}>ยกเลิก</Button>
+              <Button variant="danger" disabled={penaltyBusy || !penaltyPw} onClick={() => void submitPenalty()}>{penaltyBusy ? "กำลังลงดาบ…" : "ยืนยันลงดาบ"}</Button>
             </footer>
           </section>
         </div>

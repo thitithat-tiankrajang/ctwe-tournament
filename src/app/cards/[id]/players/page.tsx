@@ -54,9 +54,11 @@ export default function PlayersPage() {
   if (!card) return <CardNotFound />;
 
   const registrationOpen = card.runtimeStage === "PLAYER_REGISTRATION";
+  const canManage = canManageTournament(auth);
+  const canEditRegistration = canManage && registrationOpen;
   // Directors may correct a player's personal info (name/school) at any stage; add/remove stays registration-only.
-  const directorEdit = !registrationOpen && canManageTournament(auth);
-  const showEditableTable = registrationOpen || directorEdit;
+  const directorEdit = !registrationOpen && canManage;
+  const showEditableTable = canManage;
   const schools = [...new Set(card.players.map((player) => player.school).filter(Boolean))].sort((a, b) => a.localeCompare(b, "th"));
   const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const latestPublishedGame = Math.max(0, ...publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
@@ -73,12 +75,12 @@ export default function PlayersPage() {
   const busy = pending !== null || isSubmitting;
 
   const rankingColumns: DataColumn<{ player: Player; rank: number }>[] = [
-    { key: "rank", label: "#", min: 42, width: 56, align: "right", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
-    { key: "id", label: "รหัส", min: 58, width: 72, filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
-    { key: "name", label: "ชื่อ-นามสกุล", min: 130, width: 210, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
-    { key: "school", label: "โรงเรียน/สถาบัน", min: 120, width: 200, cellClassName: "cell-person-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
-    { key: "wp", label: "คะแนนชัยชนะ", min: 90, width: 124, align: "right", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
-    { key: "diff", label: "ผลต่างสะสม", min: 90, width: 124, align: "right", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
+    { key: "rank", label: "อันดับ", min: 68, width: 84, align: "right", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
+    { key: "id", label: "รหัส", min: 54, width: 70, filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
+    { key: "name", label: "ชื่อ-นามสกุล", min: 110, width: 170, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
+    { key: "school", label: "โรงเรียน/สถาบัน", min: 110, width: 170, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
+    { key: "wp", label: "คะแนนสะสม", min: 104, width: 132, align: "right", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
+    { key: "diff", label: "ผลต่างสะสม", min: 104, width: 132, align: "right", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
     { key: "wdl", label: "ชนะ / เสมอ / แพ้", min: 100, width: 142, align: "center", value: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}`, render: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}` },
   ];
 
@@ -157,9 +159,22 @@ export default function PlayersPage() {
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title="ผู้เล่น" description={registrationOpen ? "เพิ่มผู้เล่นให้ครบก่อนจบการลงทะเบียน รหัสนักกีฬาจะสร้างโดยระบบอัตโนมัติ" : "รายชื่อถูกล็อกแล้ว ผลการแข่งขันเรียงตาม Win Point และ Total Difference"} actions={registrationOpen ? <Button variant="success" disabled={busy || card.players.length < 2 || card.players.length % 2 !== 0} onClick={finish}>Finish registration <ArrowRight size={16} /></Button> : <Link href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link>} />
+      <PageHeader
+        eyebrow={`${card.name} · ${card.runtimeStage}`}
+        title="ผู้เล่น"
+        description={!canManage
+          ? "ดูรายชื่อผู้เล่นที่ Director จัดเตรียมไว้เท่านั้น"
+          : registrationOpen
+            ? "เพิ่มผู้เล่นให้ครบก่อนจบการลงทะเบียน รหัสนักกีฬาจะสร้างโดยระบบอัตโนมัติ"
+            : "รายชื่อถูกล็อกแล้ว ผลการแข่งขันเรียงตาม Win Point และ Total Difference"}
+        actions={canManage
+          ? registrationOpen
+            ? <Button variant="success" disabled={busy || card.players.length < 2 || card.players.length % 2 !== 0} onClick={finish}>Finish registration <ArrowRight size={16} /></Button>
+            : <Link href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link>
+          : undefined}
+      />
 
-      {registrationOpen && (
+      {canEditRegistration && (
         <Panel title="เพิ่มผู้เล่น" description={`รหัสถัดไปโดยประมาณ ${nextCode} · backend จะเป็นผู้ยืนยันรหัสจริงเพื่อป้องกันข้อมูลชนกัน`}>
           <form className="panel-padding form-grid" onSubmit={handleSubmit(onAdd)}>
             <div className="form-field"><label className="form-label" htmlFor="firstName">ชื่อ <span className="required">*</span></label><input className="input" id="firstName" autoComplete="off" disabled={busy} {...register("firstName")} />{errors.firstName && <p className="form-error">{errors.firstName.message}</p>}</div>
@@ -174,11 +189,11 @@ export default function PlayersPage() {
         </Panel>
       )}
 
-      {registrationOpen && <ExcelPlayerImport onImport={(players) => importPlayers(id, players)} />}
+      {canEditRegistration && <ExcelPlayerImport onImport={(players) => importPlayers(id, players)} />}
 
-      {pending && <div className="operation-loading" role="status"><LoaderCircle className="loading-spinner" size={17} /><span>{pending === "add" ? "กำลังเพิ่มผู้เล่นและสร้างรหัส…" : pending === "update" ? "กำลังบันทึกข้อมูลและ History Log…" : "กำลังลบ จัดรหัสใหม่ และบันทึก History Log…"}</span></div>}
-      {operationError && <div className="notice notice--danger" role="alert"><p><strong>ทำรายการไม่สำเร็จ</strong><span>{operationError}</span></p></div>}
-      {!registrationOpen && !directorEdit && <div className="notice notice--info"><LockKeyhole size={18} /><p><strong>ปิดรับรายชื่อแล้ว</strong><span>การเพิ่ม ลบ หรือแก้ไขผู้เล่นถูกล็อกตาม workflow</span></p></div>}
+      {canManage && pending && <div className="operation-loading" role="status"><LoaderCircle className="loading-spinner" size={17} /><span>{pending === "add" ? "กำลังเพิ่มผู้เล่นและสร้างรหัส…" : pending === "update" ? "กำลังบันทึกข้อมูลและ History Log…" : "กำลังลบ จัดรหัสใหม่ และบันทึก History Log…"}</span></div>}
+      {canManage && operationError && <div className="notice notice--danger" role="alert"><p><strong>ทำรายการไม่สำเร็จ</strong><span>{operationError}</span></p></div>}
+      {!canManage && <div className="notice notice--info"><LockKeyhole size={18} /><p><strong>Staff ดูรายชื่อได้อย่างเดียว</strong><span>การเพิ่ม นำเข้า แก้ไข ลบ และจบการลงทะเบียนเป็นสิทธิ์ของ Director</span></p></div>}
       {directorEdit && <div className="notice notice--info"><Pencil size={18} /><p><strong>ผู้อำนวยการแก้ข้อมูลส่วนตัวได้ตลอดเวลา</strong><span>แก้ชื่อ–นามสกุล และโรงเรียน/สถาบันได้ทุกขั้นตอน · การเพิ่ม/ลบผู้เล่นทำได้เฉพาะช่วงลงทะเบียน</span></p></div>}
 
       {publishedSnapshots.length > 0 && (
@@ -216,8 +231,9 @@ export default function PlayersPage() {
           columns={rankingColumns}
           rows={ranked.map((player, index) => ({ player, rank: index + 1 }))}
           getRowKey={(row) => row.player.id}
-          storageKey={`${id}:players`}
+          storageKey={`${id}:players:ranking-v2`}
           resetKey={String(selectedRankingGame)}
+          tableClassName="entry-grid--ranking"
           emptyText="ไม่พบผู้เล่นตามตัวกรอง"
           unit="คน"
         />

@@ -62,13 +62,13 @@ class AuthorizationServiceTest {
     }
 
     @Test
-    void staffMayEnterDataButNotRunTournament() {
+    void staffMaySubmitResultsButMayNotManagePlayersOrRunTournament() {
         cardBelongsToTournament();
         userTournaments(tournamentId); // staff is in scope of this tournament
         assertThatCode(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.SUBMIT_RESULT))
             .doesNotThrowAnyException();
-        assertThatCode(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.MANAGE_PLAYERS))
-            .doesNotThrowAnyException();
+        assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.MANAGE_PLAYERS))
+            .isInstanceOf(ResponseStatusException.class);
         assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.RUN_TOURNAMENT))
             .isInstanceOf(ResponseStatusException.class);
     }

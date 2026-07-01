@@ -53,6 +53,12 @@ public final class CardDtos {
         boolean editExisting
     ) {}
 
+    /** Director "ลงดาบ": penalty points applied as −points to both players; password re-authenticates. */
+    public record PenaltyRequest(
+        @NotNull @Min(0) @Max(1000000) Integer points,
+        @NotBlank String password
+    ) {}
+
     public record SwapRequest(
         @NotBlank String firstPlayerId,
         @NotBlank String secondPlayerId,

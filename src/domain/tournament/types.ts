@@ -71,7 +71,7 @@ export interface Pairing {
   winnerId?: string;
   scoreOne?: number;
   scoreTwo?: number;
-  resultType?: "WIN" | "DRAW";
+  resultType?: "WIN" | "DRAW" | "PENALTY";
   calculatedDiff?: number;
 }
 

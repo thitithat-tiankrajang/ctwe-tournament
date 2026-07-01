@@ -391,7 +391,7 @@ export function ColumnFilterDropdown({ label, values, selected, anchor, filterab
 }
 
 /** Generic Excel-style grid: resizable columns, sessionStorage widths, multi-field filters, pagination. */
-export function DataGrid<T>({ columns, rows, getRowKey, storageKey, filterResetKey, rowClassName, emptyText = "ไม่พบรายการ", inlineClear = true, onRowClick, onFilterActiveChange }: {
+export function DataGrid<T>({ columns, rows, getRowKey, storageKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, onRowClick, onFilterActiveChange }: {
   columns: DataColumn<T>[];
   rows: T[];
   getRowKey: (row: T) => string;
@@ -399,6 +399,7 @@ export function DataGrid<T>({ columns, rows, getRowKey, storageKey, filterResetK
   resetKey?: string;
   filterResetKey?: number;
   rowClassName?: (row: T) => string | undefined;
+  tableClassName?: string;
   emptyText?: string;
   pageSize?: number;
   unit?: string;
@@ -492,7 +493,7 @@ export function DataGrid<T>({ columns, rows, getRowKey, storageKey, filterResetK
         </div>
       )}
       <div className="entry-grid-scroll" ref={scrollRef}>
-        <table className="entry-grid" style={{ width: totalWidth }}>
+        <table className={`entry-grid${tableClassName ? ` ${tableClassName}` : ""}`} style={{ width: totalWidth }}>
           <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
           <thead>
             <tr>{columns.map((column, index) => {

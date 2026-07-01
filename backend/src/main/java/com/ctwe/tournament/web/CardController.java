@@ -173,6 +173,15 @@ public class CardController {
         return changed(service.overrideResult(cardId, matchId, request, authentication.getName()));
     }
 
+    /** Director "ลงดาบ": force both players of a pairing to lose by the given points. Password-confirmed. */
+    @PostMapping("/{cardId}/matches/{matchId}/penalty")
+    public CardDtos.CardResponse penalty(@PathVariable UUID cardId, @PathVariable UUID matchId,
+                                         @Valid @RequestBody CardDtos.PenaltyRequest request, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        reauthentication.requireCurrentPassword(authentication, request.password());
+        return changed(service.applyPenalty(cardId, matchId, request.points(), authentication.getName()));
+    }
+
     @PostMapping("/{cardId}/pairings/confirm")
     public CardDtos.CardResponse confirm(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);

@@ -67,14 +67,14 @@ function RankingTable({ players, selectedId, onPlayerClick, onFilterActiveChange
 }) {
   const rows = players.map((player, index) => ({ player, rank: index + 1 }));
   const columns: DataColumn<{ player: Player; rank: number }>[] = [
-    { key: "rank", label: "อันดับ", min: 48, width: 62, align: "center", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
-    { key: "id", label: "รหัส", min: 58, width: 78, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
-    { key: "name", label: "ชื่อ - นามสกุล", min: 130, width: 260, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
-    { key: "school", label: "โรงเรียน/สถาบัน", min: 130, width: 260, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
-    { key: "wp", label: "คะแนนชัยชนะ", min: 78, width: 104, align: "center", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
-    { key: "diff", label: "ผลต่างสะสม", min: 78, width: 104, align: "center", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
+    { key: "rank", label: "อันดับ", min: 68, width: 84, align: "center", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
+    { key: "id", label: "รหัส", min: 54, width: 70, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
+    { key: "name", label: "ชื่อ - นามสกุล", min: 110, width: 180, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
+    { key: "school", label: "โรงเรียน/สถาบัน", min: 110, width: 180, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
+    { key: "wp", label: "คะแนนสะสม", min: 104, width: 132, align: "center", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
+    { key: "diff", label: "ผลต่างสะสม", min: 104, width: 132, align: "center", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
   ];
-  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking" unit="คน" emptyText="ไม่พบผู้เล่นตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
+  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v2" tableClassName="entry-grid--ranking" unit="คน" emptyText="ไม่พบผู้เล่นตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
 }
 
 function PairingGrid({ pairings, players, onFilterActiveChange }: { pairings: Pairing[]; players: Map<string, Player>; onFilterActiveChange?: (active: boolean) => void }) {
@@ -88,13 +88,19 @@ function PairingGrid({ pairings, players, onFilterActiveChange }: { pairings: Pa
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
     { key: "name2", label: "นักกีฬา", min: 150, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} /> },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} />;
+  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} />;
 }
 
 function ResultTable({ pairings, players, storageKey, onFilterActiveChange }: { pairings: Pairing[]; players: Map<string, Player>; storageKey: string; onFilterActiveChange?: (active: boolean) => void }) {
   const playerOf = (playerId: string | null) => playerId ? players.get(playerId) : undefined;
-  const scoreText = (pairing: Pairing) => isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
+  const scoreText = (pairing: Pairing) => pairing.resultType === "PENALTY" ? "ลงดาบ" : isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
   const diffOf = (pairing: Pairing) => !isRecorded(pairing) ? null : pairing.resultType === "DRAW" ? 0 : pairing.calculatedDiff ?? 0;
+  const diffText = (pairing: Pairing) => {
+    if (!isRecorded(pairing)) return "—";
+    if (pairing.resultType === "PENALTY") return `−${pairing.calculatedDiff ?? 0}`;
+    const diff = diffOf(pairing);
+    return diff === 0 ? "0" : `${diff}`;
+  };
   const columns: DataColumn<Pairing>[] = [
     { key: "seat1", label: "#", min: 36, width: 48, align: "center", cellClassName: "cell-seat", value: (pairing) => seatOf(pairing.tableNumber, 1), filterable: false, render: (pairing) => seatOf(pairing.tableNumber, 1) },
     { key: "id1", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—" },
@@ -104,9 +110,9 @@ function ResultTable({ pairings, players, storageKey, onFilterActiveChange }: { 
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
     { key: "name2", label: "นักกีฬา", min: 140, width: 250, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} /> },
     { key: "score", label: "คะแนน", min: 84, width: 120, align: "center", cellClassName: "cell-score", value: (pairing) => scoreText(pairing), filterable: false, render: (pairing) => scoreText(pairing) },
-    { key: "diff", label: "ผลต่าง", min: 66, width: 96, align: "center", cellClassName: "cell-diff cell-diff--win", value: (pairing) => diffOf(pairing) ?? -1, filterable: false, render: (pairing) => { const diff = diffOf(pairing); return diff === null ? "—" : diff === 0 ? "0" : `±${diff}`; } },
+    { key: "diff", label: "ผลต่าง", min: 66, width: 96, align: "center", cellClassName: (pairing) => `cell-diff cell-diff--${pairing.resultType === "PENALTY" ? "penalty" : "win"}`, value: (pairing) => diffOf(pairing) ?? -1, filterable: false, render: (pairing) => diffText(pairing) },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={storageKey} unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} />;
+  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={storageKey} tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} />;
 }
 
 function defaultOverviewState(card: TournamentCard | undefined): { key: string; view: OverviewView } | null {
@@ -256,7 +262,7 @@ export default function CardOverviewPage() {
         </> : <Panel><EmptyState icon={<Trophy size={26} />} title="กำลังรอรายชื่อผู้เล่น" description="รายชื่อและ Ranking เริ่มต้นจะปรากฏหลังเจ้าหน้าที่ Finish การลงทะเบียน" /></Panel>
       ) : (
         <>
-          {views.size === 0 && <Panel><EmptyState icon={<ClipboardCheck size={24} />} title="ยังไม่ได้เลือกมุมมอง" description="กดปุ่ม Ranking / Pairing / Result ด้านบนเพื่อเลือกข้อมูลที่ต้องการดู" /></Panel>}
+          {views.size === 0 && <Panel><EmptyState icon={<ClipboardCheck size={24} />} title="ยังไม่ได้เลือกมุมมอง" description="กดปุ่ม Ranking / Pairing / Result ด้านล่างเพื่อเลือกข้อมูลที่ต้องการดู" /></Panel>}
 
           {views.has("ranking") && (
             <div ref={(element) => { viewRefs.current.ranking = element; }} className="overview-view-section">
