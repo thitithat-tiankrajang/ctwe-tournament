@@ -13,6 +13,8 @@ export interface GridColumnBase {
   width: number;
   /** Minimum width kept during automatic screen fitting; manual resizing still uses `min`. */
   fitMin?: number;
+  /** Automatically keep the full rendered header/cell content visible at the current responsive font size. */
+  fitContent?: boolean;
   align?: "left" | "right" | "center";
   filterKind?: "playerCode";
 }
@@ -38,9 +40,10 @@ const headAlignClass = (align?: GridColumnBase["align"]) =>
   align === "right" ? " egrid-th--right" : align === "center" ? " egrid-th--center" : " egrid-th--left";
 
 /** Resizable, screen-fitting, sessionStorage-persisted column widths shared by every grid. */
-export function useResizableColumns(columns: readonly { min: number; width: number; fitMin?: number }[], storageKey: string) {
+export function useResizableColumns(columns: readonly { min: number; width: number; fitMin?: number; fitContent?: boolean }[], storageKey: string) {
   const minsRef = useRef(columns.map((column) => column.min)); minsRef.current = columns.map((column) => column.min);
   const fitMinsRef = useRef(columns.map((column) => column.fitMin ?? 1)); fitMinsRef.current = columns.map((column) => column.fitMin ?? 1);
+  const fitContentRef = useRef(columns.map((column) => Boolean(column.fitContent))); fitContentRef.current = columns.map((column) => Boolean(column.fitContent));
   const defaultsRef = useRef(columns.map((column) => column.width)); defaultsRef.current = columns.map((column) => column.width);
   const count = columns.length;
   const [widths, setWidths] = useState<number[] | null>(null);
@@ -50,7 +53,32 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
   const colWidths = widths ?? defaultsRef.current;
 
   const startResize = (index: number, clientX: number) => { resizedRef.current = true; resizeRef.current = { index, startX: clientX, startW: colWidths[index] }; };
-  const fitWidths = (source: number[], available: number) => {
+  const measureContentMins = () => {
+    const table = scrollRef.current?.querySelector("table");
+    if (!table) return fitMinsRef.current;
+    const headerCells = [...table.querySelectorAll<HTMLTableCellElement>("thead th")];
+    const bodyRows = [...table.querySelectorAll<HTMLTableRowElement>("tbody tr")];
+    return fitMinsRef.current.map((configured, index) => {
+      if (!fitContentRef.current[index]) return configured;
+      let naturalWidth = 0;
+      const measure = (element: HTMLElement, boxElement: HTMLElement) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const contentWidth = range.getBoundingClientRect().width;
+        const style = getComputedStyle(boxElement);
+        const horizontalSpace = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+        naturalWidth = Math.max(naturalWidth, contentWidth + horizontalSpace);
+      };
+      const headerContent = headerCells[index]?.querySelector<HTMLElement>(".egrid-th__text");
+      if (headerContent && headerCells[index]) measure(headerContent, headerCells[index]);
+      for (const row of bodyRows) {
+        const cell = row.cells[index];
+        if (cell && !cell.classList.contains("egrid-empty")) measure(cell, cell);
+      }
+      return Math.max(configured, Math.ceil(naturalWidth + 2));
+    });
+  };
+  const fitWidths = (source: number[], available: number, contentMins = fitMinsRef.current) => {
     const target = Math.round(available);
     if (target <= 0 || source.length === 0) return [...source];
     const distribute = (weights: number[], amount: number) => {
@@ -67,10 +95,11 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
       }
       return allocated;
     };
-    const floors = fitMinsRef.current.map((value) => Math.max(1, Math.round(value)));
+    const floors = contentMins.map((value) => Math.max(1, Math.round(value)));
     const floorTotal = floors.reduce((sum, value) => sum + value, 0);
     if (floorTotal >= target) return distribute(floors, target);
-    const extra = distribute(source, target - floorTotal);
+    const extraWeights = source.map((value, index) => Math.max(1, value - floors[index]));
+    const extra = distribute(extraWeights, target - floorTotal);
     const fitted = floors.map((floor, index) => floor + extra[index]);
     return fitted;
   };
@@ -103,7 +132,7 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
       return;
     }
     resizedRef.current = false;
-    setWidths(available > 0 ? fitWidths(defaultsRef.current, available) : [...defaultsRef.current]);
+    setWidths(available > 0 ? fitWidths(defaultsRef.current, available, measureContentMins()) : [...defaultsRef.current]);
   }, [storageKey, count]);
 
   useEffect(() => {
@@ -112,7 +141,7 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
     const observer = new ResizeObserver(() => {
       const available = element.clientWidth;
       if (available <= 0 || resizedRef.current) return;
-      setWidths(fitWidths(defaultsRef.current, available));
+      setWidths(fitWidths(defaultsRef.current, available, measureContentMins()));
     });
     observer.observe(element);
     return () => observer.disconnect();

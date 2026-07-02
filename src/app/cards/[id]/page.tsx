@@ -95,9 +95,6 @@ function ResultTable({ pairings, players, storageKey, onFilterActiveChange }: { 
   const playerOf = (playerId: string | null) => playerId ? players.get(playerId) : undefined;
   const scoreText = (pairing: Pairing) => pairing.resultType === "PENALTY" ? "ลงดาบ" : isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
   const longestScore = pairings.reduce((longest, pairing) => Math.max(longest, scoreText(pairing).length), "คะแนน".length);
-  // The overview renders both scores in one cell (e.g. "234 - 242"). Keep enough room for
-  // the complete header or the longest rendered score, whichever is wider.
-  const scoreColumnWidth = Math.max(64, Math.min(132, longestScore * 8 + 12));
   const diffOf = (pairing: Pairing) => !isRecorded(pairing) ? null : pairing.resultType === "DRAW" ? 0 : pairing.calculatedDiff ?? 0;
   const diffText = (pairing: Pairing) => {
     if (!isRecorded(pairing)) return "—";
@@ -113,10 +110,10 @@ function ResultTable({ pairings, players, storageKey, onFilterActiveChange }: { 
     { key: "seat2", label: "#", min: 36, width: 48, align: "center", cellClassName: "cell-seat", value: (pairing) => seatOf(pairing.tableNumber, 2), filterable: false, render: (pairing) => seatOf(pairing.tableNumber, 2) },
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
     { key: "name2", label: "นักกีฬา", min: 140, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} /> },
-    { key: "score", label: "คะแนน", min: scoreColumnWidth, width: scoreColumnWidth, fitMin: scoreColumnWidth, align: "center", cellClassName: "cell-score", value: (pairing) => scoreText(pairing), filterable: false, render: (pairing) => scoreText(pairing) },
+    { key: "score", label: "คะแนน", min: 36, width: 68, fitContent: true, align: "center", cellClassName: "cell-score", value: (pairing) => scoreText(pairing), filterable: false, render: (pairing) => scoreText(pairing) },
     { key: "diff", label: "ผลต่าง", min: 56, width: 68, align: "center", cellClassName: (pairing) => `cell-diff cell-diff--${pairing.resultType === "PENALTY" ? "penalty" : "win"}`, value: (pairing) => diffOf(pairing) ?? -1, filterable: false, render: (pairing) => diffText(pairing) },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v3:score-${scoreColumnWidth}`} tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} />;
+  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} />;
 }
 
 function defaultOverviewState(card: TournamentCard | undefined): { key: string; view: OverviewView } | null {
