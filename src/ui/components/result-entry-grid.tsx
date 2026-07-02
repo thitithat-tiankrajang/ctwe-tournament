@@ -44,8 +44,8 @@ const VIEW_COLUMNS: GridColumnBase[] = [
   { key: "id2", label: "รหัส 2", min: 58, width: 72, filterKind: "playerCode" },
   { key: "name2", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
   { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
-  { key: "score1", label: "คะแนน 1", min: 36, width: 42, fitMin: 20, align: "center" },
-  { key: "score2", label: "คะแนน 2", min: 36, width: 42, fitMin: 20, align: "center" },
+  { key: "score1", label: "คะแนน 1", min: 64, width: 64, fitMin: 64, align: "center" },
+  { key: "score2", label: "คะแนน 2", min: 64, width: 64, fitMin: 64, align: "center" },
   { key: "diff", label: "Diff", min: 50, width: 64, align: "center" },
   { key: "winner", label: "ผู้ชนะ", min: 58, width: 72, filterKind: "playerCode" },
 ];
@@ -541,11 +541,13 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
       pairing.resultType === "PENALTY" ? 1 : String(pairing.scoreOne ?? "").length,
       pairing.resultType === "PENALTY" ? 1 : String(pairing.scoreTwo ?? "").length,
     ), 1);
-    return Math.max(36, Math.min(70, maxCharacters * 9 + 12));
+    // 64px keeps the complete Thai header visible on portrait phones. Longer score values
+    // grow the column further instead of being clipped into the adjacent border.
+    return Math.max(64, Math.min(86, maxCharacters * 9 + 14));
   }, [pairings]);
   const viewColumns = useMemo(() => VIEW_COLUMNS.map((column) =>
     column.key === "score1" || column.key === "score2"
-      ? { ...column, width: scoreWidth }
+      ? { ...column, min: scoreWidth, width: scoreWidth, fitMin: scoreWidth }
       : column
   ), [scoreWidth]);
   const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(viewColumns, `${storageKey}:content-score-v1:${scoreWidth}`);

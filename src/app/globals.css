@@ -689,11 +689,11 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .entry-grid { border-collapse: collapse; table-layout: fixed; width: 100%; }
 .entry-grid thead th { background: #e6eaf0; border-bottom: 3px solid var(--ink); border-right: 1px solid var(--border-strong); color: #3f454d; font-size: clamp(7px, .72vw, 10.5px); font-weight: 800; letter-spacing: .01em; padding: clamp(3px, .55vw, 8px) clamp(2px, .42vw, 6px); position: sticky; text-align: left; top: 0; transition: background .12s ease; z-index: 3; }
 .entry-grid thead th:has(.egrid-th__label--btn:not(:disabled)):hover { background: #d6e1f1; }
-.egrid-th__label { display: block; overflow: hidden; padding-right: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.egrid-th__label { display: block; overflow: hidden; padding: 0; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
 .egrid-th--left { text-align: left; }
 .egrid-th--center { text-align: center; }
 .egrid-th--right { text-align: right; }
-.egrid-th--center .egrid-th__label--btn { justify-content: center; padding-left: 9px; text-align: center; }
+.egrid-th--center .egrid-th__label--btn { justify-content: center; text-align: center; }
 .egrid-th--right .egrid-th__label--btn { justify-content: flex-end; text-align: right; }
 .egrid-resizer { cursor: col-resize; height: 100%; position: absolute; right: 0; top: 0; touch-action: none; width: 8px; }
 .egrid-resizer:hover, .col-resizing .egrid-resizer { background: var(--blue); }
