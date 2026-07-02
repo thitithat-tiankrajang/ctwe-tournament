@@ -234,12 +234,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           {scopeLocked ? (
             <span className="brand" aria-label="Tournament Control">
               <span className="brand__mark"><Trophy size={20} /></span>
-              <span className="brand__text"><strong>{activeTournament?.name ?? "Tournament Control"}</strong><small>ระบบจัดการแข่งขัน</small></span>
+              <span className="brand__text" aria-hidden={collapsed}><strong>{activeTournament?.name ?? "Tournament Control"}</strong><small>ระบบจัดการแข่งขัน</small></span>
             </span>
           ) : (
             <Link href="/" className="brand" aria-label="Tournament Control">
               <span className="brand__mark"><Trophy size={20} /></span>
-              <span className="brand__text"><strong>Tournament Control</strong><small>ระบบจัดการแข่งขัน</small></span>
+              <span className="brand__text" aria-hidden={collapsed}><strong>Tournament Control</strong><small>ระบบจัดการแข่งขัน</small></span>
             </Link>
           )}
           <button type="button" className={`sidebar__toggle${locked ? " sidebar__toggle--locked" : ""}`} onClick={() => setLocked((value) => !value)} aria-pressed={locked} aria-label={locked ? "ปลดล็อกเมนู (เลื่อนเมาส์เพื่อเปิด/หุบ)" : "ล็อกเมนูให้เปิดค้าง"} title={locked ? "ล็อกอยู่: เปิดค้างตลอด — กดเพื่อใช้โหมดเลื่อนเมาส์ชี้" : "โหมดเลื่อนเมาส์: ชี้เพื่อเปิด หุบเมื่อเอาเมาส์ออก — กดเพื่อล็อกเปิดค้าง"}>
@@ -248,12 +248,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="sidebar__nav" aria-label="เมนูหลัก">
-          {collapsed ? (
+          <div className={`sidebar__nav-layer sidebar__nav-layer--rail${collapsed ? " sidebar__nav-layer--active" : ""}`} aria-hidden={!collapsed}>
             <div className="sidebar__rail">
               {railLinks.map((link) => <NavigationLink key={link.href} {...link} collapsed active={pathname === link.href} workflow={id ? link.href === workflowHrefFor(id) : false} />)}
               {id && <NavigationLink href="/cards" label="การ์ดทั้งหมด" icon={ClipboardList} active={pathname === "/cards"} collapsed />}
             </div>
-          ) : (
+          </div>
+          <div className={`sidebar__nav-layer sidebar__nav-layer--expanded${collapsed ? "" : " sidebar__nav-layer--active"}`} aria-hidden={collapsed}>
             <>
               {generalLinks.length > 0 && <p className="nav-label">ระบบ</p>}
               {generalLinks.map((link) => <NavigationLink key={link.href} {...link} active={pathname === link.href} />)}
@@ -310,12 +311,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </>
               )}
             </>
-          )}
+          </div>
         </nav>
 
         <div className="sidebar__footer">
           <span className="status-dot" />
-          <span className="sidebar__footer-text"><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? roleLabel : "ดูข้อมูลเท่านั้น"}</small></span>
+          <span className="sidebar__footer-text" aria-hidden={collapsed}><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? roleLabel : "ดูข้อมูลเท่านั้น"}</small></span>
         </div>
         {isStaff ? (
           <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>

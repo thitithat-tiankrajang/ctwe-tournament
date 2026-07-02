@@ -11,6 +11,8 @@ export interface GridColumnBase {
   label: ReactNode;
   min: number;
   width: number;
+  /** Minimum width kept during automatic screen fitting; manual resizing still uses `min`. */
+  fitMin?: number;
   align?: "left" | "right" | "center";
   filterKind?: "playerCode";
 }
@@ -36,8 +38,9 @@ const headAlignClass = (align?: GridColumnBase["align"]) =>
   align === "right" ? " egrid-th--right" : align === "center" ? " egrid-th--center" : " egrid-th--left";
 
 /** Resizable, screen-fitting, sessionStorage-persisted column widths shared by every grid. */
-export function useResizableColumns(columns: readonly { min: number; width: number }[], storageKey: string) {
+export function useResizableColumns(columns: readonly { min: number; width: number; fitMin?: number }[], storageKey: string) {
   const minsRef = useRef(columns.map((column) => column.min)); minsRef.current = columns.map((column) => column.min);
+  const fitMinsRef = useRef(columns.map((column) => column.fitMin ?? 1)); fitMinsRef.current = columns.map((column) => column.fitMin ?? 1);
   const defaultsRef = useRef(columns.map((column) => column.width)); defaultsRef.current = columns.map((column) => column.width);
   const count = columns.length;
   const [widths, setWidths] = useState<number[] | null>(null);
@@ -50,17 +53,25 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
   const fitWidths = (source: number[], available: number) => {
     const target = Math.round(available);
     if (target <= 0 || source.length === 0) return [...source];
-    const safeSource = source.map((value) => Math.max(1, value));
-    const total = safeSource.reduce((sum, value) => sum + value, 0);
-    const exact = safeSource.map((value) => value * (target / total));
-    const fitted = exact.map((value) => Math.floor(value));
-    let remainder = target - fitted.reduce((sum, value) => sum + value, 0);
-    const byLargestFraction = exact
-      .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
-      .sort((a, b) => b.fraction - a.fraction);
-    for (let index = 0; remainder > 0; index += 1, remainder -= 1) {
-      fitted[byLargestFraction[index % byLargestFraction.length].index] += 1;
-    }
+    const distribute = (weights: number[], amount: number) => {
+      const safeWeights = weights.map((value) => Math.max(1, value));
+      const total = safeWeights.reduce((sum, value) => sum + value, 0);
+      const exact = safeWeights.map((value) => value * (amount / total));
+      const allocated = exact.map((value) => Math.floor(value));
+      let remainder = amount - allocated.reduce((sum, value) => sum + value, 0);
+      const byLargestFraction = exact
+        .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+        .sort((a, b) => b.fraction - a.fraction);
+      for (let index = 0; remainder > 0; index += 1, remainder -= 1) {
+        allocated[byLargestFraction[index % byLargestFraction.length].index] += 1;
+      }
+      return allocated;
+    };
+    const floors = fitMinsRef.current.map((value) => Math.max(1, Math.round(value)));
+    const floorTotal = floors.reduce((sum, value) => sum + value, 0);
+    if (floorTotal >= target) return distribute(floors, target);
+    const extra = distribute(source, target - floorTotal);
+    const fitted = floors.map((floor, index) => floor + extra[index]);
     return fitted;
   };
 

@@ -44,8 +44,8 @@ const VIEW_COLUMNS: GridColumnBase[] = [
   { key: "id2", label: "รหัส 2", min: 58, width: 72, filterKind: "playerCode" },
   { key: "name2", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
   { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
-  { key: "score1", label: "คะแนน 1", min: 48, width: 62, align: "center" },
-  { key: "score2", label: "คะแนน 2", min: 48, width: 62, align: "center" },
+  { key: "score1", label: "คะแนน 1", min: 36, width: 42, fitMin: 20, align: "center" },
+  { key: "score2", label: "คะแนน 2", min: 36, width: 42, fitMin: 20, align: "center" },
   { key: "diff", label: "Diff", min: 50, width: 64, align: "center" },
   { key: "winner", label: "ผู้ชนะ", min: 58, width: 72, filterKind: "playerCode" },
 ];
@@ -535,7 +535,20 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
   onFilterActiveChange?: (active: boolean) => void;
 }) {
   const controls = useColumnControls();
-  const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(VIEW_COLUMNS, storageKey);
+  const scoreWidth = useMemo(() => {
+    const maxCharacters = pairings.reduce((largest, pairing) => Math.max(
+      largest,
+      pairing.resultType === "PENALTY" ? 1 : String(pairing.scoreOne ?? "").length,
+      pairing.resultType === "PENALTY" ? 1 : String(pairing.scoreTwo ?? "").length,
+    ), 1);
+    return Math.max(36, Math.min(70, maxCharacters * 9 + 12));
+  }, [pairings]);
+  const viewColumns = useMemo(() => VIEW_COLUMNS.map((column) =>
+    column.key === "score1" || column.key === "score2"
+      ? { ...column, width: scoreWidth }
+      : column
+  ), [scoreWidth]);
+  const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(viewColumns, `${storageKey}:content-score-v1:${scoreWidth}`);
   const filterActiveCallback = useRef(onFilterActiveChange);
   filterActiveCallback.current = onFilterActiveChange;
   useEffect(() => { filterActiveCallback.current?.(controls.active); }, [controls.active]);
@@ -572,7 +585,7 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
     <div className="entry-grid-wrap">
       <div className="entry-grid-scroll" ref={scrollRef}>
         <table className="entry-grid entry-grid--match" style={{ width: totalWidth }}>
-          <GridHead columns={VIEW_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
+          <GridHead columns={viewColumns} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => VIEW_FILTER_KEYS.includes(key),
             filterable: (key) => VIEW_FILTER_KEYS.includes(key),
             sort: controls.sort,
@@ -593,7 +606,7 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
           }} />
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td className="egrid-empty" colSpan={VIEW_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>กด “ล้างตัวกรอง” ด้านบนเพื่อดูทุกคู่</span></td></tr>
+              <tr><td className="egrid-empty" colSpan={viewColumns.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>กด “ล้างตัวกรอง” ด้านบนเพื่อดูทุกคู่</span></td></tr>
             ) : filtered.map((pairing) => {
               const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
               const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
