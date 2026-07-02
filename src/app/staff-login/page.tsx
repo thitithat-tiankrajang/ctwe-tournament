@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { LockKeyhole, LogIn, ShieldCheck } from "lucide-react";
@@ -38,14 +37,14 @@ export default function StaffLoginPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Secure access" title="เข้าสู่ระบบเจ้าหน้าที่" description="บัญชีสมาชิกใช้สำหรับเจ้าหน้าที่ที่ได้รับอนุญาตให้เปลี่ยนแปลงข้อมูลเท่านั้น" />
+      <PageHeader eyebrow="Secure access" title="เข้าสู่ระบบ" description="ระบบเปิดให้เฉพาะผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่ — เข้าสู่ระบบเพื่อเข้าถึงข้อมูลการแข่งขัน" />
       <Panel title="Staff authentication" description="ระบบใช้ server-side session, CSRF protection และไม่บันทึกรหัสผ่านไว้ใน browser storage">
         <form onSubmit={submit} className="panel-padding" style={{ maxWidth: 520, display: "grid", gap: 16 }}>
           {error && <div className="notice notice--warning" role="alert"><p><strong>เข้าสู่ระบบไม่สำเร็จ</strong><span>{error}</span></p></div>}
-          <div className="notice notice--info"><ShieldCheck size={18} /><p><strong>บุคคลทั่วไปไม่จำเป็นต้องเข้าสู่ระบบ</strong><span>กลับไปหน้าการแข่งขันเพื่อดูข้อมูลแบบ read-only ได้ทันที</span></p></div>
+          <div className="notice notice--info"><ShieldCheck size={18} /><p><strong>ต้องเข้าสู่ระบบก่อนจึงจะดูข้อมูลได้</strong><span>ผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่ ใช้บัญชีของตนเพื่อเข้าถึงรายการแข่งขัน</span></p></div>
           <div className="form-field"><label className="form-label" htmlFor="username">ชื่อผู้ใช้</label><input className="input" id="username" name="username" autoComplete="username" required /></div>
           <div className="form-field"><label className="form-label" htmlFor="password">รหัสผ่าน</label><input className="input" id="password" name="password" type="password" autoComplete="current-password" required /></div>
-          <div className="form-actions"><Link href="/"><Button type="button" variant="secondary">กลับหน้าสาธารณะ</Button></Link><Button type="submit" disabled={!auth.csrfToken || submitting}><LogIn size={16} />{submitting ? "กำลังตรวจสอบ…" : "เข้าสู่ระบบ"}</Button></div>
+          <div className="form-actions"><Button type="submit" disabled={!auth.csrfToken || submitting}><LogIn size={16} />{submitting ? "กำลังตรวจสอบ…" : "เข้าสู่ระบบ"}</Button></div>
         </form>
       </Panel>
       <div className="notice notice--warning"><LockKeyhole size={18} /><p><strong>ห้ามแชร์บัญชีเจ้าหน้าที่</strong><span>ทุกการเปลี่ยนแปลงจะบันทึกชื่อบัญชีไว้ใน audit log</span></p></div>

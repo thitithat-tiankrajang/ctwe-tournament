@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Eye, Gamepad2, Gavel, LockKeyhole, Trophy } from "lucide-react";
 import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
-import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
+import { canManageTournament, isOperator } from "@/domain/tournament/roles";
 import { allResultBlocks, isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import type { Pairing, Player, TournamentCard } from "@/domain/tournament/types";
@@ -158,8 +158,9 @@ export default function GamesPage() {
   const [penaltyBusy, setPenaltyBusy] = useState(false); const [penaltyError, setPenaltyError] = useState("");
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
-  const isStaff = hasStaffAccess(auth);
-  if (!isStaff) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="บุคคลทั่วไปดูเฉพาะผลที่ publish แล้วจากหน้าภาพรวม" action={<Link href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
+  // Result entry is operator work (director/staff). Admins and public viewers watch published
+  // results on the overview page and never reach the games workspace.
+  if (!isOperator(auth)) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="ดูผลที่เผยแพร่แล้วได้จากหน้าภาพรวมของการ์ด" action={<Link href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
   if (!card) return <CardNotFound />;
 
   const playerMap = new Map(card.players.map((player) => [player.id, player]));

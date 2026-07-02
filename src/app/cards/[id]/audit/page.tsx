@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { FileClock, LockKeyhole } from "lucide-react";
 import { useEffect, useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
-import { canManageTournament } from "@/domain/tournament/roles";
+import { canManageTournament, isAdmin } from "@/domain/tournament/roles";
 import type { AuditEntry } from "@/domain/tournament/types";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { EmptyState, PageHeader } from "@/ui/components/page";
@@ -21,13 +21,14 @@ export default function AuditPage() {
   const loading = useTournamentStore((state) => state.loading);
   const loadAudit = useTournamentStore((state) => state.loadAudit);
   const card = selectCard(cards, id);
-  const canManage = canManageTournament(auth);
+  // Directors read their own audit; admins watch every tournament's audit. Staff/viewers cannot.
+  const canView = isAdmin(auth) || canManageTournament(auth);
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loadingAudit, setLoadingAudit] = useState(true);
 
   // Audit is fetched on demand (no longer bundled in the card payload) so saves/polls stay cheap.
   useEffect(() => {
-    if (!id || !canManage) return;
+    if (!id || !canView) return;
     let active = true;
     setLoadingAudit(true);
     loadAudit(id)
@@ -35,10 +36,10 @@ export default function AuditPage() {
       .catch(() => { /* surfaced via store.error */ })
       .finally(() => { if (active) setLoadingAudit(false); });
     return () => { active = false; };
-  }, [id, canManage, loadAudit]);
+  }, [id, canView, loadAudit]);
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
-  if (!canManage) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="Audit log มีข้อมูลการปฏิบัติงานภายในและไม่เปิดเผยต่อบุคคลทั่วไป" /></div>;
+  if (!canView) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="Audit log มีข้อมูลการปฏิบัติงานภายในและไม่เปิดเผยต่อบุคคลทั่วไป" /></div>;
   if (!card) return <CardNotFound />;
   return (
     <>

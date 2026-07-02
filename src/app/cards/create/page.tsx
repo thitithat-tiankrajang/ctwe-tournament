@@ -24,7 +24,7 @@ export default function CreateCardPage() {
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
   if (!canManageTournament(auth)) {
-    return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="เข้าสู่ระบบด้วยบัญชีเจ้าหน้าที่เพื่อสร้างการ์ดการแข่งขัน" action={<Link href="/staff-login"><Button>เข้าสู่ระบบเจ้าหน้าที่</Button></Link>} /></div>;
+    return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้อำนวยการเท่านั้น" description="เฉพาะผู้อำนวยการเท่านั้นที่สร้างการ์ดการแข่งขันได้" action={<Link href="/"><Button><Trophy size={16} />กลับหน้าหลัก</Button></Link>} /></div>;
   }
   if (directorOnly) return <div className="panel panel-padding">กำลังพาไปหน้าจัดการเจ้าหน้าที่…</div>;
   if (!activeTournament) {

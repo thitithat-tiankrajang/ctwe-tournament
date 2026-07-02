@@ -22,7 +22,6 @@ import {
   Trophy,
   Users,
   UserCog,
-  LogIn,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -31,7 +30,7 @@ import { useEffect, useRef, useState } from "react";
 import { readActiveTournament, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { useCardSync } from "@/application/tournament/use-card-sync";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
-import { hasStaffAccess, isAdmin, isDirector } from "@/domain/tournament/roles";
+import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
 import { Button } from "@/ui/components/button";
@@ -126,8 +125,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isStaff = hasStaffAccess(auth);
   const admin = isAdmin(auth);
   const director = isDirector(auth);
+  // Operators (director/staff) work inside a card's workspace pages; admins and public viewers only
+  // watch, so they navigate to the read-only overview instead.
+  const operator = isOperator(auth);
   // Staff and public viewers are locked to one tournament (no nav back). Directors and admins, who
-  // run multiple tournaments, keep cross-tournament navigation.
+  // span multiple tournaments, keep cross-tournament navigation (they exit a tournament from the
+  // card list page, not the sidebar).
   const scopeLocked = !!activeTournament && !admin && !director;
   const currentCard = id ? selectCard(cards, id) : undefined;
   const previousFlowRef = useRef<{ cardId?: string; stage?: RuntimeStage }>({
@@ -136,11 +139,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   });
   // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
   useCardSync(isStaff ? id : undefined);
-  const { notificationPermission, requestNotificationPermission } = usePublicSync(id, !isStaff);
-  // Entry is link-based now. Directors keep a picker for their own tournaments; admins keep the
-  // system console.
+  const { notificationPermission, notificationsOn, toggleNotifications } = usePublicSync(id, !isStaff);
+  const handleToggleNotifications = async () => {
+    const result = await toggleNotifications();
+    if (result === "denied") toast.error("การแจ้งเตือนถูกปิดในเบราว์เซอร์ — เปิดใหม่ได้จากการตั้งค่าเว็บไซต์ของเบราว์เซอร์");
+    else if (result === "unsupported") toast.error("อุปกรณ์หรือเบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน");
+  };
+  // Entry is link-based now. Directors and admins reach their tournament list from "/"; each also
+  // keeps the console relevant to their role.
   const generalLinks = [
-    ...(director ? [{ href: "/", label: "รายการแข่งขันทั้งหมด", icon: Trophy }] : []),
+    ...((director || admin) ? [{ href: "/", label: "รายการแข่งขันทั้งหมด", icon: Trophy }] : []),
     ...(isAdmin(auth) ? [{ href: "/admin", label: "ผู้ดูแลระบบ", icon: ShieldCheck }] : []),
     ...(isDirector(auth) ? [{ href: "/director", label: "จัดการเจ้าหน้าที่", icon: UserCog }] : []),
     ...(isAdmin(auth) ? [{ href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : []),
@@ -206,10 +214,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   };
 
-  const railLinks = id ? cardLinks(id, isStaff) : generalLinks;
+  const railLinks = id ? cardLinks(id, operator) : generalLinks;
   const workflowHrefFor = (cardId: string) => {
     const card = selectCard(cards, cardId);
-    return isStaff && card ? stageHref(cardId, card.runtimeStage) : undefined;
+    return operator && card ? stageHref(cardId, card.runtimeStage) : undefined;
   };
   // Expanded when pinned (locked) OR temporarily hovered; otherwise a narrow rail.
   const collapsed = !(locked || hovering);
@@ -252,16 +260,15 @@ export function AppShell({ children }: { children: ReactNode }) {
               {isStaff ? (activeTournament ? (
                 <>
                   <p className="nav-label nav-label--spaced">{activeTournament.name}</p>
-                  {!scopeLocked && <button type="button" className="nav-empty nav-tournament-close" style={{ cursor: "pointer", background: "none", border: "none", textAlign: "left", width: "100%", display: "flex", alignItems: "center", gap: 6 }} onClick={() => { setActiveTournament(null); router.push("/"); }}><X size={12} /> ออกจากรายการแข่งขันนี้</button>}
                   {tournamentCards.length === 0 ? (
-                    <p className="nav-empty">ยังไม่มีรุ่นการแข่งขัน — สร้างได้จากหน้าการ์ด</p>
+                    <p className="nav-empty">{operator ? "ยังไม่มีรุ่นการแข่งขัน — สร้างได้จากหน้าการ์ด" : "ยังไม่มีรุ่นการแข่งขันในรายการนี้"}</p>
                   ) : tournamentCards.map((card) => (
                     <CardFolder
                       key={card.id}
                       cardId={card.id}
                       name={card.name}
                       division={card.division}
-                      pages={cardLinks(card.id, isStaff)}
+                      pages={cardLinks(card.id, operator)}
                       expanded={expandedIds.has(card.id)}
                       current={card.id === id}
                       workflowHref={workflowHrefFor(card.id)}
@@ -273,7 +280,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                   ))}
                 </>
               ) : (
-                <p className="nav-empty">{director ? "เลือกรายการแข่งขันจาก “รายการแข่งขันทั้งหมด” เพื่อเริ่มจัดการ" : "เปิดการแข่งขันผ่านลิงก์ของรายการ หรือจัดการได้จากคอนโซลผู้ดูแล"}</p>
+                <p className="nav-empty">{director
+                  ? "เลือกรายการแข่งขันจาก “รายการแข่งขันทั้งหมด” เพื่อเริ่มจัดการ"
+                  : "เลือกรายการแข่งขันจาก “รายการแข่งขันทั้งหมด” เพื่อเข้าชม"}</p>
               )) : (
                 <>
                   <p className="nav-label nav-label--spaced">การ์ดที่เปิด{openedIds.length > 0 && ` · ${openedIds.length}`}</p>
@@ -310,23 +319,21 @@ export function AppShell({ children }: { children: ReactNode }) {
         {isStaff ? (
           <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>
         ) : (
-          <div className="sidebar__public-actions">
-            {(notificationPermission === "default" || notificationPermission === "granted") && (
+          notificationPermission !== "unsupported" && (
+            <div className="sidebar__public-actions">
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
                 className="sidebar__auth"
-                disabled={notificationPermission === "granted"}
-                onClick={() => void requestNotificationPermission()}
-                title={notificationPermission === "granted" ? "เปิดการแจ้งเตือนผลที่เผยแพร่แล้ว" : "อนุญาตการแจ้งเตือนเมื่อมีการเผยแพร่ผล"}
+                onClick={() => void handleToggleNotifications()}
+                title={notificationsOn ? "ปิดการแจ้งเตือนผลที่เผยแพร่แล้ว" : "เปิดการแจ้งเตือนเมื่อมีการเผยแพร่ผล"}
               >
-                {notificationPermission === "granted" ? <BellRing size={15} /> : <Bell size={15} />}
-                <span className="sidebar__auth-label">{notificationPermission === "granted" ? "เปิดแจ้งเตือนแล้ว" : "เปิดแจ้งเตือน"}</span>
+                {notificationsOn ? <BellRing size={15} /> : <Bell size={15} />}
+                <span className="sidebar__auth-label">{notificationsOn ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}</span>
               </Button>
-            )}
-            <Link href="/staff-login"><Button variant="secondary" size="sm" className="sidebar__auth" title="เข้าสู่ระบบเจ้าหน้าที่"><LogIn size={15} /><span className="sidebar__auth-label">เข้าสู่ระบบเจ้าหน้าที่</span></Button></Link>
-          </div>
+            </div>
+          )
         )}
       </aside>
       <div className={`app-main${id && !isStaff ? " app-main--public-card" : ""}`}>
@@ -340,16 +347,15 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Link>
               : <span className="mobile-brand__title"><Trophy size={19} /><strong>{activeTournament?.name ?? "Tournament Control"}</strong></span>
             : <Link href="/" className="mobile-brand__title" aria-label="ไปหน้ารวมการแข่งขัน"><Trophy size={19} /><strong>Tournament Control</strong></Link>}
-          {(isStaff || notificationPermission === "default" || notificationPermission === "granted") && <div className="mobile-brand__actions">
-            {!isStaff && (notificationPermission === "default" || notificationPermission === "granted") && (
+          {(isStaff || notificationPermission !== "unsupported") && <div className="mobile-brand__actions">
+            {!isStaff && notificationPermission !== "unsupported" && (
               <button
                 type="button"
-                className={`mobile-brand__auth${notificationPermission === "granted" ? " mobile-brand__auth--enabled" : ""}`}
-                disabled={notificationPermission === "granted"}
-                onClick={() => void requestNotificationPermission()}
-                aria-label={notificationPermission === "granted" ? "เปิดแจ้งเตือนแล้ว" : "เปิดแจ้งเตือน"}
+                className={`mobile-brand__auth${notificationsOn ? " mobile-brand__auth--enabled" : ""}`}
+                onClick={() => void handleToggleNotifications()}
+                aria-label={notificationsOn ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}
               >
-                {notificationPermission === "granted" ? <BellRing size={15} /> : <Bell size={15} />}
+                {notificationsOn ? <BellRing size={15} /> : <Bell size={15} />}
               </button>
             )}
             {isStaff && (
@@ -358,7 +364,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>}
         </div>
         <main className="content">{children}</main>
-        {isStaff && (
+        {operator && (
           <nav className="mobile-nav" aria-label="เมนูมือถือ">
             {railLinks.map((link) => <NavigationLink key={link.href} {...link} active={pathname === link.href} workflow={id ? link.href === workflowHrefFor(id) : false} />)}
           </nav>

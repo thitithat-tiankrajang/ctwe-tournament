@@ -34,8 +34,9 @@ export default function TablesPage() {
   const [browseGame, setBrowseGame] = useState<number | null>(null);
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
-  // Pairing/tables is operator work (admin/director). Result-entry staff enter results on the games page.
-  if (!canManageTournament(auth)) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้อำนวยการ/ผู้ดูแลระบบเท่านั้น" description="การจับคู่และโต๊ะแข่งขันเป็นงานของผู้อำนวยการ เจ้าหน้าที่กรอกผลทำงานที่หน้าผลการแข่งขัน" action={<Link href={`/cards/${id}/games`}><Button>ไปหน้ากรอกผล</Button></Link>} /></div>;
+  // Pairing/tables is the director's work. Result-entry staff enter results on the games page;
+  // admins and public viewers only watch the overview.
+  if (!canManageTournament(auth)) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้อำนวยการเท่านั้น" description="การจับคู่และโต๊ะแข่งขันเป็นงานของผู้อำนวยการ เจ้าหน้าที่กรอกผลทำงานที่หน้าผลการแข่งขัน" action={<Link href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
   if (!card) return <CardNotFound />;
 
   const players = new Map(card.players.map((player) => [player.id, player]));

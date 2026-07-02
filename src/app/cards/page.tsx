@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronRight, DoorOpen, Plus, Trash2, Trophy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
-import { hasStaffAccess, isAdmin, isDirector } from "@/domain/tournament/roles";
+import { canManageTournament, hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import type { TournamentCard } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
@@ -19,19 +19,27 @@ export default function CardsPage() {
   const error = useTournamentStore((state) => state.error);
   const deleteCard = useTournamentStore((state) => state.deleteCard);
   const activeTournament = useTournamentStore((state) => state.activeTournament);
+  const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
   const isStaff = hasStaffAccess(auth);
   const admin = isAdmin(auth);
-  // Directors create cards from their own console; admins use the standalone create page.
-  const createHref = isDirector(auth) ? "/director" : "/cards/create";
+  const director = isDirector(auth);
+  const operator = isOperator(auth);
+  // Only directors manage cards (create/delete); admins watch, staff/viewers only read.
+  const canManage = canManageTournament(auth);
+  const createHref = director ? "/director" : "/cards/create";
   const [deleting, setDeleting] = useState<TournamentCard | null>(null);
   const [pending, setPending] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
-  // The card list only exists inside a tournament scope. Anyone non-admin who lands here without a
-  // tournament link has no business browsing every tournament, so send them to the master landing.
+  // The card list only exists inside a tournament scope. Every role now enters a tournament
+  // explicitly (staff auto, director/admin pick from "/", viewers via link), so anyone here without
+  // one is sent back to the master landing.
   useEffect(() => {
-    if (!loading && !admin && !activeTournament) router.replace("/");
-  }, [loading, admin, activeTournament, router]);
+    if (!loading && !activeTournament) router.replace("/");
+  }, [loading, activeTournament, router]);
+
+  // Directors/admins exit a tournament from here (there is no exit button in the sidebar).
+  const exitTournament = () => { setActiveTournament(null); router.push("/"); };
 
   // Back-office users must enter a tournament first; public viewers see all published cards.
   const needsTournament = isStaff && !activeTournament;
@@ -54,7 +62,8 @@ export default function CardsPage() {
     finally { setPending(false); }
   };
   const cardHref = (card: typeof cards[number]) => {
-    if (!isStaff || card.runtimeStage === "FINAL_PUBLISHED") return `/cards/${card.id}`;
+    // Only operators (director/staff) go straight to the workspace; admins and viewers watch the overview.
+    if (!operator || card.runtimeStage === "FINAL_PUBLISHED") return `/cards/${card.id}`;
     if (card.runtimeStage === "PLAYER_REGISTRATION") return `/cards/${card.id}/players`;
     if (["TABLE_PAIRING", "PAIRING_PREVIEW"].includes(card.runtimeStage)) return `/cards/${card.id}/tables`;
     return `/cards/${card.id}/games`;
@@ -67,13 +76,18 @@ export default function CardsPage() {
         eyebrow={activeTournament ? "รายการแข่งขัน" : "Tournament cards"}
         title={activeTournament ? activeTournament.name : "ติดตามการแข่งขัน"}
         description={activeTournament ? "รุ่นการแข่งขัน (card) ทั้งหมดของรายการนี้ — จัดการผู้เล่น เกม และผลลัพธ์แยกแต่ละรุ่น" : "หนึ่งการ์ดต่อหนึ่งรุ่นการแข่งขัน จัดการผู้เล่น เกม และผลลัพธ์แยกจากกันอย่างชัดเจน"}
-        actions={activeTournament ? <Link href={createHref}><Button><Plus size={17} />สร้างการ์ด</Button></Link> : undefined}
+        actions={activeTournament && (admin || director) ? (
+          <div className="page-actions">
+            <Button variant="secondary" onClick={exitTournament}><DoorOpen size={16} />ออกจากรายการแข่งขัน</Button>
+            {director && <Link href={createHref}><Button><Plus size={17} />สร้างการ์ด</Button></Link>}
+          </div>
+        ) : undefined}
       />
       {error && <div className="notice notice--warning"><p><strong>เชื่อมต่อฐานข้อมูลไม่สำเร็จ</strong><span>{error}</span></p></div>}
       {loading ? <div className="panel panel-padding">กำลังโหลดข้อมูลจากฐานข้อมูล…</div> : needsTournament ? (
         <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เปิดการแข่งขันผ่านลิงก์ของรายการนั้น หรือจัดการได้จากคอนโซลผู้ดูแล" action={<Link href="/admin"><Button><Trophy size={16} />ไปคอนโซลผู้ดูแล</Button></Link>} />
       ) : visibleCards.length === 0 ? (
-        <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้" description={activeTournament ? "สร้างรุ่นการแข่งขันแรกของรายการนี้ได้เลย" : "ยังไม่มีการแข่งขันที่เผยแพร่"} action={activeTournament ? <Link href={createHref}><Button>สร้างการ์ด</Button></Link> : undefined} />
+        <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้" description={activeTournament ? (director ? "สร้างรุ่นการแข่งขันแรกของรายการนี้ได้เลย" : "ยังไม่มีรุ่นการแข่งขันในรายการนี้") : "ยังไม่มีการแข่งขันที่เผยแพร่"} action={activeTournament && director ? <Link href={createHref}><Button>สร้างการ์ด</Button></Link> : undefined} />
       ) : (
         <div className="card-groups">
           {[...groupedCards.entries()].map(([name, group]) => (
@@ -87,7 +101,7 @@ export default function CardsPage() {
                       <span className="card-select-row__division">{card.division}</span>
                       <ChevronRight size={19} aria-hidden />
                     </Link>
-                    {isStaff && (
+                    {canManage && (
                       <Button variant="ghost" size="sm" className="card-select-row__delete" aria-label={`ลบการ์ด ${card.name} ${card.division}`} title="ลบการ์ดและข้อมูลทั้งหมด" onClick={() => { setDeleteError(""); setDeleting(card); }}>
                         <Trash2 size={15} />
                       </Button>

@@ -6,7 +6,17 @@ import { useTournamentStore } from "./store";
 
 const BASE_INTERVAL_MS = 60_000;
 const JITTER_MS = 20_000;
+const MUTE_KEY = "ctwe.notificationsMuted";
 type NotificationState = NotificationPermission | "unsupported";
+
+function readMuted() {
+  if (typeof window === "undefined") return false;
+  try { return window.localStorage.getItem(MUTE_KEY) === "1"; } catch { return false; }
+}
+function persistMuted(muted: boolean) {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(MUTE_KEY, muted ? "1" : "0"); } catch { /* storage unavailable */ }
+}
 interface PublicResultEvent {
   cardId: string;
   version: number;
@@ -68,10 +78,19 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
   const versionsRef = useRef(new Map<string, number>());
   const cardsRef = useRef(new Map<string, TournamentCard>());
   const [notificationPermission, setNotificationPermission] = useState<NotificationState>("unsupported");
+  // App-level mute: the OS permission can't be revoked from JS once granted, so this local flag is
+  // what actually turns notifications on/off from the in-app toggle.
+  const [muted, setMuted] = useState(false);
+  const mutedRef = useRef(false);
+  const notificationsOn = notificationPermission === "granted" && !muted;
 
   useEffect(() => {
     setNotificationPermission("Notification" in window ? Notification.permission : "unsupported");
+    const initialMuted = readMuted();
+    setMuted(initialMuted);
+    mutedRef.current = initialMuted;
   }, []);
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
 
   useEffect(() => {
     versionsRef.current = new Map(cards.map((card) => [card.id, card.version]));
@@ -151,7 +170,7 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
           for (const summary of summaries) {
             if (!changed.some((item) => item.id === summary.id)) continue;
             const previous = cardsRef.current.get(summary.id);
-            if (previous) void showPublicationNotification(previous, summary);
+            if (previous && !mutedRef.current) void showPublicationNotification(previous, summary);
           }
           if (cardId && changed.some((item) => item.id === cardId)) await syncCard(cardId);
         }
@@ -175,18 +194,38 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
     };
   }, [cardId, enabled, refreshCatalog, syncCard]);
 
-  const requestNotificationPermission = useCallback(async () => {
+  /**
+   * Single toggle for the notification button. Grants permission on first use, then flips the
+   * app-level mute so the same button turns notifications both on and off. Returns the resulting
+   * permission state so the caller can guide the user when the browser has blocked notifications.
+   */
+  const toggleNotifications = useCallback(async (): Promise<NotificationState> => {
     if (!("Notification" in window)) {
       setNotificationPermission("unsupported");
-      return "unsupported" as const;
+      return "unsupported";
+    }
+    if (Notification.permission === "granted") {
+      // Permission already granted — the toggle just mutes/unmutes in-app.
+      const next = !mutedRef.current;
+      mutedRef.current = next;
+      setMuted(next);
+      persistMuted(next);
+      return "granted";
+    }
+    if (Notification.permission === "denied") {
+      setNotificationPermission("denied");
+      return "denied"; // Only the browser's site settings can re-enable it.
     }
     const permission = await Notification.requestPermission();
     setNotificationPermission(permission);
-    if (permission === "granted" && "serviceWorker" in navigator) {
-      try { await navigator.serviceWorker.register("/notification-sw.js"); } catch { /* browser fallback is used */ }
+    if (permission === "granted") {
+      setMuted(false); persistMuted(false); mutedRef.current = false;
+      if ("serviceWorker" in navigator) {
+        try { await navigator.serviceWorker.register("/notification-sw.js"); } catch { /* browser fallback is used */ }
+      }
     }
     return permission;
   }, []);
 
-  return { notificationPermission, requestNotificationPermission };
+  return { notificationPermission, notificationsOn, toggleNotifications };
 }

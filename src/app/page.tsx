@@ -2,22 +2,22 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, LogIn, Settings, ShieldCheck, Trophy } from "lucide-react";
+import { Eye, LogIn, Settings, ShieldCheck, Trophy } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTournamentStore, type TournamentArchive } from "@/application/tournament/store";
 import { isAdmin, isDirector, isResultStaff } from "@/domain/tournament/roles";
-import type { PublicTournamentSummary, Tournament } from "@/domain/tournament/types";
+import type { Tournament } from "@/domain/tournament/types";
 import { ArchiveList } from "@/ui/components/archive-list";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 
 /**
- * Master landing — role-aware entry point.
- *  - anonymous viewer: OPEN tournaments to watch ("เข้าชม") + login.
+ * Master landing — role-aware entry point. Access requires signing in: anonymous visitors get a
+ * login gate (this is the only place the login button lives). After login each role is routed:
  *  - staff (one tournament): auto-navigated into their workspace.
  *  - director: only their tournaments, shown as green "จัดการ" cards to manage.
- *  - admin: OPEN tournaments + a shortcut to the admin console.
+ *  - admin: every tournament, shown as "เข้าชม" cards — admins watch, they don't manage cards.
  */
 export default function Home() {
   const router = useRouter();
@@ -25,20 +25,21 @@ export default function Home() {
   const authLoading = useTournamentStore((state) => state.loading);
   const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
   const loadTournaments = useTournamentStore((state) => state.loadTournaments);
-  const loadPublicTournaments = useTournamentStore((state) => state.loadPublicTournaments);
   const loadPublicArchives = useTournamentStore((state) => state.loadPublicArchives);
 
   const director = isDirector(auth);
   const staff = isResultStaff(auth);
   const admin = isAdmin(auth);
+  // Directors manage their own tournaments; admins watch every tournament. Both list them from here.
+  const managedList = director || admin;
 
-  const [publicTournaments, setPublicTournaments] = useState<PublicTournamentSummary[]>([]);
   const [myTournaments, setMyTournaments] = useState<Tournament[]>([]);
   const [archives, setArchives] = useState<TournamentArchive[]>([]);
   const [loading, setLoading] = useState(true);
   const [staffNoAccess, setStaffNoAccess] = useState(false);
 
-  const enterManage = (tournament: Tournament) => {
+  // Directors manage; admins only watch. Both set the active tournament and open its card list.
+  const enterTournament = (tournament: Tournament) => {
     setActiveTournament({ id: tournament.id, name: tournament.name });
     router.push("/cards");
   };
@@ -46,16 +47,12 @@ export default function Home() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      if (director) {
-        setMyTournaments(await loadTournaments().catch(() => []));
-      } else {
-        setPublicTournaments(await loadPublicTournaments().catch(() => []));
-      }
+      if (managedList) setMyTournaments(await loadTournaments().catch(() => []));
       setArchives(await loadPublicArchives().catch(() => []));
     } finally {
       setLoading(false);
     }
-  }, [director, loadTournaments, loadPublicTournaments, loadPublicArchives]);
+  }, [managedList, loadTournaments, loadPublicArchives]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -78,11 +75,19 @@ export default function Home() {
       })();
       return () => { active = false; };
     }
-    // Everyone else views the master page un-scoped.
+    if (!auth.authenticated) {
+      // Anonymous visitors cannot browse anything from here — they must sign in.
+      setActiveTournament(null);
+      setLoading(false);
+      return () => { active = false; };
+    }
+    // Director/admin land on their tournament list, un-scoped (sidebar folders stay hidden until entry).
     setActiveTournament(null);
     void refresh();
     return () => { active = false; };
-  }, [authLoading, staff, refresh, loadTournaments, setActiveTournament, router]);
+  }, [authLoading, staff, auth.authenticated, refresh, loadTournaments, setActiveTournament, router]);
+
+  if (authLoading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
 
   if (staff) {
     return (
@@ -94,74 +99,75 @@ export default function Home() {
     );
   }
 
+  if (!auth.authenticated) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="Tournament Control"
+          title="เข้าสู่ระบบเพื่อดำเนินการต่อ"
+          description="ระบบจัดการแข่งขันสำหรับผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่ — เข้าสู่ระบบเพื่อเข้าถึงข้อมูลการแข่งขัน"
+        />
+        <Panel title="เข้าสู่ระบบ" description="ต้องเข้าสู่ระบบด้วยบัญชีผู้ดูแลระบบ ผู้อำนวยการ หรือเจ้าหน้าที่ก่อนจึงจะดูข้อมูลได้">
+          <div className="panel-padding" style={{ display: "grid", gap: 16, maxWidth: 460 }}>
+            <div className="notice notice--info"><ShieldCheck size={18} /><p><strong>จำเป็นต้องเข้าสู่ระบบ</strong><span>ข้อมูลการแข่งขันเปิดให้เฉพาะผู้ที่เข้าสู่ระบบเท่านั้น</span></p></div>
+            <div className="form-actions" style={{ paddingLeft: 0 }}>
+              <Link href="/staff-login"><Button><LogIn size={16} />เข้าสู่ระบบ</Button></Link>
+            </div>
+          </div>
+        </Panel>
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
-        eyebrow={director ? "Director" : "Tournament Control"}
-        title={director ? "รายการแข่งขันของคุณ" : "ติดตามการแข่งขัน"}
-        description={director
-          ? "เลือกรายการแข่งขันที่คุณดูแลเพื่อเข้าไปจัดการการ์ดและผลการแข่งขัน"
-          : "เลือกการแข่งขันที่เปิดอยู่เพื่อเข้าชมผลแบบเรียลไทม์ หรือดาวน์โหลดผลย้อนหลังที่เก็บถาวรไว้"}
+        eyebrow={admin ? "Admin" : "Director"}
+        title="รายการแข่งขัน"
+        description={admin
+          ? "เลือกรายการแข่งขันเพื่อเข้าชมข้อมูลการ์ดและผลการแข่งขัน (โหมดดูอย่างเดียว)"
+          : "เลือกรายการแข่งขันที่คุณดูแลเพื่อเข้าไปจัดการการ์ดและผลการแข่งขัน"}
         actions={
           <div className="page-actions">
-            {director && <Badge tone="success">DIRECTOR</Badge>}
+            <Badge tone={admin ? "warning" : "success"}>{admin ? "ADMIN" : "DIRECTOR"}</Badge>
             {admin && <Link href="/admin"><Button variant="secondary"><ShieldCheck size={16} />คอนโซลผู้ดูแล</Button></Link>}
-            {!auth.authenticated && <Link href="/staff-login"><Button variant="secondary"><LogIn size={16} />เข้าสู่ระบบเจ้าหน้าที่</Button></Link>}
           </div>
         }
       />
 
-      {director ? (
-        <Panel title="รายการแข่งขันที่คุณดูแล" description="กดจัดการเพื่อเข้าไปทำงานในการ์ดของรายการนั้น">
-          <div className="panel-padding">
-            {loading ? (
-              <p className="muted">กำลังโหลด…</p>
-            ) : myTournaments.length === 0 ? (
-              <EmptyState icon={<Trophy size={25} />} title="ยังไม่ได้รับมอบหมายรายการแข่งขัน" description="ติดต่อผู้ดูแลระบบเพื่อมอบหมายรายการแข่งขันให้คุณ" />
-            ) : (
-              <div className="card-grid">
-                {myTournaments.map((t) => (
-                  <article className="competition-card competition-card--manage" key={t.id}>
-                    <div className="competition-card__header">
-                      <div><h2>{t.name}</h2><span className="competition-card__division">{t.cardCount} รุ่นการแข่งขัน</span></div>
-                      <Badge tone={t.status === "OPEN" ? "success" : "danger"}>{t.status === "OPEN" ? "เปิด" : "ปิด"}</Badge>
-                    </div>
-                    <div className="competition-card__footer">
-                      <small>{t.directors.length > 0 ? `ผู้อำนวยการ ${t.directors.length} คน` : "รายการที่คุณดูแล"}</small>
-                      <Button variant="success" size="sm" onClick={() => enterManage(t)}><Settings size={15} />จัดการ</Button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-        </Panel>
-      ) : (
-        <Panel title="การแข่งขันที่เปิดอยู่" description="กดเข้าชมเพื่อดู Ranking · Pairing · ผลการแข่งขัน ของรายการนั้น">
-          <div className="panel-padding">
-            {loading ? (
-              <p className="muted">กำลังโหลด…</p>
-            ) : publicTournaments.length === 0 ? (
-              <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการแข่งขันที่เปิดอยู่" description="เมื่อผู้ดูแลระบบเปิดการใช้งานการแข่งขัน รายการจะปรากฏที่นี่พร้อมลิงก์เข้าชม" />
-            ) : (
-              <div className="card-grid">
-                {publicTournaments.map((t) => (
-                  <article className="competition-card" key={t.id}>
-                    <div className="competition-card__header">
-                      <div><h2>{t.name}</h2><span className="competition-card__division">{t.cardCount} รุ่นการแข่งขัน</span></div>
-                      <Badge tone="success">เปิดอยู่</Badge>
-                    </div>
-                    <div className="competition-card__footer">
-                      <small>{t.publishedCardCount > 0 ? `เผยแพร่ผลแล้ว ${t.publishedCardCount} รุ่น` : "ยังไม่มีผลที่เผยแพร่"}</small>
-                      <Link href={`/t/${t.accessToken}`}><Button size="sm">เข้าชม <ArrowRight size={15} /></Button></Link>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-        </Panel>
-      )}
+      <Panel
+        title={admin ? "รายการแข่งขันทั้งหมด" : "รายการแข่งขันที่คุณดูแล"}
+        description={admin ? "กดเข้าชมเพื่อดูการ์ดและผลของรายการนั้น" : "กดจัดการเพื่อเข้าไปทำงานในการ์ดของรายการนั้น"}
+      >
+        <div className="panel-padding">
+          {loading ? (
+            <p className="muted">กำลังโหลด…</p>
+          ) : myTournaments.length === 0 ? (
+            <EmptyState
+              icon={<Trophy size={25} />}
+              title={admin ? "ยังไม่มีรายการแข่งขัน" : "ยังไม่ได้รับมอบหมายรายการแข่งขัน"}
+              description={admin ? "สร้างรายการแข่งขันได้จากคอนโซลผู้ดูแล" : "ติดต่อผู้ดูแลระบบเพื่อมอบหมายรายการแข่งขันให้คุณ"}
+            />
+          ) : (
+            <div className="card-grid">
+              {myTournaments.map((t) => (
+                <article className={`competition-card${admin ? "" : " competition-card--manage"}`} key={t.id}>
+                  <div className="competition-card__header">
+                    <div><h2>{t.name}</h2><span className="competition-card__division">{t.cardCount} รุ่นการแข่งขัน</span></div>
+                    <Badge tone={t.status === "OPEN" ? "success" : "danger"}>{t.status === "OPEN" ? "เปิด" : "ปิด"}</Badge>
+                  </div>
+                  <div className="competition-card__footer">
+                    <small>{t.directors.length > 0 ? `ผู้อำนวยการ ${t.directors.length} คน` : (admin ? "รายการแข่งขัน" : "รายการที่คุณดูแล")}</small>
+                    {admin
+                      ? <Button variant="secondary" size="sm" onClick={() => enterTournament(t)}><Eye size={15} />เข้าชม</Button>
+                      : <Button variant="success" size="sm" onClick={() => enterTournament(t)}><Settings size={15} />จัดการ</Button>}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </Panel>
 
       <Panel title="คลังผลการแข่งขัน (Excel)" description="ไฟล์สรุปผลของการแข่งขันที่จบและเก็บถาวรแล้ว ดาวน์โหลดได้ตลอด">
         <div className="panel-padding">
