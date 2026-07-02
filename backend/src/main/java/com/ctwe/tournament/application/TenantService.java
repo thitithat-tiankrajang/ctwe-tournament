@@ -319,9 +319,9 @@ public class TenantService {
 
     private void audit(String actor, String action, Object oldValue, Object newValue) {
         jdbc.update("""
-            INSERT INTO audit_logs (id, card_id, actor, action, old_value, new_value)
-            VALUES (?, NULL, ?, ?, ?, ?)
-            """, UUID.randomUUID(), actor, action, auditText(oldValue), auditText(newValue));
+            INSERT INTO audit_logs (card_id, actor, action, old_value, new_value)
+            VALUES (NULL, ?, ?, ?, ?)
+            """, actor, action, auditText(oldValue), auditText(newValue));
     }
 
     /** Audit values are stored as plain TEXT: strings as-is, structured values as compact JSON text. */

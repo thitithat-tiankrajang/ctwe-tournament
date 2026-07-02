@@ -40,7 +40,7 @@ public class PublicCardReadCache {
                      WHEN c.runtime_stage = 'PLAYER_REGISTRATION' THEN 'PLAYER_REGISTRATION'
                      WHEN EXISTS (
                        SELECT 1 FROM matches m
-                       WHERE m.card_id = c.id AND m.pairing_published_at IS NOT NULL AND m.snapshot_id IS NULL
+                       WHERE m.card_id = c.id AND m.pairing_published_at IS NOT NULL AND m.snapshot_no IS NULL
                      ) THEN 'RESULT_COLLECTION'
                      ELSE 'TABLE_PAIRING'
                    END AS public_stage,

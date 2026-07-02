@@ -70,8 +70,8 @@ public class TournamentArchiveService {
         // Remove the live data only AFTER the archive blob is safely stored (same transaction).
         for (Map<String, Object> card : cards) cardService.delete((UUID) card.get("id"));
         jdbc.update("DELETE FROM tournaments WHERE id = ?", tournamentId); // cascades tournament_members only
-        jdbc.update("INSERT INTO audit_logs (id, card_id, actor, action) VALUES (?, NULL, ?, 'ARCHIVE_TOURNAMENT')",
-            UUID.randomUUID(), actor == null ? "system" : actor);
+        jdbc.update("INSERT INTO audit_logs (card_id, actor, action) VALUES (NULL, ?, 'ARCHIVE_TOURNAMENT')",
+            actor == null ? "system" : actor);
 
         return new TenantDtos.ArchiveSummary(archiveId, tournamentName, fileName, content.length,
             cards.size(), playerCount == null ? 0 : playerCount, actor, Instant.now());
@@ -151,7 +151,7 @@ public class TournamentArchiveService {
         for (int i = 0; i < cols.length; i++) cell(head, i, header, cols[i]);
         int line = 2;
         for (Map<String, Object> player : jdbc.queryForList(
-            "SELECT external_id, first_name, last_name, school FROM players WHERE card_id = ? ORDER BY external_id", cardId)) {
+            "SELECT 'P' || lpad(code::text, 3, '0') AS external_id, first_name, last_name, school FROM players WHERE card_id = ? ORDER BY code", cardId)) {
             Row row = sheet.createRow(line++);
             cell(row, 0, null, player.get("external_id"));
             cell(row, 1, null, player.get("first_name"));
@@ -169,17 +169,15 @@ public class TournamentArchiveService {
         for (int i = 0; i < cols.length; i++) cell(head, i, header, cols[i]);
         int line = 2;
         for (Map<String, Object> match : jdbc.queryForList("""
-            SELECT g.game_number AS game, m.table_number AS tbl,
-                   p1.external_id AS p1id, p1.first_name AS p1fn, p1.last_name AS p1ln,
-                   p2.external_id AS p2id, p2.first_name AS p2fn, p2.last_name AS p2ln,
-                   r.score_one AS s1, r.score_two AS s2, w.external_id AS winner
+            SELECT m.game_number AS game, m.table_number AS tbl,
+                   'P' || lpad(m.player_one::text, 3, '0') AS p1id, p1.first_name AS p1fn, p1.last_name AS p1ln,
+                   'P' || lpad(m.player_two::text, 3, '0') AS p2id, p2.first_name AS p2fn, p2.last_name AS p2ln,
+                   m.score_one AS s1, m.score_two AS s2,
+                   CASE WHEN m.winner IS NULL THEN NULL ELSE 'P' || lpad(m.winner::text, 3, '0') END AS winner
             FROM matches m
-            JOIN games g ON g.id = m.game_id
-            JOIN players p1 ON p1.id = m.player_one_id
-            JOIN players p2 ON p2.id = m.player_two_id
-            LEFT JOIN match_results r ON r.match_id = m.id
-            LEFT JOIN players w ON w.id = r.winner_id
-            WHERE m.card_id = ? ORDER BY g.game_number, m.table_number
+            JOIN players p1 ON p1.card_id = m.card_id AND p1.code = m.player_one
+            JOIN players p2 ON p2.card_id = m.card_id AND p2.code = m.player_two
+            WHERE m.card_id = ? ORDER BY m.game_number, m.table_number
             """, cardId)) {
             Row row = sheet.createRow(line++);
             cell(row, 0, null, match.get("game"));
@@ -203,8 +201,9 @@ public class TournamentArchiveService {
         for (int i = 0; i < cols.length; i++) cell(head, i, header, cols[i]);
         int line = 2;
         for (Map<String, Object> standing : jdbc.queryForList("""
-            SELECT s.rank, p.external_id, p.first_name, p.last_name, p.school, s.wins, s.losses, s.diff
-            FROM standings s JOIN players p ON p.id = s.player_id
+            SELECT s.rank, 'P' || lpad(p.code::text, 3, '0') AS external_id, p.first_name, p.last_name, p.school,
+                   s.wins, s.losses, s.diff
+            FROM standings s JOIN players p ON p.card_id = s.card_id AND p.code = s.player_code
             WHERE s.card_id = ? ORDER BY s.rank NULLS LAST, s.wins DESC, s.diff DESC
             """, cardId)) {
             Row row = sheet.createRow(line++);
@@ -231,9 +230,9 @@ public class TournamentArchiveService {
             SELECT fp.slot, p1.first_name AS f1, p1.last_name AS l1, p2.first_name AS f2, p2.last_name AS l2,
                    w.first_name AS wf, w.last_name AS wl
             FROM final_pairings fp
-            JOIN players p1 ON p1.id = fp.player_one_id
-            JOIN players p2 ON p2.id = fp.player_two_id
-            LEFT JOIN players w ON w.id = fp.winner_id
+            JOIN players p1 ON p1.card_id = fp.card_id AND p1.code = fp.player_one
+            JOIN players p2 ON p2.card_id = fp.card_id AND p2.code = fp.player_two
+            LEFT JOIN players w ON w.card_id = fp.card_id AND w.code = fp.winner
             WHERE fp.card_id = ? ORDER BY fp.slot
             """, cardId)) {
             int slot = ((Number) pairing.get("slot")).intValue();

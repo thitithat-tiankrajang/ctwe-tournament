@@ -157,7 +157,7 @@ public class CardController {
     }
 
     @PutMapping("/{cardId}/matches/{matchId}/result")
-    public CardDtos.ResultPatch submitResult(@PathVariable UUID cardId, @PathVariable UUID matchId,
+    public CardDtos.ResultPatch submitResult(@PathVariable UUID cardId, @PathVariable String matchId,
                                              @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
         CardDtos.ResultPatch patch = service.submitResult(cardId, matchId, request, authentication.getName());
@@ -167,7 +167,7 @@ public class CardController {
     }
 
     @PutMapping("/{cardId}/matches/{matchId}/override")
-    public CardDtos.CardResponse overrideResult(@PathVariable UUID cardId, @PathVariable UUID matchId,
+    public CardDtos.CardResponse overrideResult(@PathVariable UUID cardId, @PathVariable String matchId,
                                                 @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         return changed(service.overrideResult(cardId, matchId, request, authentication.getName()));
@@ -175,7 +175,7 @@ public class CardController {
 
     /** Director "ลงดาบ": force both players of a pairing to lose by the given points. Password-confirmed. */
     @PostMapping("/{cardId}/matches/{matchId}/penalty")
-    public CardDtos.CardResponse penalty(@PathVariable UUID cardId, @PathVariable UUID matchId,
+    public CardDtos.CardResponse penalty(@PathVariable UUID cardId, @PathVariable String matchId,
                                          @Valid @RequestBody CardDtos.PenaltyRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());

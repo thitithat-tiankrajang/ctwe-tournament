@@ -60,7 +60,7 @@ class TournamentCardUndoPairingTest {
         service.undoPairing(cardId, "director");
 
         verify(jdbc).update(
-            argThat(sql -> sql.contains("DELETE FROM matches") && sql.contains("g.game_number > ?")),
+            argThat(sql -> sql.contains("DELETE FROM matches") && sql.contains("game_number > ?")),
             eq(cardId),
             eq(1)
         );
