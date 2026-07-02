@@ -9,7 +9,6 @@ import com.ctwe.tournament.infrastructure.cache.EvictPublicCard;
 import com.ctwe.tournament.infrastructure.cache.TournamentCaches;
 import com.ctwe.tournament.web.dto.CardDtos;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.cache.annotation.CacheEvict;
@@ -20,9 +19,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.sql.Array;
 import java.sql.ResultSet;
@@ -80,13 +76,13 @@ public class TournamentCardService {
         List<CardDtos.PlayerResponse> players = !staffView && card.runtimeStage() == RuntimeStage.PLAYER_REGISTRATION
             ? List.of()
             : jdbc.query("""
-            SELECT p.external_id, p.first_name, p.last_name, p.school, p.division,
+            SELECT p.external_id, p.first_name, p.last_name, p.school,
                    COALESCE(s.wins, 0) wins, COALESCE(s.draws, 0) draws, COALESCE(s.losses, 0) losses,
                    COALESCE(s.win_points, 0) win_points, COALESCE(s.diff, 0) diff
             FROM players p LEFT JOIN standings s ON s.player_id = p.id AND s.card_id = p.card_id
             WHERE p.card_id = ? ORDER BY p.external_id
             """, (rs, row) -> new CardDtos.PlayerResponse(rs.getString("external_id"), rs.getString("first_name"),
-                rs.getString("last_name"), rs.getString("school"), rs.getString("division"),
+                rs.getString("last_name"), rs.getString("school"), card.division(),
                 rs.getInt("wins"), rs.getInt("draws"), rs.getInt("losses"), rs.getInt("win_points"), rs.getInt("diff")), cardId);
         var tables = staffView ? loadTables(cardId) : List.<CardDtos.TableResponse>of();
         var snapshots = loadSnapshots(cardId, staffView);
@@ -104,7 +100,7 @@ public class TournamentCardService {
     @Transactional(readOnly = true)
     public List<CardDtos.AuditResponse> auditLog(UUID cardId) {
         return jdbc.query("""
-            SELECT id, actor, action, old_value::text old_value, new_value::text new_value, created_at
+            SELECT id, actor, action, old_value, new_value, created_at
             FROM audit_logs WHERE card_id = ? ORDER BY created_at DESC LIMIT 1000
             """, (rs, row) -> new CardDtos.AuditResponse(rs.getObject("id", UUID.class).toString(),
                 rs.getTimestamp("created_at").toInstant().toString(), rs.getString("actor"), rs.getString("action"),
@@ -193,14 +189,14 @@ public class TournamentCardService {
 
     @Transactional
     public CardDtos.CardResponse addPlayer(UUID cardId, CardDtos.PlayerRequest request, String actor) {
-        CardRow card = requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
+        requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
         UUID playerId = UUID.randomUUID();
         String externalId = nextPlayerCode(cardId);
         jdbc.update("""
-            INSERT INTO players (id, card_id, external_id, first_name, last_name, school, division)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, playerId, cardId, externalId, request.firstName().trim(), request.lastName().trim(), request.school().trim(), card.division());
-        jdbc.update("INSERT INTO standings (id, card_id, player_id) VALUES (?, ?, ?)", UUID.randomUUID(), cardId, playerId);
+            INSERT INTO players (id, card_id, external_id, first_name, last_name, school)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, playerId, cardId, externalId, request.firstName().trim(), request.lastName().trim(), request.school().trim());
+        jdbc.update("INSERT INTO standings (card_id, player_id) VALUES (?, ?)", cardId, playerId);
         touch(cardId);
         audit(cardId, actor, "ADD_PLAYER", null, externalId + " " + request.firstName().trim() + " " + request.lastName().trim());
         return get(cardId, true);
@@ -209,7 +205,7 @@ public class TournamentCardService {
     /** Bulk import (e.g. from Excel): append many players in one transaction with sequential codes. */
     @Transactional
     public CardDtos.CardResponse addPlayersBulk(UUID cardId, List<CardDtos.BulkPlayerEntry> players, String actor) {
-        CardRow card = requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
+        requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
         Integer next = jdbc.queryForObject("""
             SELECT COALESCE(MAX(CASE WHEN external_id ~ '^P[0-9]+$' THEN substring(external_id from 2)::integer END), 0) + 1
             FROM players WHERE card_id = ?
@@ -220,10 +216,10 @@ public class TournamentCardService {
             UUID playerId = UUID.randomUUID();
             String externalId = "P" + String.format("%03d", start + index);
             jdbc.update("""
-                INSERT INTO players (id, card_id, external_id, first_name, last_name, school, division)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, playerId, cardId, externalId, entry.firstName().trim(), entry.lastName().trim(), entry.school().trim(), card.division());
-            jdbc.update("INSERT INTO standings (id, card_id, player_id) VALUES (?, ?, ?)", UUID.randomUUID(), cardId, playerId);
+                INSERT INTO players (id, card_id, external_id, first_name, last_name, school)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, playerId, cardId, externalId, entry.firstName().trim(), entry.lastName().trim(), entry.school().trim());
+            jdbc.update("INSERT INTO standings (card_id, player_id) VALUES (?, ?)", cardId, playerId);
         }
         touch(cardId);
         audit(cardId, actor, "IMPORT_PLAYERS", null, Map.of("count", players.size(), "fromCode", "P" + String.format("%03d", start)));
@@ -573,7 +569,7 @@ public class TournamentCardService {
 
         int changed = jdbc.update("""
             UPDATE match_results SET winner_id = ?, score_one = ?, score_two = ?, result_type = ?, calculated_diff = ?,
-                                     submitted_by = ?, submitted_at = now(), version = version + 1
+                                     submitted_by = ?, submitted_at = now()
             WHERE match_id = ?
             """, winner, scoreOne, scoreTwo, resultType, calculatedDiff, actor, matchId);
         if (changed == 0) jdbc.update("""
@@ -682,23 +678,18 @@ public class TournamentCardService {
             """, cardId, gameNumbers.get(0), gameNumbers.get(gameNumbers.size() - 1));
 
         UUID snapshotId = UUID.randomUUID();
-        UUID bundleKey = UUID.randomUUID();
-        var responsePairs = bundleRows.stream().map(this::toPairingResponse).toList();
-        String payload = json(responsePairs);
-        String hash = sha256(payload);
+        // The snapshot is only a confirmation marker; its pairings are always rebuilt from
+        // matches + match_results on read, so no payload copy is stored.
         Integer[] games = gameNumbers.toArray(Integer[]::new);
         jdbc.update(connection -> {
             var statement = connection.prepareStatement("""
-                INSERT INTO pairing_snapshots (id, card_id, bundle_key, game_numbers, payload, confirmed_at, payload_hash)
-                VALUES (?, ?, ?, ?, CAST(? AS jsonb), now(), ?)
+                INSERT INTO pairing_snapshots (id, card_id, game_numbers, confirmed_at)
+                VALUES (?, ?, ?, now())
                 """);
             statement.setObject(1, snapshotId);
             statement.setObject(2, cardId);
-            statement.setObject(3, bundleKey);
             Array sqlArray = connection.createArrayOf("integer", games);
-            statement.setArray(4, sqlArray);
-            statement.setString(5, payload);
-            statement.setString(6, hash);
+            statement.setArray(3, sqlArray);
             return statement;
         });
         for (PairingRow row : bundleRows) jdbc.update("UPDATE matches SET snapshot_id = ? WHERE id = ?", snapshotId, row.id());
@@ -716,7 +707,8 @@ public class TournamentCardService {
             !finished ? "TABLE_PAIRING" : (hasFinal ? "FINAL_SEEDING" : "FINAL_PUBLISHED"), cardId);
         publishPublic(cardId);
         if (!finished) jdbc.update("DELETE FROM competition_tables WHERE card_id = ?", cardId);
-        audit(cardId, actor, finished ? "PUBLISH_FINAL_RESULTS" : "PUBLISH_GAME_RESULTS", "game " + gameNumbers + " review", hash);
+        audit(cardId, actor, finished ? "PUBLISH_FINAL_RESULTS" : "PUBLISH_GAME_RESULTS", "game " + gameNumbers + " review",
+            bundleRows.size() + " pairings published (snapshot " + snapshotId + ")");
         return get(cardId, true);
     }
 
@@ -866,7 +858,7 @@ public class TournamentCardService {
             """, matchId) : Map.of("matchId", matchId.toString(), "status", "UNRECORDED");
         int changed = jdbc.update("""
             UPDATE match_results SET winner_id = ?, score_one = ?, score_two = ?, result_type = ?, calculated_diff = ?,
-                                     submitted_by = ?, submitted_at = now(), version = version + 1
+                                     submitted_by = ?, submitted_at = now()
             WHERE match_id = ?
             """, winner, scoreOne, scoreTwo, resultType, calculatedDiff, actor, matchId);
         if (changed == 0) jdbc.update("""
@@ -921,7 +913,7 @@ public class TournamentCardService {
             """, matchId) : Map.of("matchId", matchId.toString(), "status", "UNRECORDED");
         int changed = jdbc.update("""
             UPDATE match_results SET winner_id = NULL, score_one = 0, score_two = 0, result_type = 'PENALTY',
-                                     calculated_diff = ?, submitted_by = ?, submitted_at = now(), version = version + 1
+                                     calculated_diff = ?, submitted_by = ?, submitted_at = now()
             WHERE match_id = ?
             """, points, actor, matchId);
         if (changed == 0) jdbc.update("""
@@ -992,18 +984,17 @@ public class TournamentCardService {
         resetRuntimeData(cardId, actor, false);
         jdbc.update("DELETE FROM standings WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM players WHERE card_id = ?", cardId);
-        String division = cardDivision(cardId);
         String[] firstNames = {"กฤต", "ชนัญญา", "ธนภัทร", "ปุณณวิช", "พิมพ์ชนก", "รวิศ", "ศิริน", "ณัฐดนัย"};
         String[] lastNames = {"อนันต์กุล", "บุญรักษา", "วัฒนชัย", "ศรีสุข", "ธรรมวงศ์", "ชูเกียรติ"};
         String[] schools = {"สาธิตพัฒนา", "วิทยาคม", "อนุสรณ์ศึกษา", "ประชารัฐ", "วชิรวิทย์", "เทพศิรินทร์"};
         for (int index = 0; index < amount; index++) {
             UUID playerId = UUID.randomUUID();
             jdbc.update("""
-                INSERT INTO players (id, card_id, external_id, first_name, last_name, school, division)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO players (id, card_id, external_id, first_name, last_name, school)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """, playerId, cardId, "P" + String.format("%03d", index + 1), firstNames[index % firstNames.length],
-                lastNames[(index * 3) % lastNames.length], schools[(index * 5 + index / 4) % schools.length], division);
-            jdbc.update("INSERT INTO standings (id, card_id, player_id) VALUES (?, ?, ?)", UUID.randomUUID(), cardId, playerId);
+                lastNames[(index * 3) % lastNames.length], schools[(index * 5 + index / 4) % schools.length]);
+            jdbc.update("INSERT INTO standings (card_id, player_id) VALUES (?, ?)", cardId, playerId);
         }
         touch(cardId);
         publishPublic(cardId);
@@ -1459,10 +1450,6 @@ public class TournamentCardService {
                 rs.getObject("snapshot_id", UUID.class), rs.getTimestamp("pairing_published_at"), rs.getTimestamp("confirmed_at")), cardId);
     }
 
-    private CardDtos.PairingResponse toPairingResponse(PairingRow row) {
-        return toPairingResponse(row, true);
-    }
-
     private CardDtos.PairingResponse toPairingResponse(PairingRow row, boolean includeResult) {
         return new CardDtos.PairingResponse(row.id().toString(), row.gameNumber(), row.tableNumber(), row.playerOne(), row.playerTwo(),
             includeResult ? row.winnerId() : null,
@@ -1559,7 +1546,6 @@ public class TournamentCardService {
         return "P" + String.format("%03d", next == null ? 1 : next);
     }
 
-    private String cardDivision(UUID cardId) { return cardRow(cardId).division(); }
     private UUID gameId(UUID cardId, int number) { return jdbc.queryForObject("SELECT id FROM games WHERE card_id = ? AND game_number = ?", UUID.class, cardId, number); }
     private UUID playerId(UUID cardId, String externalId) {
         try { return jdbc.queryForObject("SELECT id FROM players WHERE card_id = ? AND external_id = ?", UUID.class, cardId, externalId); }
@@ -1591,24 +1577,20 @@ public class TournamentCardService {
     private void audit(UUID cardId, String actor, String action, Object oldValue, Object newValue) {
         jdbc.update("""
             INSERT INTO audit_logs (id, card_id, actor, action, old_value, new_value)
-            VALUES (?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb))
-            """, UUID.randomUUID(), cardId, actor, action, json(oldValue), json(newValue));
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, UUID.randomUUID(), cardId, actor, action, auditText(oldValue), auditText(newValue));
     }
 
-    private String json(Object value) {
+    /** Audit values are stored as plain TEXT: strings as-is, structured values as compact JSON text. */
+    private String auditText(Object value) {
+        if (value == null) return null;
+        if (value instanceof String text) return text;
         try { return objectMapper.writeValueAsString(value); }
         catch (JsonProcessingException error) { throw new IllegalStateException("Cannot serialize audit data", error); }
     }
 
     private String jsonText(String value) {
-        if (value == null) return "—";
-        try { JsonNode node = objectMapper.readTree(value); return node.isTextual() ? node.asText() : node.toString(); }
-        catch (JsonProcessingException ignored) { return value; }
-    }
-
-    private String sha256(String value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (NoSuchAlgorithmException error) { throw new IllegalStateException(error); }
+        return value == null ? "—" : value;
     }
 
     private Integer nullableInt(ResultSet rs, String column) throws SQLException { int value = rs.getInt(column); return rs.wasNull() ? null : value; }

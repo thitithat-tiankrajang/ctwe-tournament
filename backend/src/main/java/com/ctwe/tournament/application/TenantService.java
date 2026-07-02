@@ -320,12 +320,14 @@ public class TenantService {
     private void audit(String actor, String action, Object oldValue, Object newValue) {
         jdbc.update("""
             INSERT INTO audit_logs (id, card_id, actor, action, old_value, new_value)
-            VALUES (?, NULL, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb))
-            """, UUID.randomUUID(), actor, action, json(oldValue), json(newValue));
+            VALUES (?, NULL, ?, ?, ?, ?)
+            """, UUID.randomUUID(), actor, action, auditText(oldValue), auditText(newValue));
     }
 
-    private String json(Object value) {
+    /** Audit values are stored as plain TEXT: strings as-is, structured values as compact JSON text. */
+    private String auditText(Object value) {
         if (value == null) return null;
+        if (value instanceof String text) return text;
         try { return objectMapper.writeValueAsString(value); }
         catch (JsonProcessingException error) { throw new IllegalStateException("Cannot serialize audit data", error); }
     }

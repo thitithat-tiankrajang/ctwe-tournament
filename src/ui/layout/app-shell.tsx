@@ -139,7 +139,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   });
   // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
   useCardSync(isStaff ? id : undefined);
-  const { notificationPermission, notificationsOn, toggleNotifications } = usePublicSync(id, !isStaff);
+  const { notificationsOn, toggleNotifications } = usePublicSync(id, !isStaff);
   const handleToggleNotifications = async () => {
     const result = await toggleNotifications();
     if (result === "denied") toast.error("การแจ้งเตือนถูกปิดในเบราว์เซอร์ — เปิดใหม่ได้จากการตั้งค่าเว็บไซต์ของเบราว์เซอร์");
@@ -319,21 +319,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         {isStaff ? (
           <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>
         ) : (
-          notificationPermission !== "unsupported" && (
-            <div className="sidebar__public-actions">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="sidebar__auth"
-                onClick={() => void handleToggleNotifications()}
-                title={notificationsOn ? "ปิดการแจ้งเตือนผลที่เผยแพร่แล้ว" : "เปิดการแจ้งเตือนเมื่อมีการเผยแพร่ผล"}
-              >
-                {notificationsOn ? <BellRing size={15} /> : <Bell size={15} />}
-                <span className="sidebar__auth-label">{notificationsOn ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}</span>
-              </Button>
-            </div>
-          )
+          <div className="sidebar__public-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="sidebar__auth"
+              onClick={() => void handleToggleNotifications()}
+              title={notificationsOn ? "ปิดการแจ้งเตือนผลที่เผยแพร่แล้ว" : "เปิดการแจ้งเตือนเมื่อมีการเผยแพร่ผล"}
+            >
+              {notificationsOn ? <BellRing size={15} /> : <Bell size={15} />}
+              <span className="sidebar__auth-label">{notificationsOn ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}</span>
+            </Button>
+          </div>
         )}
       </aside>
       <div className={`app-main${id && !isStaff ? " app-main--public-card" : ""}`}>
@@ -347,8 +345,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Link>
               : <span className="mobile-brand__title"><Trophy size={19} /><strong>{activeTournament?.name ?? "Tournament Control"}</strong></span>
             : <Link href="/" className="mobile-brand__title" aria-label="ไปหน้ารวมการแข่งขัน"><Trophy size={19} /><strong>Tournament Control</strong></Link>}
-          {(isStaff || notificationPermission !== "unsupported") && <div className="mobile-brand__actions">
-            {!isStaff && notificationPermission !== "unsupported" && (
+          <div className="mobile-brand__actions">
+            {!isStaff && (
               <button
                 type="button"
                 className={`mobile-brand__auth${notificationsOn ? " mobile-brand__auth--enabled" : ""}`}
@@ -361,7 +359,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {isStaff && (
               <button type="button" className="mobile-brand__auth" onClick={() => setLogoutConfirm(true)}><LogOut size={15} />ออกจากระบบ</button>
             )}
-          </div>}
+          </div>
         </div>
         <main className="content">{children}</main>
         {operator && (

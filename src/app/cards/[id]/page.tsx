@@ -155,6 +155,17 @@ export default function CardOverviewPage() {
     if (defaultState) setViews(new Set<OverviewView>([defaultState.view]));
   }, [defaultState?.key]);
 
+  useEffect(() => {
+    if (!selectedRankingPlayerId) return;
+    const clearSelectionOutsideTable = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".overview-ranking-table")) return;
+      setSelectedRankingPlayerId(null);
+    };
+    document.addEventListener("pointerdown", clearSelectionOutsideTable);
+    return () => document.removeEventListener("pointerdown", clearSelectionOutsideTable);
+  }, [selectedRankingPlayerId]);
+
   if (loading || card?.summaryOnly) return <div className="panel panel-padding">กำลังโหลดข้อมูลการแข่งขัน…</div>;
   if (!card) return <CardNotFound />;
   const canManage = canManageTournament(auth);
@@ -256,7 +267,9 @@ export default function CardOverviewPage() {
       {visibleSnapshots.length === 0 ? (
         card.players.length > 0 ? <>
           <Panel className="overview-data-panel" title="Ranking เริ่มต้น" actions={filteredViews.ranking ? <ViewPanelActions onClear={() => resetFilters("ranking")} /> : undefined}>
-            <RankingTable key={filterResetKeys.ranking} players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} onFilterActiveChange={(active) => setViewFilterActive("ranking", active)} />
+            <div className="overview-ranking-table">
+              <RankingTable key={filterResetKeys.ranking} players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} onFilterActiveChange={(active) => setViewFilterActive("ranking", active)} />
+            </div>
           </Panel>
           <Panel><EmptyState icon={<Trophy size={26} />} title="ยังไม่มี Pairing ที่เผยแพร่" description="เมื่อเจ้าหน้าที่ยืนยัน Pairing เกมแรก ตารางคู่แข่งขันจะปรากฏที่นี่ทันที" /></Panel>
         </> : <Panel><EmptyState icon={<Trophy size={26} />} title="กำลังรอรายชื่อผู้เล่น" description="รายชื่อและ Ranking เริ่มต้นจะปรากฏหลังเจ้าหน้าที่ Finish การลงทะเบียน" /></Panel>
@@ -267,7 +280,9 @@ export default function CardOverviewPage() {
           {views.has("ranking") && (
             <div ref={(element) => { viewRefs.current.ranking = element; }} className="overview-view-section">
               <Panel className="overview-data-panel" title={selectedResultsPublished ? `Ranking หลังจบเกม ${selectedGame}` : `Ranking ก่อนจบเกม ${selectedGame}`} actions={filteredViews.ranking ? <ViewPanelActions onClear={() => resetFilters("ranking")} /> : undefined}>
-                <RankingTable key={filterResetKeys.ranking} players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} onFilterActiveChange={(active) => setViewFilterActive("ranking", active)} />
+                <div className="overview-ranking-table">
+                  <RankingTable key={filterResetKeys.ranking} players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} onFilterActiveChange={(active) => setViewFilterActive("ranking", active)} />
+                </div>
               </Panel>
             </div>
           )}

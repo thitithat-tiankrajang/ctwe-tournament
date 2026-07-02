@@ -29,7 +29,8 @@ public final class CardDtos {
         boolean gibsonEnabled
     ) {}
 
-    public record FinalResultRequest(@NotNull @Min(0) @Max(1000000000) Integer scoreOne, @NotNull @Min(0) @Max(1000000000) Integer scoreTwo) {}
+    // Scores are stored as SMALLINT (V19); 30000 leaves headroom under the 32767 column limit.
+    public record FinalResultRequest(@NotNull @Min(0) @Max(30000) Integer scoreOne, @NotNull @Min(0) @Max(30000) Integer scoreTwo) {}
     public record FinalWinnerRequest(@NotBlank String winnerId) {}
 
     public record PlayerRequest(
@@ -48,8 +49,8 @@ public final class CardDtos {
     public record BulkPlayersRequest(@NotNull @Size(min = 1, max = 5000) List<@jakarta.validation.Valid BulkPlayerEntry> players) {}
 
     public record ResultRequest(
-        @NotNull @Min(0) @Max(1000000000) Integer scoreOne,
-        @NotNull @Min(0) @Max(1000000000) Integer scoreTwo,
+        @NotNull @Min(0) @Max(30000) Integer scoreOne,
+        @NotNull @Min(0) @Max(30000) Integer scoreTwo,
         boolean editExisting
     ) {}
 

@@ -16,6 +16,8 @@ can observe new data.
 
 ## One week before
 
+0. If `V19__storage_diet.sql` (or any migration) has not been applied to production yet, take a
+   `pg_dump` first, deploy on a quiet day, and verify one full card workflow end-to-end after boot.
 1. Create a staging copy with three cards and generate 400 players in each card.
 2. Complete enough games to make the public card payload representative of the final day.
 3. Run public tests at 100, 500, 1,000, 2,500, then 5,000 viewers.
@@ -56,6 +58,25 @@ can observe new data.
 Roll back to the last known deployment, keep the CDN serving the last published state, and pause new
 workflow transitions until staff writes are healthy. Do not scale to multiple Render instances:
 staff SSE and in-memory event delivery currently assume one application instance.
+
+## SSE capacity and degraded mode
+
+Live streams are hard-capped so they can never exhaust the Tomcat connector (`max-connections: 2000`)
+and freeze mutations:
+
+- `SSE_MAX_STAFF_STREAMS` (default 300) and `SSE_MAX_PUBLIC_STREAMS` (default 600).
+- Over-cap subscribers receive 503 once; the browser's `EventSource` stops permanently and the client
+  falls back to polling (staff: 30 s version poll; public: 60 s versions poll). This is the intended
+  degraded mode — later viewers see updates within a minute instead of instantly.
+- A 25 s heartbeat prunes silently dead connections (mobile drops) within seconds instead of leaking
+  them until the 45-minute stream timeout; every pruned stream frees a capacity slot.
+- All SSE socket writes happen on one dedicated `sse-send` thread with a bounded queue, so a stalled
+  viewer connection can never block a staff result-save request thread. Dropped events are safe:
+  clients reconcile through version checks and polling.
+- On deploy shutdown all streams are completed cleanly so browsers reconnect to the new instance.
+
+If Render connection counts approach the cap during the event, lower `SSE_MAX_PUBLIC_STREAMS` and
+restart — public viewers degrade to polling, staff streams are unaffected.
 
 ## After the event
 

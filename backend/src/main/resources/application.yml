@@ -52,6 +52,11 @@ security:
     password-hash: ${STAFF_PASSWORD_HASH}
 app:
   dev-tools-enabled: ${DEV_TOOLS_ENABLED:false}
+  # Every live SSE stream holds a Tomcat connection (max-connections: 2000). Caps keep streams well
+  # under half the connector so mutations always have headroom; over-cap clients fall back to polling.
+  sse:
+    max-staff-streams: ${SSE_MAX_STAFF_STREAMS:300}
+    max-public-streams: ${SSE_MAX_PUBLIC_STREAMS:600}
   cache:
     public-card-details:
       ttl-seconds: ${PUBLIC_CARD_CACHE_TTL_SECONDS:300}

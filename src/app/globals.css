@@ -650,6 +650,17 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .panel-updated strong { color: var(--ink); }
 .view-panel-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .overview-data-panel { border-top: 3px solid var(--blue); box-shadow: 0 4px 14px rgba(32, 37, 43, .055); }
+
+@media (min-width: 769px) {
+  .overview-header-controls { align-items: flex-end; flex-direction: column; gap: 7px; }
+  .overview-game-menu-wrap { align-self: flex-end; }
+  .overview-game-published { display: none; }
+}
+
+@media (min-width: 769px) and (orientation: landscape) {
+  .overview-header-controls:has(.select-menu--open) .overview-view-picker { visibility: hidden; }
+}
+
 .overview-data-panel .panel__header {
   background: linear-gradient(90deg, var(--blue-soft), rgba(245, 246, 248, .72) 58%, var(--surface));
   min-height: clamp(42px, 3.7vw, 56px);
@@ -822,13 +833,13 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   .sidebar { display: none; }
   .app-main, .app-shell--collapsed .app-main { margin-left: 0; }
   .mobile-brand { align-items: center; background: var(--sidebar); color: white; display: flex; gap: 9px; justify-content: space-between; min-height: 52px; padding: 9px 14px; position: sticky; top: 0; z-index: 100; }
-  .mobile-brand__title { align-items: center; display: flex; gap: 9px; min-width: 0; }
+  .mobile-brand__title { align-items: center; display: flex; flex: 1 1 auto; gap: 9px; min-width: 0; overflow: hidden; }
   .mobile-brand__title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-brand__title svg { color: #8fb5f7; }
   .mobile-brand__back { align-self: stretch; color: inherit; flex: 1 1 auto; margin: -9px 0 -9px -14px; padding: 9px 12px 9px 14px; }
   .mobile-brand__back:active { background: #2a3037; }
   .mobile-brand__back .mobile-brand__back-icon { color: #e7ebef; flex: 0 0 auto; }
-  .mobile-brand__actions { align-items: center; display: flex; gap: 6px; }
+  .mobile-brand__actions { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; margin-left: auto; }
   .mobile-brand__auth { align-items: center; background: #2a3037; border: 1px solid #3a424c; border-radius: 999px; color: #e7ebef; cursor: pointer; display: inline-flex; flex: 0 0 auto; font-size: 12px; font-weight: 700; gap: 5px; padding: 6px 13px; }
   .mobile-brand__auth:disabled { cursor: default; opacity: 1; }
   .mobile-brand__auth:active { background: #353c45; }
