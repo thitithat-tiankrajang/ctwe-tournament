@@ -48,24 +48,31 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
 
   const startResize = (index: number, clientX: number) => { resizedRef.current = true; resizeRef.current = { index, startX: clientX, startW: colWidths[index] }; };
   const fitWidths = (source: number[], available: number) => {
-    if (available <= 0) return [...source];
-    const total = source.reduce((sum, value) => sum + value, 0) || 1;
-    const fitted = source.map((value) => Math.max(18, Math.round(value * (available / total))));
-    const difference = available - fitted.reduce((sum, value) => sum + value, 0);
-    const widest = fitted.indexOf(Math.max(...fitted));
-    fitted[widest] = Math.max(18, fitted[widest] + difference);
+    const target = Math.round(available);
+    if (target <= 0 || source.length === 0) return [...source];
+    const safeSource = source.map((value) => Math.max(1, value));
+    const total = safeSource.reduce((sum, value) => sum + value, 0);
+    const exact = safeSource.map((value) => value * (target / total));
+    const fitted = exact.map((value) => Math.floor(value));
+    let remainder = target - fitted.reduce((sum, value) => sum + value, 0);
+    const byLargestFraction = exact
+      .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+      .sort((a, b) => b.fraction - a.fraction);
+    for (let index = 0; remainder > 0; index += 1, remainder -= 1) {
+      fitted[byLargestFraction[index % byLargestFraction.length].index] += 1;
+    }
     return fitted;
   };
 
   useEffect(() => {
-    const onMove = (event: MouseEvent) => {
+    const onMove = (event: PointerEvent) => {
       const state = resizeRef.current; if (!state) return;
       const delta = event.clientX - state.startX;
       setWidths((prev) => { const next = [...(prev ?? defaultsRef.current)]; next[state.index] = Math.max(minsRef.current[state.index], state.startW + delta); return next; });
     };
     const onUp = () => { resizeRef.current = null; document.body.classList.remove("col-resizing"); };
-    window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp); window.addEventListener("pointercancel", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); window.removeEventListener("pointercancel", onUp); };
   }, []);
 
   // Restore saved widths, or pick a default that fits all columns into the visible width.
@@ -78,10 +85,10 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
         if (Array.isArray(parsed) && parsed.length === count && parsed.every((value) => typeof value === "number" && value > 0)) restored = parsed;
       }
     } catch { /* ignore malformed storage */ }
-    const available = (scrollRef.current?.clientWidth ?? 0) - 2;
+    const available = scrollRef.current?.clientWidth ?? 0;
     if (restored) {
       resizedRef.current = true;
-      setWidths(available > 0 ? fitWidths(restored, available) : restored);
+      setWidths(restored);
       return;
     }
     resizedRef.current = false;
@@ -91,10 +98,10 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
   useEffect(() => {
     const element = scrollRef.current;
     if (!element || !("ResizeObserver" in window)) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const available = Math.round(entry.contentRect.width) - 2;
-      if (available <= 0) return;
-      setWidths((current) => fitWidths(current ?? defaultsRef.current, available));
+    const observer = new ResizeObserver(() => {
+      const available = element.clientWidth;
+      if (available <= 0 || resizedRef.current) return;
+      setWidths(fitWidths(defaultsRef.current, available));
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -136,7 +143,7 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
       <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
       <thead>
         <tr>{columns.map((column, index) => {
-          const resizer = <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onMouseDown={(event) => { event.preventDefault(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />;
+          const resizer = <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />;
           if (excel) {
             const sortable = excel.sortable(column.key);
             const filterable = excel.filterable(column.key);
@@ -567,7 +574,7 @@ export function DataGrid<T>({ columns, rows, getRowKey, storageKey, filterResetK
                       onClose={() => setOpenKey(null)}
                     />
                   )}
-                  <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onMouseDown={(event) => { event.preventDefault(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />
+                  <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />
                 </th>
               );
             })}</tr>

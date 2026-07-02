@@ -160,9 +160,14 @@ public class CardController {
     public CardDtos.ResultPatch submitResult(@PathVariable UUID cardId, @PathVariable String matchId,
                                              @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
-        CardDtos.ResultPatch patch = service.submitResult(cardId, matchId, request, authentication.getName());
+        CardDtos.ResultPatch patch = service.submitResult(
+            cardId, matchId, request, authentication.getName(), !authz.isStaff(authentication));
         events.publishResult(cardId, patch);
-        events.publishPublicResult(cardId, publicCards.version(cardId), patch.changedPairings());
+        List<CardDtos.PairingResponse> publicChanges = patch.changedPairings().stream()
+            .filter(CardDtos.PairingResponse::pairingPublished)
+            .toList();
+        if (!publicChanges.isEmpty())
+            events.publishPublicResult(cardId, publicCards.version(cardId), publicChanges);
         return patch;
     }
 
@@ -186,6 +191,14 @@ public class CardController {
     public CardDtos.CardResponse confirm(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         return changed(service.confirmPairingPreview(cardId, authentication.getName()));
+    }
+
+    @PostMapping("/{cardId}/pairings/publish-next")
+    public CardDtos.CardResponse publishNextPairing(@PathVariable UUID cardId, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        CardDtos.CardResponse card = changed(service.publishPairResultDestination(cardId, authentication.getName()));
+        events.publishPublic(cardId, publicCards.version(cardId));
+        return card;
     }
 
     @PostMapping("/{cardId}/results/review")

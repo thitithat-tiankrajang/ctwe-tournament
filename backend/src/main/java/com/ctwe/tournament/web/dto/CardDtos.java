@@ -73,7 +73,8 @@ public final class CardDtos {
                                  int wins, int draws, int losses, int winPoints, int diff) {}
     public record TableResponse(String id, int number, List<String> playerIds) {}
     public record PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
-                                  String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff) {}
+                                  String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
+                                  boolean pairingPublished) {}
     public record SnapshotResponse(String id, List<Integer> gameNumbers, List<PairingResponse> pairings, String confirmedAt) {}
     /** Lightweight result-save response: changed source/destination rows only, plus the card version. */
     public record ResultPatch(long version, List<PairingResponse> changedPairings) {}

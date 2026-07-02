@@ -125,6 +125,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isStaff = hasStaffAccess(auth);
   const admin = isAdmin(auth);
   const director = isDirector(auth);
+  const roleLabel = admin ? "ADMIN" : director ? "DIRECTOR" : isStaff ? "STAFF" : "VIEWER";
   // Operators (director/staff) work inside a card's workspace pages; admins and public viewers only
   // watch, so they navigate to the read-only overview instead.
   const operator = isOperator(auth);
@@ -314,7 +315,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="sidebar__footer">
           <span className="status-dot" />
-          <span className="sidebar__footer-text"><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? "เจ้าหน้าที่" : "ดูข้อมูลเท่านั้น"}</small></span>
+          <span className="sidebar__footer-text"><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? roleLabel : "ดูข้อมูลเท่านั้น"}</small></span>
         </div>
         {isStaff ? (
           <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>

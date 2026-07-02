@@ -122,8 +122,7 @@ function defaultOverviewState(card: TournamentCard | undefined): { key: string; 
     || card.runtimeStage !== "PAIRING_PREVIEW"
     || !snapshot.gameNumbers.includes(card.currentGame));
   const latestGame = Math.max(0, ...visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
-  const visibleGames = new Set(visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
-  const activeGame = visibleGames.has(card.currentGame) ? card.currentGame : latestGame;
+  const activeGame = latestGame > 0 ? latestGame : card.currentGame;
   const snapshot = visibleSnapshots.find((item) => item.gameNumbers.includes(activeGame));
   if (!snapshot) return null;
   if (snapshot.confirmedAt) return { key: `ranking:${activeGame}`, view: "ranking" };
@@ -174,7 +173,7 @@ export default function CardOverviewPage() {
   const publishedGames = new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
   const visibleGames = new Set(visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
   const latestVisibleGame = Math.max(0, ...visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
-  const currentVisibleGame = visibleGames.has(card.currentGame) ? card.currentGame : latestVisibleGame;
+  const currentVisibleGame = latestVisibleGame > 0 ? latestVisibleGame : card.currentGame;
   const selectedGame = historyGame && visibleGames.has(historyGame) ? historyGame : currentVisibleGame;
   const selectedSnapshot = visibleSnapshots.find((snapshot) => snapshot.gameNumbers.includes(selectedGame));
   const selectedPairings = selectedSnapshot?.pairings.filter((pairing) => (pairing.gameNumber ?? selectedGame) === selectedGame) ?? [];

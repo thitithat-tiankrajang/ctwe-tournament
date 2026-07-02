@@ -474,6 +474,60 @@ public class TournamentCardService {
     }
 
     /**
+     * Publishes only the destination pairing of an active PAIR_RESULT block. Staff may materialise
+     * and score destination rows before this milestone, but anonymous viewers cannot see them until
+     * the director explicitly publishes the pairing after every source result is recorded.
+     */
+    @Transactional
+    @EvictPublicCard
+    public CardDtos.CardResponse publishPairResultDestination(UUID cardId, String actor) {
+        CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
+        int sourceGame = card.currentGame();
+        if (sourceGame >= card.numberOfGames() || !isOutgoingPairResult(cardId, sourceGame))
+            throw new IllegalArgumentException("เกมปัจจุบันไม่ได้ใช้กติกาชนะพบชนะ–แพ้พบแพ้");
+        int destinationGame = sourceGame + 1;
+
+        long sourceTotal = count("""
+            SELECT COUNT(*) FROM matches
+            WHERE card_id = ? AND game_number = ? AND snapshot_no IS NULL
+            """, cardId, sourceGame);
+        long sourcePending = count("""
+            SELECT COUNT(*) FROM matches
+            WHERE card_id = ? AND game_number = ? AND snapshot_no IS NULL AND result_type IS NULL
+            """, cardId, sourceGame);
+        if (sourceTotal == 0 || sourcePending > 0)
+            throw new IllegalArgumentException("ต้องกรอกผลเกม " + sourceGame + " ให้ครบทุกคู่ก่อน Publish Pairing เกม " + destinationGame);
+
+        long destinationTotal = count("""
+            SELECT COUNT(*) FROM matches
+            WHERE card_id = ? AND game_number = ? AND snapshot_no IS NULL
+            """, cardId, destinationGame);
+        long emptyDestinations = count("""
+            SELECT COUNT(*) FROM matches
+            WHERE card_id = ? AND game_number = ? AND snapshot_no IS NULL
+              AND player_one IS NULL AND player_two IS NULL
+            """, cardId, destinationGame);
+        if (destinationTotal != sourceTotal || emptyDestinations > 0)
+            throw new IllegalArgumentException("Pairing เกม " + destinationGame + " ยังสร้างไม่ครบ");
+
+        long changed = jdbc.update("""
+            UPDATE matches SET pairing_published_at = now()
+            WHERE card_id = ? AND game_number = ? AND snapshot_no IS NULL AND pairing_published_at IS NULL
+            """, cardId, destinationGame);
+        if (changed > 0) {
+            jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number = ?", cardId, destinationGame);
+            touch(cardId);
+            publishPublic(cardId);
+            audit(cardId, actor, "PUBLISH_PAIR_RESULT_DESTINATION", null, Map.of(
+                "sourceGame", sourceGame,
+                "publishedPairingGame", destinationGame,
+                "pairings", destinationTotal
+            ));
+        }
+        return get(cardId, true);
+    }
+
+    /**
      * Edit-pairing during result collection when NO result is recorded yet for the current game:
      * revert RESULT_COLLECTION -> PAIRING_PREVIEW for that game so the director can re-edit the pairing
      * on the preview page. If any result exists, the caller must use swap instead. Director-only upstream.
@@ -504,7 +558,8 @@ public class TournamentCardService {
 
     @Transactional
     @EvictPublicCard
-    public CardDtos.ResultPatch submitResult(UUID cardId, String matchId, CardDtos.ResultRequest request, String actor) {
+    public CardDtos.ResultPatch submitResult(UUID cardId, String matchId, CardDtos.ResultRequest request, String actor,
+                                             boolean canOverridePenalty) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
         int scoreOne = request.scoreOne();
         int scoreTwo = request.scoreTwo();
@@ -516,6 +571,9 @@ public class TournamentCardService {
         if (match.oneId() == null && match.twoId() == null)
             throw new IllegalArgumentException("คู่แข่งขันของเกมนี้ยังไม่ครบ รอผลจาก Game ต้นทางก่อน");
         if (match.snapshotNo() != null) throw new IllegalArgumentException("Confirmed results are immutable");
+        if ("PENALTY".equals(match.resultType()) && !canOverridePenalty)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "ผลคู่นี้ถูกลงดาบและล็อกโดยผู้อำนวยการ เจ้าหน้าที่ไม่สามารถแก้ไขได้");
         List<Integer> activeGames = activeResultGames(card);
         if (!activeGames.contains(match.gameNumber()))
             throw new IllegalArgumentException("แก้ผลได้เฉพาะเกมใน Result block ปัจจุบัน " + activeGames);
@@ -565,7 +623,8 @@ public class TournamentCardService {
         // The bottom Swiss group is not materialised live — it auto-pairs once all its results are in.
         if (deferredSwissSource)
             tryMaterializeDeferredSwiss(cardId, card.currentGame());
-        publishPublic(cardId);
+        if (match.pairingPublishedAt() != null || match.snapshotNo() != null)
+            publishPublic(cardId);
         // A normal save changes one row. PAIR_RESULT can additionally materialize/update two
         // destination rows. Broadcasting only those rows keeps SSE traffic bounded at O(1).
         int destinationGame = updatesPairResultDestination ? card.currentGame() + 1 : -1;
@@ -925,7 +984,7 @@ public class TournamentCardService {
             if (match == null) break;
             boolean firstWins = match.tableNumber() % 2 == 1;
             submitResult(cardId, matchApiId(match.gameNumber(), match.tableNumber()), new CardDtos.ResultRequest(
-                firstWins ? 100 : 72, firstWins ? 72 : 100, false), actor);
+                firstWins ? 100 : 72, firstWins ? 72 : 100, false), actor, true);
             generated++;
         }
         if (generated == 0) throw new IllegalArgumentException("Open the current result block before generating results");
@@ -1340,7 +1399,8 @@ public class TournamentCardService {
             includeResult ? row.scoreOne() : null,
             includeResult ? row.scoreTwo() : null,
             includeResult ? row.resultType() : null,
-            includeResult ? row.calculatedDiff() : null);
+            includeResult ? row.calculatedDiff() : null,
+            row.snapshotNo() != null || row.pairingPublishedAt() != null);
     }
 
     private List<PairingStrategy.PlayerScore> loadScores(UUID cardId) {
@@ -1429,14 +1489,15 @@ public class TournamentCardService {
     private MatchPlayers matchRow(UUID cardId, MatchKey key) {
         try {
             return jdbc.queryForObject("""
-                SELECT m.player_one, m.player_two, m.snapshot_no, m.table_number,
+                SELECT m.player_one, m.player_two, m.snapshot_no, m.pairing_published_at, m.table_number,
                        m.result_type, m.score_one, m.score_two, m.calculated_diff, m.winner, g.max_diff
                 FROM matches m JOIN games g ON g.card_id = m.card_id AND g.game_number = m.game_number
                 WHERE m.card_id = ? AND m.game_number = ? AND m.table_number = ?
                 """, (rs, row) -> new MatchPlayers(nullableInt(rs, "player_one"), nullableInt(rs, "player_two"),
                 nullableInt(rs, "snapshot_no"), key.gameNumber(), rs.getInt("max_diff"), rs.getInt("table_number"),
                 rtName(rs.getString("result_type")), nullableInt(rs, "score_one"), nullableInt(rs, "score_two"),
-                nullableInt(rs, "calculated_diff"), nullableInt(rs, "winner")), cardId, key.gameNumber(), key.tableNumber());
+                nullableInt(rs, "calculated_diff"), nullableInt(rs, "winner"),
+                rs.getTimestamp("pairing_published_at")), cardId, key.gameNumber(), key.tableNumber());
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Match not found");
         }
@@ -1576,7 +1637,8 @@ public class TournamentCardService {
     private record MatchSlot(int tableNumber, Integer oneId, Integer twoId, boolean hasResult) {}
     private record MatchKey(int gameNumber, int tableNumber) {}
     private record MatchPlayers(Integer oneId, Integer twoId, Integer snapshotNo, int gameNumber, int maxDiff, int tableNumber,
-                                String resultType, Integer scoreOne, Integer scoreTwo, Integer calculatedDiff, Integer winner) {}
+                                String resultType, Integer scoreOne, Integer scoreTwo, Integer calculatedDiff, Integer winner,
+                                Timestamp pairingPublishedAt) {}
     private record TableSeat(int tableNumber, int seatNumber, int playerCode, String school) {}
     private record PairingRow(int gameNumber, int tableNumber, Integer playerOne, Integer playerTwo, Integer winner,
                               Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,

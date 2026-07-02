@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, Eye, Gamepad2, Gavel, LockKeyhole, Trophy } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Eye, Gamepad2, Gavel, LockKeyhole, Megaphone, Trophy } from "lucide-react";
 import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { canManageTournament, isOperator } from "@/domain/tournament/roles";
@@ -19,6 +19,7 @@ import { ResultEntryGrid, ResultViewGrid, type EntrySlot } from "@/ui/components
 import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
 import { OverrideEditor } from "@/ui/components/override-editor";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
+import { SelectMenu } from "@/ui/components/select-menu";
 
 function isRecorded(pairing: Pairing) {
   return pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
@@ -143,6 +144,7 @@ export default function GamesPage() {
   const applyPenalty = useTournamentStore((state) => state.applyPenalty);
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
   const unpairToPreview = useTournamentStore((state) => state.unpairToPreview);
+  const publishNextPairing = useTournamentStore((state) => state.publishNextPairing);
   const verifyPassword = useTournamentStore((state) => state.verifyPassword);
   const startFinal = useTournamentStore((state) => state.startFinal);
   const submitFinalResult = useTournamentStore((state) => state.submitFinalResult);
@@ -174,6 +176,11 @@ export default function GamesPage() {
   const completedCount = pairings.filter(isRecorded).length;
   const allComplete = pairings.length === expectedCount && completedCount === expectedCount;
   const pairingsForGame = (gameNumber: number) => pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === gameNumber);
+  const sourcePairings = pairResultBlock ? pairingsForGame(activeGames[0]) : [];
+  const sourceComplete = sourcePairings.length > 0 && sourcePairings.every(isRecorded);
+  const destinationPairings = pairResultBlock ? pairingsForGame(activeGames[1]) : [];
+  const destinationPairingPublished = destinationPairings.length > 0
+    && destinationPairings.every((pairing) => pairing.pairingPublished);
   const maxDiffForGame = (gameNumber: number) => card.games.find((game) => game.number === gameNumber)?.maxDiff ?? 350;
   const latestActiveGame = activeGames[activeGames.length - 1];
   const latestActivePairings = pairingsForGame(latestActiveGame);
@@ -192,6 +199,13 @@ export default function GamesPage() {
 
   const saveResult = (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => submitResult(id, pairing.id, scoreOne, scoreTwo, editExisting);
   const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { window.alert(error instanceof Error ? error.message : "เปิดหน้า review ไม่สำเร็จ"); } finally { setBusy(false); } };
+  const publishDestinationPairing = async () => {
+    if (!window.confirm(`Publish Pairing เกม ${activeGames[1]} ให้ Viewer เห็นตอนนี้?`)) return;
+    setBusy(true);
+    try { await publishNextPairing(id); }
+    catch (error) { window.alert(error instanceof Error ? error.message : "Publish Pairing ไม่สำเร็จ"); }
+    finally { setBusy(false); }
+  };
   const publish = async () => {
     if (!window.confirm(`ยืนยัน Publish ผล ${blockLabel}? ข้อมูลจะขึ้นหน้าภาพรวมและแก้ไขไม่ได้`)) return;
     const finalGame = activeGames[activeGames.length - 1] === card.games.length; setBusy(true);
@@ -255,20 +269,40 @@ export default function GamesPage() {
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${blockLabel}`} title={reviewing ? "Review ผลการแข่งขัน" : "กรอกผลการแข่งขัน"} description={reviewing ? "ตรวจคะแนน ผลชนะ/เสมอ และ diff ก่อน Publish" : pairResultBlock ? "กรอก Game ต้นทางก่อน ระบบจะสร้างคู่ผู้ชนะและคู่ผู้แพ้ใน Game ถัดไปให้กรอกต่อในหน้าเดียวกัน" : "พิมพ์คะแนนในตารางแล้วกด Enter เพื่อบันทึกและเลื่อนไปคู่ถัดไปทันที ไม่ต้องกดปุ่มเปิด/บันทึก"} actions={canManageTournament(auth) && (resultCollection ? <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />Review ผล <ArrowRight size={16} /></Button> : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>)} />
+      <PageHeader
+        className="results-entry-header"
+        eyebrow={`${card.name} · ${blockLabel}`}
+        title={reviewing ? "Review ผลการแข่งขัน" : "กรอกผลการแข่งขัน"}
+        description={reviewing ? "ตรวจคะแนน ผลชนะ/เสมอ และ diff ก่อน Publish" : pairResultBlock ? "กรอก Game ต้นทางก่อน ระบบจะสร้างคู่ผู้ชนะและคู่ผู้แพ้ใน Game ถัดไปให้กรอกต่อในหน้าเดียวกัน" : "พิมพ์คะแนนในตารางแล้วกด Enter หรือปุ่มบันทึกในแถวนั้น"}
+        actions={canManageTournament(auth) && (resultCollection
+          ? <div className="page-actions">
+              {pairResultBlock && sourceComplete && !destinationPairingPublished && (
+                <Button variant="secondary" disabled={busy} onClick={() => void publishDestinationPairing()}>
+                  <Megaphone size={16} />Publish Pairing เกม {activeGames[1]}
+                </Button>
+              )}
+              <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />Review ผล <ArrowRight size={16} /></Button>
+            </div>
+          : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>)}
+      />
       {isDirector && resultCollection && selectableBlocks.length > 1 && (
-        <div className="entry-toolbar" style={{ alignItems: "center" }}>
-          <div className="entry-filter" style={{ flex: "0 0 auto", minWidth: 220 }}>
-            <label htmlFor="block-pick">เลือกเกม/บล็อกที่จะดู (ผู้อำนวยการ)</label>
-            <select id="block-pick" className="select" value={effectiveKey} onChange={(event) => setViewKey(event.target.value)}>
-              {selectableBlocks.map((block) => <option key={block.join("-")} value={block.join("-")}>{blockLabelOf(block)}{block.join("-") === currentKey ? " · ปัจจุบัน" : ""}</option>)}
-            </select>
+        <div className="entry-toolbar director-game-toolbar">
+          <div className="director-game-picker">
+            <span className="director-game-picker__label">เลือกเกม/บล็อกที่จะดู (ผู้อำนวยการ)</span>
+            <SelectMenu
+              ariaLabel="เลือกเกมหรือบล็อกผลการแข่งขัน"
+              className="director-game-menu"
+              value={effectiveKey}
+              options={selectableBlocks.map((block) => ({
+                value: block.join("-"),
+                label: `${blockLabelOf(block)}${block.join("-") === currentKey ? " · ปัจจุบัน" : ""}`,
+              }))}
+              onChange={setViewKey}
+            />
           </div>
-          {!viewingCurrent && <span style={{ alignSelf: "center", color: "var(--muted)", fontSize: 13 }}>กำลังดูเกมย้อนหลัง — แก้ได้หลังยืนยันรหัสผ่าน · standing คำนวณใหม่ทุกเกม แต่ pairing เดิมไม่ถูกจับใหม่</span>}
+          {!viewingCurrent && <span className="director-game-toolbar__note">กำลังดูเกมย้อนหลัง — แก้ได้หลังยืนยันรหัสผ่าน · standing คำนวณใหม่ทุกเกม แต่ pairing เดิมไม่ถูกจับใหม่</span>}
         </div>
       )}
-      {viewingCurrent && <div className="notice notice--warning"><LockKeyhole size={18} /><p><strong>ต้องบันทึกผลครบทุกคู่ของ {blockLabel}</strong><span>{completedCount} จาก {expectedCount} คู่บันทึกแล้ว · Pairing และผลจะเผยแพร่ตาม milestone ที่ยืนยัน</span></p></div>}
-
       {resultCollection && !viewingCurrent ? (
         editUnlocked ? (
           <OverrideEditor key={effectiveKey} block={selectedBlock} pairingsForGame={publishedPairingsForGame} players={playerMap} onCommit={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onDone={() => setEditUnlocked(false)} />
@@ -288,14 +322,14 @@ export default function GamesPage() {
           const maxDiff = maxDiffForGame(gameNumber);
           const isDestination = pairResultBlock && gameNumber === activeGames[1];
           // A one-player game-1 row is a bye; a one-player destination row is a bye once the whole source game is recorded.
-          const sourceComplete = isDestination && pairingsForGame(activeGames[0]).every(isRecorded);
+          const destinationSourceComplete = isDestination && sourceComplete;
           const slots: EntrySlot[] = isDestination
-            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => { const dest = gamePairings.find((d) => d.tableNumber === source.tableNumber); return { tableNumber: source.tableNumber, pairing: dest, isBye: oneOnly(dest) && sourceComplete }; })
+            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => { const dest = gamePairings.find((d) => d.tableNumber === source.tableNumber); return { tableNumber: source.tableNumber, pairing: dest, isBye: oneOnly(dest) && destinationSourceComplete }; })
             : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing, isBye: oneOnly(pairing) }));
           const completed = gamePairings.filter(isRecorded).length;
           if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`Game ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยัน pairing เกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
           return <Panel key={gameNumber} title={`กรอกผล Game ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === slots.length ? "success" : "warning"}>{completed}/{slots.length} คู่</Badge>}>
-            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} pendingNote={isDestination ? `เมื่อบันทึกผลแต่ละ row ของ Game ${activeGames[0]} ระบบจะเติมผู้ชนะไว้คู่บน และผู้แพ้ไว้คู่ล่างทันที; row ปลายทางจะกรอกคะแนนได้เมื่อมีคู่แข่งครบสองฝั่ง` : undefined} onSubmit={saveResult} onPenalty={canManageTournament(auth) ? openPenalty : undefined} pairingEdit={canManageTournament(auth) && gameNumber === card.currentGame ? { onSwap: onSwapPairing, onUnpair: onUnpairToPreview } : undefined} />
+            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={canManageTournament(auth) ? openPenalty : undefined} pairingEdit={canManageTournament(auth) && gameNumber === card.currentGame ? { onSwap: onSwapPairing, onUnpair: onUnpairToPreview } : undefined} />
           </Panel>;
         })}
       </> : (

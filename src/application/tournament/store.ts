@@ -54,6 +54,7 @@ interface TournamentState {
   generatePairings: (cardId: string) => Promise<void>;
   swapPlayers: (cardId: string, firstId: string, secondId: string, password: string, confirmSchoolConflict?: boolean) => Promise<void>;
   confirmPairingPreview: (cardId: string) => Promise<void>;
+  publishNextPairing: (cardId: string) => Promise<void>;
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
   overrideResult: (cardId: string, matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
   applyPenalty: (cardId: string, matchId: string, points: number, password: string) => Promise<void>;
@@ -439,6 +440,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async confirmPairingPreview(cardId) {
       await mutateCard(`/api/cards/${cardId}/pairings/confirm`, cardId, { method: "POST" });
+    },
+    async publishNextPairing(cardId) {
+      await mutateCard(`/api/cards/${cardId}/pairings/publish-next`, cardId, { method: "POST" });
     },
     async submitResult(cardId, pairingId, scoreOne, scoreTwo, editExisting = false) {
       // Hot path: the server returns just the in-progress block's pairings (+ version), not the whole card.

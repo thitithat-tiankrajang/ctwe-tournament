@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,8 +29,9 @@ class CardControllerCacheRoutingTest {
     private final PublicCardQueryService publicCards = mock(PublicCardQueryService.class);
     private final AuthorizationService authz = mock(AuthorizationService.class);
     private final ReauthenticationService reauthentication = mock(ReauthenticationService.class);
+    private final CardEventPublisher events = mock(CardEventPublisher.class);
     private final CardController controller =
-        new CardController(cards, publicCards, authz, reauthentication, mock(CardEventPublisher.class));
+        new CardController(cards, publicCards, authz, reauthentication, events);
 
     @Test
     void anonymousCardReadUsesOnlyPublicCacheBoundary() {
@@ -98,6 +100,28 @@ class CardControllerCacheRoutingTest {
         verify(authz).requireCardCapability(authentication, cardId, AuthorizationService.Capability.RUN_TOURNAMENT);
         verify(reauthentication).requireCurrentPassword(authentication, "director-password");
         verify(cards).swapPlayers(cardId, request, "director");
+    }
+
+    @Test
+    void resultEventNeverLeaksAnUnpublishedDestinationPairingToPublicViewers() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = new UsernamePasswordAuthenticationToken(
+            "staff", "n/a", List.of(new SimpleGrantedAuthority("ROLE_STAFF")));
+        var request = new CardDtos.ResultRequest(100, 70, false);
+        var publishedSource = new CardDtos.PairingResponse(
+            "g1-t1", 1, 1, "P001", "P002", "P001", 100, 70, "WIN", 30, true);
+        var privateDestination = new CardDtos.PairingResponse(
+            "g2-t1", 2, 1, "P001", null, null, null, null, null, null, false);
+        var patch = new CardDtos.ResultPatch(8, List.of(publishedSource, privateDestination));
+        when(authz.isStaff(authentication)).thenReturn(true);
+        when(cards.submitResult(cardId, "g1-t1", request, "staff", false)).thenReturn(patch);
+        when(publicCards.version(cardId)).thenReturn(5L);
+
+        assertThat(controller.submitResult(cardId, "g1-t1", request, authentication)).isSameAs(patch);
+
+        verify(events).publishResult(cardId, patch);
+        verify(events).publishPublicResult(eq(cardId), eq(5L), eq(List.of(publishedSource)));
+        verify(cards).submitResult(cardId, "g1-t1", request, "staff", false);
     }
 
     private static CardDtos.CardResponse card(UUID id) {

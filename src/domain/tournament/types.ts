@@ -73,6 +73,7 @@ export interface Pairing {
   scoreTwo?: number;
   resultType?: "WIN" | "DRAW" | "PENALTY";
   calculatedDiff?: number;
+  pairingPublished?: boolean;
 }
 
 export interface PairingSnapshot {
