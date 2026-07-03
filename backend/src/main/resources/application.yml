@@ -52,6 +52,8 @@ security:
     password-hash: ${STAFF_PASSWORD_HASH}
 app:
   dev-tools-enabled: ${DEV_TOOLS_ENABLED:false}
+  security:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:https://ctwe-tournament.ctwe.workers.dev}
   # SSE caps, heartbeat, polling interval and reconnect delay moved to the runtime_settings table
   # (admin page > Realtime) so they apply without a redeploy. See RuntimeSettingsService.
   push:
