@@ -32,6 +32,9 @@ export async function proxyToRender(request: Request): Promise<Response> {
     headers.delete("content-length");
     headers.delete("connection");
     headers.delete("transfer-encoding");
+    // Avoid forwarding a compressed origin stream with stale encoding/length metadata through
+    // another serverless runtime. Vercel and Workers may decode upstream bodies differently.
+    headers.set("accept-encoding", "identity");
     headers.set("x-forwarded-host", incoming.host);
     headers.set("x-forwarded-proto", incoming.protocol.replace(":", ""));
 
@@ -46,11 +49,36 @@ export async function proxyToRender(request: Request): Promise<Response> {
     }
 
     const response = await fetch(upstream, init);
-    return new Response(response.body, {
+    const responseHeaders = new Headers(response.headers);
+    for (const name of [
+      "connection",
+      "keep-alive",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade",
+    ]) {
+      responseHeaders.delete(name);
+    }
+
+    const responseInit: ResponseInit = {
       status: response.status,
       statusText: response.statusText,
-      headers: response.headers,
-    });
+      headers: responseHeaders,
+    };
+
+    if (responseHeaders.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+      return new Response(response.body, responseInit);
+    }
+
+    // Buffer finite responses before crossing the serverless boundary. Passing Render's live
+    // ReadableStream through a Vercel route handler can yield a 200 response with a zero-byte body.
+    const body = await response.arrayBuffer();
+    responseHeaders.delete("content-encoding");
+    responseHeaders.delete("content-length");
+    return new Response(body, responseInit);
   } catch (error) {
     console.error("Backend proxy request failed", error);
     return Response.json(
