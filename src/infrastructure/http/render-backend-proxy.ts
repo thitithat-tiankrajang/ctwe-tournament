@@ -73,6 +73,13 @@ export async function proxyToRender(request: Request): Promise<Response> {
       return new Response(response.body, responseInit);
     }
 
+    // Fetch forbids bodies for these statuses, even when an ArrayBuffer has zero bytes.
+    if (request.method === "HEAD" || response.status === 204 || response.status === 205 || response.status === 304) {
+      responseHeaders.delete("content-encoding");
+      responseHeaders.delete("content-length");
+      return new Response(null, responseInit);
+    }
+
     // Buffer finite responses before crossing the serverless boundary. Passing Render's live
     // ReadableStream through a Vercel route handler can yield a 200 response with a zero-byte body.
     const body = await response.arrayBuffer();
