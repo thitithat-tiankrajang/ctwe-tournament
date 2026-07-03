@@ -3,6 +3,7 @@ package com.ctwe.tournament.web;
 import com.ctwe.tournament.application.CardEventPublisher;
 import com.ctwe.tournament.application.PublicCardQueryService;
 import com.ctwe.tournament.application.TournamentCardService;
+import com.ctwe.tournament.application.WebPushService;
 import com.ctwe.tournament.domain.model.CardStatus;
 import com.ctwe.tournament.domain.model.RuntimeStage;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService;
@@ -30,8 +31,9 @@ class CardControllerCacheRoutingTest {
     private final AuthorizationService authz = mock(AuthorizationService.class);
     private final ReauthenticationService reauthentication = mock(ReauthenticationService.class);
     private final CardEventPublisher events = mock(CardEventPublisher.class);
+    private final WebPushService push = mock(WebPushService.class);
     private final CardController controller =
-        new CardController(cards, publicCards, authz, reauthentication, events);
+        new CardController(cards, publicCards, authz, reauthentication, events, push);
 
     @Test
     void anonymousCardReadUsesOnlyPublicCacheBoundary() {
@@ -122,6 +124,66 @@ class CardControllerCacheRoutingTest {
         verify(events).publishResult(cardId, patch);
         verify(events).publishPublicResult(eq(cardId), eq(5L), eq(List.of(publishedSource)));
         verify(cards).submitResult(cardId, "g1-t1", request, "staff", false);
+    }
+
+    @Test
+    void confirmedPairingQueuesDevicePushForThatGame() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = director();
+        CardDtos.CardResponse response = withStage(card(cardId), RuntimeStage.RESULT_COLLECTION, 2, List.of());
+        when(cards.confirmPairingPreview(cardId, "director")).thenReturn(response);
+
+        assertThat(controller.confirm(cardId, authentication)).isSameAs(response);
+
+        verify(push).pairingPublished(cardId, 2);
+    }
+
+    @Test
+    void publishedRankingAndCompletedCardQueueBothDevicePushes() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = director();
+        var snapshot = new CardDtos.SnapshotResponse("2", List.of(2, 3), List.of(), Instant.EPOCH.toString());
+        CardDtos.CardResponse response = withStage(card(cardId), RuntimeStage.FINAL_PUBLISHED, 3, List.of(snapshot));
+        when(cards.publishResults(cardId, "director")).thenReturn(response);
+
+        assertThat(controller.publishResults(cardId, authentication)).isSameAs(response);
+
+        verify(push).rankingPublished(cardId, 2, 3);
+        verify(push).competitionCompleted(cardId);
+    }
+
+    @Test
+    void startingAndPublishingFinalQueueLifecyclePushes() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = director();
+        CardDtos.CardResponse started = withStage(card(cardId), RuntimeStage.FINAL_COLLECTION, 3, List.of());
+        CardDtos.CardResponse completed = withStage(card(cardId), RuntimeStage.FINAL_PUBLISHED, 3, List.of());
+        when(cards.startFinalRound(cardId, "director")).thenReturn(started);
+        when(cards.publishFinalRound(cardId, "director")).thenReturn(completed);
+
+        assertThat(controller.startFinal(cardId, authentication)).isSameAs(started);
+        assertThat(controller.publishFinal(cardId, authentication)).isSameAs(completed);
+
+        verify(push).finalStarted(cardId);
+        verify(push).competitionCompleted(cardId);
+    }
+
+    private static UsernamePasswordAuthenticationToken director() {
+        return new UsernamePasswordAuthenticationToken(
+            "director", "n/a", List.of(new SimpleGrantedAuthority("ROLE_DIRECTOR")));
+    }
+
+    private static CardDtos.CardResponse withStage(
+        CardDtos.CardResponse source,
+        RuntimeStage stage,
+        int currentGame,
+        List<CardDtos.SnapshotResponse> snapshots
+    ) {
+        return new CardDtos.CardResponse(
+            source.id(), source.tournamentId(), source.name(), source.division(), source.status(),
+            stage, currentGame, source.version(), source.games(), source.rules(), source.players(),
+            source.tables(), snapshots, source.audit(), source.finalType(), source.finalGames(),
+            source.finalRound(), source.gibsonEnabled(), source.createdAt());
     }
 
     private static CardDtos.CardResponse card(UUID id) {

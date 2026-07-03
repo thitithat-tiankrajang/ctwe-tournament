@@ -26,6 +26,23 @@ export interface TournamentArchive {
   archivedAt: string;
 }
 
+/** Admin-managed realtime tuning; mirrors /api/admin/settings/realtime. */
+export interface RealtimeSettings {
+  realtimeEnabled: boolean;
+  sseEnabled: boolean;
+  pollingEnabled: boolean;
+  maxPublicSseConnections: number;
+  maxStaffSseConnections: number;
+  pollingIntervalMs: number;
+  heartbeatIntervalMs: number;
+  reconnectDelayMs: number;
+  activePublicStreams: number;
+  activeStaffStreams: number;
+  updatedAt: string | null;
+}
+
+export type RealtimeSettingsInput = Omit<RealtimeSettings, "activePublicStreams" | "activeStaffStreams" | "updatedAt">;
+
 interface TournamentState {
   cards: TournamentCard[];
   auth: AuthState;
@@ -84,6 +101,8 @@ interface TournamentState {
   archiveTournament: (tournamentId: string) => Promise<void>;
   deleteArchive: (archiveId: string) => Promise<void>;
   setTournamentStatus: (tournamentId: string, open: boolean, password: string) => Promise<void>;
+  loadRealtimeSettings: () => Promise<RealtimeSettings>;
+  updateRealtimeSettings: (settings: RealtimeSettingsInput) => Promise<RealtimeSettings>;
   grantStaffTournament: (username: string, tournamentId: string) => Promise<void>;
   revokeStaffTournament: (username: string, tournamentId: string) => Promise<void>;
   listDirectors: () => Promise<ManagedUser[]>;
@@ -563,6 +582,12 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async setTournamentStatus(tournamentId, open, password) {
       await request(`/api/admin/tournaments/${tournamentId}/status`, { method: "PATCH", body: JSON.stringify({ open, password }) });
+    },
+    async loadRealtimeSettings() {
+      return request<RealtimeSettings>("/api/admin/settings/realtime");
+    },
+    async updateRealtimeSettings(settings) {
+      return request<RealtimeSettings>("/api/admin/settings/realtime", { method: "PUT", body: JSON.stringify(settings) });
     },
     async grantStaffTournament(username, tournamentId) {
       await request(`/api/director/staff/${encodeURIComponent(username)}/tournaments`, { method: "POST", body: JSON.stringify({ tournamentId }) });

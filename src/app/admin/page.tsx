@@ -13,6 +13,7 @@ import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { PromptDialog } from "@/ui/components/prompt-dialog";
+import { RealtimeSettingsPanel } from "@/ui/components/realtime-settings-panel";
 
 interface ConfirmState { title: string; description: string; confirmLabel: string; danger?: boolean; run: () => Promise<unknown>; }
 interface PromptState { title: string; description?: string; label: string; placeholder?: string; type?: "text" | "password"; confirmLabel: string; minLength?: number; run: (value: string) => Promise<unknown>; }
@@ -158,6 +159,8 @@ export default function AdminConsolePage() {
           ))}
         </div>
       </Panel>
+
+      <RealtimeSettingsPanel />
 
       <Panel title="คลังที่เก็บถาวร (Excel)" description="เฉพาะผู้ดูแลระบบเท่านั้นที่ดาวน์โหลดหรือลบไฟล์ Excel ที่เก็บถาวรได้">
         <div className="panel-padding">

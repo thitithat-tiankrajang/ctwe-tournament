@@ -52,11 +52,15 @@ security:
     password-hash: ${STAFF_PASSWORD_HASH}
 app:
   dev-tools-enabled: ${DEV_TOOLS_ENABLED:false}
-  # Every live SSE stream holds a Tomcat connection (max-connections: 2000). Caps keep streams well
-  # under half the connector so mutations always have headroom; over-cap clients fall back to polling.
-  sse:
-    max-staff-streams: ${SSE_MAX_STAFF_STREAMS:300}
-    max-public-streams: ${SSE_MAX_PUBLIC_STREAMS:600}
+  # SSE caps, heartbeat, polling interval and reconnect delay moved to the runtime_settings table
+  # (admin page > Realtime) so they apply without a redeploy. See RuntimeSettingsService.
+  push:
+    # Generate once and keep stable. Rotating VAPID keys invalidates existing browser subscriptions.
+    vapid-public-key: ${VAPID_PUBLIC_KEY:}
+    vapid-private-key: ${VAPID_PRIVATE_KEY:}
+    vapid-subject: ${VAPID_SUBJECT:}
+    # Comma-separated suffix override; defaults cover Chrome/Firefox/Safari/Edge push services.
+    allowed-host-suffixes: ${WEB_PUSH_ALLOWED_HOST_SUFFIXES:}
   cache:
     public-card-details:
       ttl-seconds: ${PUBLIC_CARD_CACHE_TTL_SECONDS:300}
@@ -65,6 +69,8 @@ app:
       ttl-seconds: ${PUBLIC_CARD_CATALOG_CACHE_TTL_SECONDS:300}
     public-card-versions:
       ttl-seconds: ${PUBLIC_CARD_VERSIONS_CACHE_TTL_SECONDS:3}
+    runtime-settings:
+      ttl-seconds: ${RUNTIME_SETTINGS_CACHE_TTL_SECONDS:5}
 management:
   endpoints:
     web:

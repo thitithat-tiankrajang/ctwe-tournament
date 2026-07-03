@@ -3,7 +3,6 @@ package com.ctwe.tournament.application;
 import com.ctwe.tournament.web.dto.CardDtos;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -25,46 +24,52 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 /**
  * SSE fan-out with event-day safety rails:
  * <ul>
- *   <li><b>Hard stream caps</b> — every live stream holds a Tomcat connection, so unbounded
- *       subscribers would exhaust the connector and freeze mutations for everyone. Over-cap
- *       subscribers get 503; both frontends already fall back to version polling.</li>
+ *   <li><b>Runtime-tunable caps</b> — every live stream holds a Tomcat connection, so unbounded
+ *       subscribers would exhaust the connector and freeze mutations for everyone. The caps (and
+ *       the SSE on/off switch) come from admin-managed {@link RuntimeSettings} and are evaluated
+ *       only when a NEW stream subscribes: lowering a cap never disconnects existing streams.
+ *       Over-cap subscribers get 503; both frontends fall back to version polling.</li>
  *   <li><b>Async sends</b> — a single bounded writer thread does all socket writes, so a stalled
  *       viewer connection can never block a staff result-save request thread. Dropped events are
  *       safe: events are invalidation hints and clients reconcile via version checks/polling.</li>
  *   <li><b>Heartbeat</b> — silently dead connections (mobile drops without FIN) are detected and
- *       pruned within ~25s instead of leaking until the stream timeout.</li>
+ *       pruned within one heartbeat interval instead of leaking until the stream timeout.</li>
  * </ul>
  */
 @Service
 public class CardEventPublisher {
     /** Kept short: the heartbeat prunes dead sockets and healthy clients reconnect transparently. */
     private static final long STREAM_TIMEOUT_MS = 45 * 60 * 1000L;
-    private static final long HEARTBEAT_INTERVAL_MS = 25_000L;
+    /** Fast fixed tick; the actual beat cadence is the runtime-configured heartbeat interval. */
+    private static final long HEARTBEAT_TICK_MS = 5_000L;
 
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> publicEmitters = new ConcurrentHashMap<>();
     private final AtomicInteger staffStreams = new AtomicInteger();
     private final AtomicInteger publicStreams = new AtomicInteger();
-    private final int maxStaffStreams;
-    private final int maxPublicStreams;
+    private final Supplier<RuntimeSettings> settings;
     private final Executor sendExecutor;
     private final ExecutorService ownedExecutor;
+    private volatile long lastHeartbeatAt = 0L;
 
     @Autowired
-    public CardEventPublisher(
-        @Value("${app.sse.max-staff-streams:300}") int maxStaffStreams,
-        @Value("${app.sse.max-public-streams:600}") int maxPublicStreams
-    ) {
-        this(maxStaffStreams, maxPublicStreams, newSendExecutor());
+    public CardEventPublisher(RuntimeSettingsService runtimeSettings) {
+        this(runtimeSettings::current, newSendExecutor());
     }
 
+    /** Test convenience: fixed caps, everything else at defaults. */
     CardEventPublisher(int maxStaffStreams, int maxPublicStreams, Executor sendExecutor) {
-        this.maxStaffStreams = maxStaffStreams;
-        this.maxPublicStreams = maxPublicStreams;
+        this(() -> new RuntimeSettings(true, true, true, maxPublicStreams, maxStaffStreams,
+            60_000, 25_000, 2_000, null), sendExecutor);
+    }
+
+    CardEventPublisher(Supplier<RuntimeSettings> settings, Executor sendExecutor) {
+        this.settings = settings;
         this.sendExecutor = sendExecutor;
         this.ownedExecutor = sendExecutor instanceof ExecutorService service ? service : null;
     }
@@ -97,12 +102,16 @@ public class CardEventPublisher {
         UUID cardId,
         LongSupplier currentVersion
     ) {
+        RuntimeSettings config = settings.get();
+        // Both refusals below reject NEW subscribers only — established streams are never touched.
+        // A non-200 response permanently stops the browser's EventSource (no retry storm); the
+        // client's version polling keeps it up to date without a live stream.
+        if (!config.realtimeEnabled() || !config.sseEnabled())
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Live streams are disabled");
         AtomicInteger streams = counterOf(subscribers);
-        int max = subscribers == emitters ? maxStaffStreams : maxPublicStreams;
+        int max = subscribers == emitters ? config.maxStaffSseConnections() : config.maxPublicSseConnections();
         if (streams.incrementAndGet() > max) {
             streams.decrementAndGet();
-            // Non-200 permanently stops the browser's EventSource (no retry storm); the client's
-            // version polling keeps it up to date without a live stream.
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Live stream capacity reached");
         }
 
@@ -184,12 +193,21 @@ public class CardEventPublisher {
             send(publicEmitters, cardId, emitter, "result", publicVersion, event);
     }
 
-    /** Detects and prunes dead connections; comments are invisible to EventSource handlers. */
-    @Scheduled(fixedDelay = HEARTBEAT_INTERVAL_MS)
+    /**
+     * Detects and prunes dead connections; comments are invisible to EventSource handlers.
+     * The scheduler ticks fast so the runtime-configured interval applies without a restart.
+     */
+    @Scheduled(fixedDelay = HEARTBEAT_TICK_MS)
     public void heartbeat() {
+        long now = System.currentTimeMillis();
+        if (now - lastHeartbeatAt < settings.get().heartbeatIntervalMs()) return;
+        lastHeartbeatAt = now;
         heartbeat(emitters);
         heartbeat(publicEmitters);
     }
+
+    public int activeStaffStreams() { return staffStreams.get(); }
+    public int activePublicStreams() { return publicStreams.get(); }
 
     private void heartbeat(Map<UUID, CopyOnWriteArrayList<SseEmitter>> subscribers) {
         subscribers.forEach((cardId, cardEmitters) -> {
@@ -213,12 +231,13 @@ public class CardEventPublisher {
         long version,
         Object event
     ) {
+        long reconnectDelay = settings.get().reconnectDelayMs();
         enqueue(() -> {
             try {
                 emitter.send(SseEmitter.event()
                     .name(name)
                     .id(Long.toString(version))
-                    .reconnectTime(2_000)
+                    .reconnectTime(reconnectDelay)
                     .data(event));
             } catch (IOException | RuntimeException error) {
                 remove(subscribers, cardId, emitter);

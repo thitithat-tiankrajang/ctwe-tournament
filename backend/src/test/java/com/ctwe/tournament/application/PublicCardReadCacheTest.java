@@ -137,7 +137,8 @@ class PublicCardReadCacheTest {
             .containsExactlyInAnyOrder(
                 TournamentCaches.PUBLIC_CARD_DETAILS,
                 TournamentCaches.PUBLIC_CARD_CATALOG,
-                TournamentCaches.PUBLIC_CARD_VERSIONS);
+                TournamentCaches.PUBLIC_CARD_VERSIONS,
+                TournamentCaches.RUNTIME_SETTINGS);
 
         Object nativeCache = cacheManager.getCache(TournamentCaches.PUBLIC_CARD_DETAILS).getNativeCache();
         assertThat(nativeCache).isInstanceOf(com.github.benmanes.caffeine.cache.Cache.class);

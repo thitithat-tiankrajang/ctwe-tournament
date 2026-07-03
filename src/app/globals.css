@@ -501,6 +501,24 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .confirm-dialog > .form-label { display: block; margin: 0; padding: 14px 16px 6px; }
 .confirm-dialog > .form-label + .input { display: block; margin: 0 16px 4px; width: calc(100% - 32px); }
 .confirm-dialog > p + .form-label { padding-top: 0; }
+.notification-consent { width: min(560px, 100%); }
+.notification-consent__events {
+  background: #f7f9fc;
+  border: 1px solid var(--border);
+  color: var(--ink);
+  display: grid;
+  font-size: 13px;
+  gap: 7px;
+  list-style-position: inside;
+  margin: 0 16px;
+  padding: 12px 14px;
+}
+.confirm-dialog > .notification-consent__privacy {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+  padding-top: 11px;
+}
 
 /* App toasts — our replacement for window.alert feedback. */
 .toaster { bottom: 18px; display: flex; flex-direction: column; gap: 8px; max-width: min(380px, calc(100vw - 24px)); position: fixed; right: 18px; z-index: 400; }

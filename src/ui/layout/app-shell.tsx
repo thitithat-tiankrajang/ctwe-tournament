@@ -30,6 +30,7 @@ import { useEffect, useRef, useState } from "react";
 import { readActiveTournament, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { useCardSync } from "@/application/tournament/use-card-sync";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
+import { usePushNotifications, type PushNotificationScope, type PushToggleResult } from "@/application/tournament/use-push-notifications";
 import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
@@ -122,6 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [locked, setLocked] = useState(true);   // sidebar pinned open; when unlocked it expands on hover
   const [hovering, setHovering] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [notificationConfirm, setNotificationConfirm] = useState(false);
   const isStaff = hasStaffAccess(auth);
   const admin = isAdmin(auth);
   const director = isDirector(auth);
@@ -140,11 +142,40 @@ export function AppShell({ children }: { children: ReactNode }) {
   });
   // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
   useCardSync(isStaff ? id : undefined);
-  const { notificationsOn, toggleNotifications } = usePublicSync(id, !isStaff);
-  const handleToggleNotifications = async () => {
-    const result = await toggleNotifications();
+  usePublicSync(id, !isStaff);
+  const notificationScope: PushNotificationScope | null = !isStaff && id && pathname === `/cards/${id}`
+    ? {
+        type: "CARD",
+        id,
+        label: currentCard ? `${currentCard.name} · ${currentCard.division}` : "รุ่นการแข่งขันนี้",
+      }
+    : !isStaff && pathname === "/cards" && activeTournament
+      ? { type: "TOURNAMENT", id: activeTournament.id, label: activeTournament.name }
+      : null;
+  const { notificationsOn, pending: notificationPending, enable: enableNotifications, disable: disableNotifications } =
+    usePushNotifications(notificationScope);
+  const showNotificationError = (result: PushToggleResult) => {
     if (result === "denied") toast.error("การแจ้งเตือนถูกปิดในเบราว์เซอร์ — เปิดใหม่ได้จากการตั้งค่าเว็บไซต์ของเบราว์เซอร์");
-    else if (result === "unsupported") toast.error("อุปกรณ์หรือเบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน");
+    else if (result === "unsupported") toast.error("อุปกรณ์นี้ยังใช้ Web Push ไม่ได้ — บน iPhone/iPad ให้เพิ่มเว็บไปหน้าจอโฮมก่อน");
+    else if (result === "unavailable") toast.error("ระบบส่งแจ้งเตือนยังไม่ได้ตั้งค่ากุญแจสำหรับเซิร์ฟเวอร์");
+    else if (result === "error") toast.error("ตั้งค่าการแจ้งเตือนไม่สำเร็จ กรุณาลองอีกครั้ง");
+  };
+  const handleNotificationButton = async () => {
+    if (!notificationsOn) {
+      setNotificationConfirm(true);
+      return;
+    }
+    const result = await disableNotifications();
+    showNotificationError(result);
+    if (result === "granted") toast.success(`ปิดการแจ้งเตือน${notificationScope?.type === "CARD" ? "เฉพาะรุ่นนี้" : "ทั้งรายการ"}แล้ว`);
+  };
+  const confirmEnableNotifications = async () => {
+    const result = await enableNotifications();
+    showNotificationError(result);
+    if (result === "granted") {
+      setNotificationConfirm(false);
+      toast.success(`เปิดการแจ้งเตือน${notificationScope?.type === "CARD" ? "เฉพาะรุ่นนี้" : "ทุกรุ่นในรายการนี้"}แล้ว`);
+    }
   };
   // Entry is link-based now. Directors and admins reach their tournament list from "/"; each also
   // keeps the console relevant to their role.
@@ -321,14 +352,15 @@ export function AppShell({ children }: { children: ReactNode }) {
         {isStaff ? (
           <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>
         ) : (
-          <div className="sidebar__public-actions">
+          notificationScope && <div className="sidebar__public-actions">
             <Button
               type="button"
               variant="secondary"
               size="sm"
               className="sidebar__auth"
-              onClick={() => void handleToggleNotifications()}
-              title={notificationsOn ? "ปิดการแจ้งเตือนผลที่เผยแพร่แล้ว" : "เปิดการแจ้งเตือนเมื่อมีการเผยแพร่ผล"}
+              disabled={notificationPending}
+              onClick={() => void handleNotificationButton()}
+              title={notificationsOn ? `ปิดการแจ้งเตือน: ${notificationScope.label}` : `เปิดการแจ้งเตือน: ${notificationScope.label}`}
             >
               {notificationsOn ? <BellRing size={15} /> : <Bell size={15} />}
               <span className="sidebar__auth-label">{notificationsOn ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}</span>
@@ -348,12 +380,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               : <span className="mobile-brand__title"><Trophy size={19} /><strong>{activeTournament?.name ?? "Tournament Control"}</strong></span>
             : <Link href="/" className="mobile-brand__title" aria-label="ไปหน้ารวมการแข่งขัน"><Trophy size={19} /><strong>Tournament Control</strong></Link>}
           <div className="mobile-brand__actions">
-            {!isStaff && (
+            {notificationScope && (
               <button
                 type="button"
                 className={`mobile-brand__auth${notificationsOn ? " mobile-brand__auth--enabled" : ""}`}
-                onClick={() => void handleToggleNotifications()}
-                aria-label={notificationsOn ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}
+                disabled={notificationPending}
+                onClick={() => void handleNotificationButton()}
+                aria-label={notificationsOn ? `ปิดการแจ้งเตือน ${notificationScope.label}` : `เปิดการแจ้งเตือน ${notificationScope.label}`}
               >
                 {notificationsOn ? <BellRing size={15} /> : <Bell size={15} />}
               </button>
@@ -379,6 +412,36 @@ export function AppShell({ children }: { children: ReactNode }) {
             <footer>
               <Button variant="secondary" disabled={loggingOut} onClick={() => setLogoutConfirm(false)}>ยกเลิก</Button>
               <Button disabled={loggingOut} onClick={() => void confirmLogout()}>{loggingOut ? <LoaderCircle className="loading-spinner" size={16} /> : <LogOut size={16} />}{loggingOut ? "กำลังออก…" : "ออกจากระบบ"}</Button>
+            </footer>
+          </section>
+        </div>
+      )}
+      {notificationConfirm && notificationScope && (
+        <div className="dialog-backdrop" role="presentation" onMouseDown={() => !notificationPending && setNotificationConfirm(false)}>
+          <section className="confirm-dialog notification-consent" role="dialog" aria-modal="true" aria-labelledby="notification-consent-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div className="confirm-dialog__icon"><BellRing size={20} /></div>
+              <div><span>การแจ้งเตือนบนอุปกรณ์</span><h2 id="notification-consent-title">เปิดแจ้งเตือน{notificationScope.type === "CARD" ? "เฉพาะรุ่นนี้" : "ทั้งรายการ"}?</h2></div>
+              <button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={notificationPending} onClick={() => setNotificationConfirm(false)}><X size={18} /></button>
+            </header>
+            <p>
+              {notificationScope.type === "CARD"
+                ? <>คุณจะได้รับแจ้งเตือนเฉพาะ <strong>{notificationScope.label}</strong></>
+                : <>คุณจะได้รับแจ้งเตือนจาก <strong>ทุก card ใน {notificationScope.label}</strong></>}
+            </p>
+            <ul className="notification-consent__events">
+              <li>Pairing ของแต่ละเกมถูกเผยแพร่</li>
+              <li>Ranking ของแต่ละเกมถูกเผยแพร่</li>
+              <li>รอบชิงเริ่มต้น</li>
+              <li>การแข่งขันจบ พร้อมชื่อผู้ชนะอันดับ 1</li>
+            </ul>
+            <p className="notification-consent__privacy">ระบบเก็บเฉพาะรหัสส่งข้อความที่เบราว์เซอร์สร้างให้ ไม่ขอชื่อ ตำแหน่ง หรือข้อมูลส่วนตัวของผู้ชม คุณปิดขอบเขตนี้ได้จากปุ่มเดิมทุกเมื่อ</p>
+            <footer>
+              <Button variant="secondary" disabled={notificationPending} onClick={() => setNotificationConfirm(false)}>ไว้ภายหลัง</Button>
+              <Button disabled={notificationPending} onClick={() => void confirmEnableNotifications()}>
+                {notificationPending ? <LoaderCircle className="loading-spinner" size={16} /> : <BellRing size={16} />}
+                {notificationPending ? "กำลังเปิด…" : "อนุญาตแจ้งเตือน"}
+              </Button>
             </footer>
           </section>
         </div>

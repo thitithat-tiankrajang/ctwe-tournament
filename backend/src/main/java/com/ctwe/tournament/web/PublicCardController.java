@@ -2,8 +2,11 @@ package com.ctwe.tournament.web;
 
 import com.ctwe.tournament.application.CardEventPublisher;
 import com.ctwe.tournament.application.PublicCardQueryService;
+import com.ctwe.tournament.application.RuntimeSettings;
+import com.ctwe.tournament.application.RuntimeSettingsService;
 import com.ctwe.tournament.web.dto.CardDtos;
 import com.ctwe.tournament.web.dto.PublicCardDtos;
+import com.ctwe.tournament.web.dto.SettingsDtos;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.CacheControl;
@@ -35,10 +38,12 @@ public class PublicCardController {
 
     private final PublicCardQueryService cards;
     private final CardEventPublisher events;
+    private final RuntimeSettingsService settings;
 
-    public PublicCardController(PublicCardQueryService cards, CardEventPublisher events) {
+    public PublicCardController(PublicCardQueryService cards, CardEventPublisher events, RuntimeSettingsService settings) {
         this.cards = cards;
         this.events = events;
+        this.settings = settings;
     }
 
     @GetMapping("/cards")
@@ -69,6 +74,18 @@ public class PublicCardController {
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
         response.setHeader("X-Accel-Buffering", "no");
         return events.subscribePublic(cardId, () -> cards.get(cardId).version());
+    }
+
+    /** Browser sync strategy: whether to open SSE, whether/how fast to poll, and the reconnect delay. */
+    @GetMapping("/realtime-config")
+    public ResponseEntity<SettingsDtos.PublicRealtimeConfig> realtimeConfig(HttpServletRequest request) {
+        RuntimeSettings current = settings.current();
+        SettingsDtos.PublicRealtimeConfig body = new SettingsDtos.PublicRealtimeConfig(
+            current.realtimeEnabled(), current.sseEnabled(), current.pollingEnabled(),
+            current.pollingIntervalMs(), current.reconnectDelayMs());
+        return cached(request, body, etag("realtime-config", List.of(
+            body.realtimeEnabled() + "", body.sseEnabled() + "", body.pollingEnabled() + "",
+            body.pollingIntervalMs() + "", body.reconnectDelayMs() + "")), "realtime-config");
     }
 
     private <T> ResponseEntity<T> cached(

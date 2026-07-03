@@ -1,6 +1,7 @@
 node_modules
 .next
 .next-dev
+.open-next
 out
 coverage
 .DS_Store
@@ -9,5 +10,7 @@ coverage
 .env
 .env.local
 .env.production
+.dev.vars
+.wrangler
 .vercel
 backend/target

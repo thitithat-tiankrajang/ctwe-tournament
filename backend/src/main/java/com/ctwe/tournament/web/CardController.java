@@ -3,6 +3,7 @@ package com.ctwe.tournament.web;
 import com.ctwe.tournament.application.CardEventPublisher;
 import com.ctwe.tournament.application.PublicCardQueryService;
 import com.ctwe.tournament.application.TournamentCardService;
+import com.ctwe.tournament.application.WebPushService;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService.Capability;
 import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
@@ -33,15 +34,17 @@ public class CardController {
     private final AuthorizationService authz;
     private final ReauthenticationService reauthentication;
     private final CardEventPublisher events;
+    private final WebPushService push;
 
     public CardController(TournamentCardService service, PublicCardQueryService publicCards,
                           AuthorizationService authz, ReauthenticationService reauthentication,
-                          CardEventPublisher events) {
+                          CardEventPublisher events, WebPushService push) {
         this.service = service;
         this.publicCards = publicCards;
         this.authz = authz;
         this.reauthentication = reauthentication;
         this.events = events;
+        this.push = push;
     }
 
     @GetMapping
@@ -190,14 +193,21 @@ public class CardController {
     @PostMapping("/{cardId}/pairings/confirm")
     public CardDtos.CardResponse confirm(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.confirmPairingPreview(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changed(service.confirmPairingPreview(cardId, authentication.getName()));
+        push.pairingPublished(cardId, card.currentGame());
+        return card;
     }
 
     @PostMapping("/{cardId}/pairings/publish-next")
     public CardDtos.CardResponse publishNextPairing(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        long previousPublicVersion = publicCards.version(cardId);
         CardDtos.CardResponse card = changed(service.publishPairResultDestination(cardId, authentication.getName()));
-        events.publishPublic(cardId, publicCards.version(cardId));
+        long nextPublicVersion = publicCards.version(cardId);
+        if (nextPublicVersion > previousPublicVersion) {
+            events.publishPublic(cardId, nextPublicVersion);
+            push.pairingPublished(cardId, card.currentGame() + 1);
+        }
         return card;
     }
 
@@ -216,14 +226,29 @@ public class CardController {
     @PostMapping("/{cardId}/results/publish")
     public CardDtos.CardResponse publishResults(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.publishResults(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changed(service.publishResults(cardId, authentication.getName()));
+        CardDtos.SnapshotResponse snapshot = card.snapshots().stream()
+            .filter(item -> item.confirmedAt() != null && !item.confirmedAt().isBlank())
+            .max(java.util.Comparator.comparingInt(item ->
+                item.gameNumbers().stream().mapToInt(Integer::intValue).max().orElse(0)))
+            .orElse(null);
+        if (snapshot != null) {
+            int from = snapshot.gameNumbers().stream().mapToInt(Integer::intValue).min().orElse(card.currentGame());
+            int to = snapshot.gameNumbers().stream().mapToInt(Integer::intValue).max().orElse(card.currentGame());
+            push.rankingPublished(cardId, from, to);
+        }
+        if (card.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.FINAL_PUBLISHED)
+            push.competitionCompleted(cardId);
+        return card;
     }
 
     // ---- final / championship round ----
     @PostMapping("/{cardId}/final/start")
     public CardDtos.CardResponse startFinal(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.startFinalRound(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changed(service.startFinalRound(cardId, authentication.getName()));
+        push.finalStarted(cardId);
+        return card;
     }
 
     @PutMapping("/{cardId}/final/{slot}/games/{gameIndex}")
@@ -243,7 +268,9 @@ public class CardController {
     @PostMapping("/{cardId}/final/publish")
     public CardDtos.CardResponse publishFinal(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.publishFinalRound(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changed(service.publishFinalRound(cardId, authentication.getName()));
+        push.competitionCompleted(cardId);
+        return card;
     }
 
     private CardDtos.CardResponse changed(CardDtos.CardResponse card) {

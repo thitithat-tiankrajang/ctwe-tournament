@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ctwe-tournament",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-07-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

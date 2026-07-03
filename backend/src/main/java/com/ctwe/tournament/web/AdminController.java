@@ -1,8 +1,12 @@
 package com.ctwe.tournament.web;
 
+import com.ctwe.tournament.application.CardEventPublisher;
+import com.ctwe.tournament.application.RuntimeSettings;
+import com.ctwe.tournament.application.RuntimeSettingsService;
 import com.ctwe.tournament.application.TenantService;
 import com.ctwe.tournament.application.TournamentArchiveService;
 import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
+import com.ctwe.tournament.web.dto.SettingsDtos;
 import com.ctwe.tournament.web.dto.TenantDtos;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -19,11 +23,37 @@ public class AdminController {
     private final TenantService tenant;
     private final TournamentArchiveService archive;
     private final ReauthenticationService reauth;
+    private final RuntimeSettingsService settings;
+    private final CardEventPublisher events;
 
-    public AdminController(TenantService tenant, TournamentArchiveService archive, ReauthenticationService reauth) {
+    public AdminController(TenantService tenant, TournamentArchiveService archive, ReauthenticationService reauth,
+                           RuntimeSettingsService settings, CardEventPublisher events) {
         this.tenant = tenant;
         this.archive = archive;
         this.reauth = reauth;
+        this.settings = settings;
+        this.events = events;
+    }
+
+    // --- runtime realtime settings ---
+    @GetMapping("/settings/realtime")
+    public SettingsDtos.RealtimeSettingsResponse realtimeSettings() {
+        return realtimeResponse(settings.current());
+    }
+
+    /** Applies immediately (cache evicted); existing SSE streams are never disconnected by a change. */
+    @PutMapping("/settings/realtime")
+    public SettingsDtos.RealtimeSettingsResponse updateRealtimeSettings(
+        @Valid @RequestBody SettingsDtos.RealtimeSettingsRequest request, Authentication auth) {
+        return realtimeResponse(settings.update(request, auth.getName()));
+    }
+
+    private SettingsDtos.RealtimeSettingsResponse realtimeResponse(RuntimeSettings current) {
+        return new SettingsDtos.RealtimeSettingsResponse(
+            current.realtimeEnabled(), current.sseEnabled(), current.pollingEnabled(),
+            current.maxPublicSseConnections(), current.maxStaffSseConnections(),
+            current.pollingIntervalMs(), current.heartbeatIntervalMs(), current.reconnectDelayMs(),
+            events.activePublicStreams(), events.activeStaffStreams(), current.updatedAt());
     }
 
     // --- tournaments ---

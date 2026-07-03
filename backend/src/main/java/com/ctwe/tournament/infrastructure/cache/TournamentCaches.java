@@ -4,6 +4,7 @@ public final class TournamentCaches {
     public static final String PUBLIC_CARD_DETAILS = "public-card-details";
     public static final String PUBLIC_CARD_CATALOG = "public-card-catalog";
     public static final String PUBLIC_CARD_VERSIONS = "public-card-versions";
+    public static final String RUNTIME_SETTINGS = "runtime-settings";
 
     private TournamentCaches() {}
 }

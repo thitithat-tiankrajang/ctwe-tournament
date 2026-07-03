@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { Pairing, TournamentCard } from "@/domain/tournament/types";
 import { useTournamentStore } from "./store";
+import { useRealtimeConfig } from "./use-realtime-config";
 
 interface CardChangeEvent {
   cardId: string;
@@ -29,6 +30,10 @@ export function useCardSync(cardId: string | undefined, fallbackIntervalMs = 30_
   const syncCard = useTournamentStore((state) => state.syncCard);
   const applyCardState = useTournamentStore((state) => state.applyCardState);
   const applyResultPatch = useTournamentStore((state) => state.applyResultPatch);
+  // Runtime config gates the stream only. The fallback version poll stays on regardless:
+  // concurrent staff editing must keep reconciling even when an admin disables realtime for viewers.
+  const config = useRealtimeConfig();
+  const sseAllowed = config.realtimeEnabled && config.sseEnabled;
   const currentVersion = useTournamentStore((state) => cardId ? state.cards.find((card) => card.id === cardId)?.version : undefined);
   const currentVersionRef = useRef<number | undefined>(currentVersion);
   useEffect(() => { currentVersionRef.current = currentVersion; }, [currentVersion]);
@@ -51,7 +56,7 @@ export function useCardSync(cardId: string | undefined, fallbackIntervalMs = 30_
     const timer = window.setInterval(() => void tick(), fallbackIntervalMs);
     void tick();
     let source: EventSource | null = null;
-    if ("EventSource" in window) {
+    if ("EventSource" in window && sseAllowed) {
       source = new EventSource(`/api/cards/${encodeURIComponent(cardId)}/events`);
       source.onopen = () => { streamConnected = true; };
       source.addEventListener("connected", (event) => {
@@ -127,5 +132,5 @@ export function useCardSync(cardId: string | undefined, fallbackIntervalMs = 30_
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [applyCardState, applyResultPatch, cardId, fallbackIntervalMs, syncCard]);
+  }, [applyCardState, applyResultPatch, cardId, fallbackIntervalMs, sseAllowed, syncCard]);
 }

@@ -18,6 +18,12 @@ services:
         sync: false
       - key: STAFF_PASSWORD_HASH
         sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
       - key: PORT
         value: "10000"
       - key: SESSION_COOKIE_SECURE

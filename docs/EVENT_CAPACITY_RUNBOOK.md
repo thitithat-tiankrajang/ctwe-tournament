@@ -8,6 +8,7 @@ Target: one active tournament, three cards, up to 400 players per card, ten staf
 ```text
 Public browser -> Vercel CDN -> /api/public/** -> Render -> Caffeine -> Neon
 Staff browser  -> Vercel proxy -> /api/cards/** + SSE -> Render -> Neon
+Render -> browser vendor push service -> subscribed devices (publication events only)
 ```
 
 Only `/api/public/**` is CDN-cacheable. Authentication, sessions, CSRF, mutations, staff card
@@ -59,24 +60,47 @@ Roll back to the last known deployment, keep the CDN serving the last published 
 workflow transitions until staff writes are healthy. Do not scale to multiple Render instances:
 staff SSE and in-memory event delivery currently assume one application instance.
 
-## SSE capacity and degraded mode
+## SSE capacity and degraded mode (runtime-tunable)
 
 Live streams are hard-capped so they can never exhaust the Tomcat connector (`max-connections: 2000`)
-and freeze mutations:
+and freeze mutations. All realtime knobs live in the `runtime_settings` table and are managed from
+**admin console → Realtime (SSE / Polling)** — changes apply within seconds, no redeploy:
 
-- `SSE_MAX_STAFF_STREAMS` (default 300) and `SSE_MAX_PUBLIC_STREAMS` (default 600).
-- Over-cap subscribers receive 503 once; the browser's `EventSource` stops permanently and the client
-  falls back to polling (staff: 30 s version poll; public: 60 s versions poll). This is the intended
-  degraded mode — later viewers see updates within a minute instead of instantly.
-- A 25 s heartbeat prunes silently dead connections (mobile drops) within seconds instead of leaking
-  them until the 45-minute stream timeout; every pruned stream frees a capacity slot.
+- Realtime/SSE/Polling on-off switches, Max SSE Connections (viewers, default 600; staff, default
+  300), Polling Interval (default 60 s), Heartbeat Interval (default 25 s), Reconnect Delay
+  (default 2 s). Browsers read `/api/public/realtime-config` (edge-cached, refetched once a minute).
+- Cap and switch changes affect NEW subscriptions only — established streams never drop.
+- Over-cap or switched-off subscribers receive 503 once; the browser's `EventSource` stops
+  permanently and the client falls back to version polling at the configured interval. This is the
+  intended degraded mode — later viewers see updates within the poll interval instead of instantly.
+- The heartbeat prunes silently dead connections (mobile drops) within one interval instead of
+  leaking them until the 45-minute stream timeout; every pruned stream frees a capacity slot.
 - All SSE socket writes happen on one dedicated `sse-send` thread with a bounded queue, so a stalled
   viewer connection can never block a staff result-save request thread. Dropped events are safe:
   clients reconcile through version checks and polling.
 - On deploy shutdown all streams are completed cleanly so browsers reconnect to the new instance.
+- Live occupancy: admin Realtime panel, or `/actuator/metrics/sse.streams.public|staff`.
 
-If Render connection counts approach the cap during the event, lower `SSE_MAX_PUBLIC_STREAMS` and
-restart — public viewers degrade to polling, staff streams are unaffected.
+If Render connection counts approach the connector limit during the event, lower “Max SSE
+Connections (viewers)” in the admin page — it takes effect immediately, public viewers degrade to
+polling, staff streams are unaffected. Raising the polling interval sheds edge/origin request rate
+the same way.
+
+Certification load tests live in `load-tests/suite/` (viewers with SSE→polling fallback, staff
+writers, stepped 500/2000/5000 runner, server monitor, and a report with the maximum stable
+concurrent viewers verdict).
+
+## Web Push capacity and privacy
+
+- Web Push sends one small payload per subscribed endpoint only when Pairing/Ranking is published,
+  a final starts, or a card finishes. It creates no always-open connection and no extra viewer poll.
+- A viewer subscribed at both tournament and card level still receives one delivery per event
+  because endpoints are deduplicated before fan-out.
+- Delivery runs outside the staff request on four bounded worker threads. Push-service slowness
+  cannot hold a result-save request or exhaust Tomcat threads.
+- Remove endpoint rows on HTTP 404/410, explicit unsubscribe, browser expiration, card deletion, or
+  tournament archival. Never log endpoint URLs or encryption keys.
+- Keep production VAPID keys stable. Rotating them invalidates existing browser subscriptions.
 
 ## After the event
 
