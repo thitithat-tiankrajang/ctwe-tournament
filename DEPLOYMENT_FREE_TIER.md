@@ -123,21 +123,23 @@ npm run cf:build
 
 จากนั้นตั้ง continuous deployment:
 
-1. Cloudflare Dashboard → **Workers & Pages** → **Create application**
-2. เลือก **Import a repository** และ repository เดียวกับ Render
-3. Worker name ต้องเป็น `ctwe-tournament` ให้ตรงกับ `wrangler.jsonc`
-4. Production branch: `main`, Root directory: เว้นว่าง (repository root)
-5. Build command: `npm run cf:build`
-6. Deploy command: `npx wrangler deploy`
-7. Non-production deploy command: `npx wrangler versions upload`
-8. ตั้ง **Build variables and secrets**:
+1. ถ้าบัญชียังไม่เคย deploy Worker ให้เปิด **Workers & Pages → Overview** แล้วกด
+   **Register a workers.dev subdomain** เพื่อตั้ง `<YOUR_ACCOUNT_SUBDOMAIN>.workers.dev` หนึ่งครั้ง
+2. Cloudflare Dashboard → **Workers & Pages** → **Create application**
+3. เลือก **Import a repository** และ repository เดียวกับ Render
+4. Worker name ต้องเป็น `ctwe-tournament` ให้ตรงกับ `wrangler.jsonc`
+5. Production branch: `main`, Root directory: เว้นว่าง (repository root)
+6. Build command: `npm run cf:build`
+7. Deploy command: `npx wrangler deploy`
+8. Non-production deploy command: `npx wrangler versions upload`
+9. ตั้ง **Build variables and secrets**:
 
 ```text
 NODE_VERSION=22.13.0
 BACKEND_URL=https://YOUR-RENDER-SERVICE.onrender.com
 ```
 
-9. หลังสร้าง Worker ไปที่ **Settings → Variables & Secrets** แล้วเพิ่ม runtime variable:
+10. หลังสร้าง Worker ไปที่ **Settings → Variables & Secrets** แล้วเพิ่ม runtime variable:
 
 ```text
 BACKEND_URL=https://YOUR-RENDER-SERVICE.onrender.com
