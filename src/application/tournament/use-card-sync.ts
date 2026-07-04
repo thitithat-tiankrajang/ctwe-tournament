@@ -21,17 +21,14 @@ interface CardStateEvent extends CardChangeEvent {
 
 /**
  * Live multi-user sync: while a card is open, subscribe to server-sent card change events so every
- * screen (staff + directors, many machines) sees each other's edits immediately. Polling runs only
- * while the stream is disconnected; continuously polling every few seconds creates significant HTTP
- * and database egress even when nobody is editing. Unsaved drafts and the quick-entry highlight remain
- * local component state.
+ * screen (staff + directors, many machines) sees each other's edits immediately. EventSource handles
+ * reconnects; there is intentionally no polling fallback. Unsaved drafts and the quick-entry
+ * highlight remain local component state.
  */
-export function useCardSync(cardId: string | undefined, fallbackIntervalMs = 30_000) {
+export function useCardSync(cardId: string | undefined) {
   const syncCard = useTournamentStore((state) => state.syncCard);
   const applyCardState = useTournamentStore((state) => state.applyCardState);
   const applyResultPatch = useTournamentStore((state) => state.applyResultPatch);
-  // Runtime config gates the stream only. The fallback version poll stays on regardless:
-  // concurrent staff editing must keep reconciling even when an admin disables realtime for viewers.
   const config = useRealtimeConfig();
   const sseAllowed = config.realtimeEnabled && config.sseEnabled;
   const currentVersion = useTournamentStore((state) => cardId ? state.cards.find((card) => card.id === cardId)?.version : undefined);
@@ -41,24 +38,9 @@ export function useCardSync(cardId: string | undefined, fallbackIntervalMs = 30_
   useEffect(() => {
     if (!cardId) return;
     let active = true;
-    let streamConnected = false;
-    let missedWhileHidden = false;
-    // Poll the tiny version endpoint only as a fallback while SSE is unavailable.
-    const tick = async () => {
-      if (!active || streamConnected || document.visibilityState === "hidden") return;
-      try {
-        const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}/version`, { credentials: "same-origin", cache: "no-store" });
-        if (!active || !response.ok) return;
-        const { version } = (await response.json()) as { version: number };
-        if (currentVersionRef.current === undefined || version !== currentVersionRef.current) await syncCard(cardId);
-      } catch { /* transient poll error — keep current state */ }
-    };
-    const timer = window.setInterval(() => void tick(), fallbackIntervalMs);
-    void tick();
     let source: EventSource | null = null;
     if ("EventSource" in window && sseAllowed) {
       source = new EventSource(`/api/cards/${encodeURIComponent(cardId)}/events`);
-      source.onopen = () => { streamConnected = true; };
       source.addEventListener("connected", (event) => {
         if (!active) return;
         try {
@@ -73,10 +55,6 @@ export function useCardSync(cardId: string | undefined, fallbackIntervalMs = 30_
       });
       source.addEventListener("card", (event) => {
         if (!active) return;
-        if (document.visibilityState === "hidden") {
-          missedWhileHidden = true;
-          return;
-        }
         try {
           const payload = JSON.parse((event as MessageEvent<string>).data) as CardChangeEvent;
           if (payload.cardId !== cardId) return;
@@ -97,10 +75,6 @@ export function useCardSync(cardId: string | undefined, fallbackIntervalMs = 30_
       });
       source.addEventListener("result", (event) => {
         if (!active) return;
-        if (document.visibilityState === "hidden") {
-          missedWhileHidden = true;
-          return;
-        }
         try {
           const payload = JSON.parse((event as MessageEvent<string>).data) as ResultChangeEvent;
           if (payload.cardId !== cardId) return;
@@ -111,26 +85,10 @@ export function useCardSync(cardId: string | undefined, fallbackIntervalMs = 30_
           void syncCard(cardId);
         }
       });
-      source.onerror = () => {
-        streamConnected = false;
-        void tick();
-      };
     }
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      if (missedWhileHidden) {
-        missedWhileHidden = false;
-        void syncCard(cardId);
-      } else {
-        void tick();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisible);
     return () => {
       active = false;
       source?.close();
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [applyCardState, applyResultPatch, cardId, fallbackIntervalMs, sseAllowed, syncCard]);
+  }, [applyCardState, applyResultPatch, cardId, sseAllowed, syncCard]);
 }

@@ -33,10 +33,10 @@ import java.util.function.Supplier;
  *       subscribers would exhaust the connector and freeze mutations for everyone. The caps (and
  *       the SSE on/off switch) come from admin-managed {@link RuntimeSettings} and are evaluated
  *       only when a NEW stream subscribes: lowering a cap never disconnects existing streams.
- *       Over-cap subscribers get 503; both frontends fall back to version polling.</li>
+ *       Over-cap subscribers get 503 and must wait for EventSource to reconnect.</li>
  *   <li><b>Async sends</b> — a single bounded writer thread does all socket writes, so a stalled
- *       viewer connection can never block a staff result-save request thread. Dropped events are
- *       safe: events are invalidation hints and clients reconcile via version checks/polling.</li>
+ *       viewer connection can never block a staff result-save request thread. Event ids let a
+ *       reconnecting client identify the current version without periodic polling.</li>
  *   <li><b>Heartbeat</b> — silently dead connections (mobile drops without FIN) are detected and
  *       pruned within one heartbeat interval instead of leaking until the stream timeout.</li>
  * </ul>
@@ -64,7 +64,7 @@ public class CardEventPublisher {
 
     /** Test convenience: fixed caps, everything else at defaults. */
     CardEventPublisher(int maxStaffStreams, int maxPublicStreams, Executor sendExecutor) {
-        this(() -> new RuntimeSettings(true, true, true, maxPublicStreams, maxStaffStreams,
+        this(() -> new RuntimeSettings(true, true, false, maxPublicStreams, maxStaffStreams,
             60_000, 25_000, 2_000, null), sendExecutor);
     }
 
@@ -104,8 +104,7 @@ public class CardEventPublisher {
     ) {
         RuntimeSettings config = settings.get();
         // Both refusals below reject NEW subscribers only — established streams are never touched.
-        // A non-200 response permanently stops the browser's EventSource (no retry storm); the
-        // client's version polling keeps it up to date without a live stream.
+        // New connections above the configured cap are rejected to protect the origin.
         if (!config.realtimeEnabled() || !config.sseEnabled())
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Live streams are disabled");
         AtomicInteger streams = counterOf(subscribers);
@@ -249,7 +248,7 @@ public class CardEventPublisher {
         try {
             sendExecutor.execute(task);
         } catch (RejectedExecutionException rejected) {
-            // Shutting down or saturated: events are hints, clients reconcile via polling.
+            // Shutting down or saturated: EventSource reconnect will receive the current version.
         }
     }
 

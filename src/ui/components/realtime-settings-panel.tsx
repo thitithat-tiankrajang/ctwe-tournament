@@ -12,8 +12,7 @@ const numberField: React.CSSProperties = { maxWidth: 160 };
 
 /**
  * Admin-tunable realtime behaviour (stored in runtime_settings, applied without redeploy).
- * Lowering a cap or disabling SSE only affects NEW connections — open streams stay connected
- * and refused browsers fall back to polling automatically.
+ * Lowering a cap or disabling SSE only affects NEW connections; open streams stay connected.
  */
 export function RealtimeSettingsPanel() {
   const loadRealtimeSettings = useTournamentStore((state) => state.loadRealtimeSettings);
@@ -72,8 +71,8 @@ export function RealtimeSettingsPanel() {
 
   return (
     <Panel
-      title="Realtime (SSE / Polling)"
-      description="ปรับพฤติกรรม realtime ได้ทันทีโดยไม่ต้อง deploy · การลดเพดานหรือปิด SSE มีผลเฉพาะการเชื่อมต่อใหม่ — สตรีมที่เปิดอยู่ไม่หลุด และเบราว์เซอร์ที่ถูกปฏิเสธจะสลับไป polling อัตโนมัติ"
+      title="Realtime (SSE only)"
+      description="ระบบใช้ SSE เท่านั้นเพื่อลด edge requests · การลดเพดานหรือปิด SSE มีผลเฉพาะการเชื่อมต่อใหม่ และสตรีมที่เปิดอยู่จะไม่หลุด"
     >
       {!form ? (
         <p className="muted panel-padding">กำลังโหลดการตั้งค่า…</p>
@@ -93,10 +92,6 @@ export function RealtimeSettingsPanel() {
               <input type="checkbox" checked={form.sseEnabled} onChange={setFlag("sseEnabled")} />
               SSE Enabled
             </label>
-            <label className="checkbox-chip" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input type="checkbox" checked={form.pollingEnabled} onChange={setFlag("pollingEnabled")} />
-              Polling Enabled
-            </label>
           </div>
           <div className="panel-padding form-grid" style={{ paddingTop: 0 }}>
             <div className="form-field">
@@ -108,11 +103,6 @@ export function RealtimeSettingsPanel() {
               <label className="form-label" htmlFor="rt-max-staff">Max SSE Connections — เจ้าหน้าที่ (0–1000)</label>
               <input className="input" id="rt-max-staff" type="number" min={0} max={1000} style={numberField}
                 value={form.maxStaffSseConnections} onChange={setNumber("maxStaffSseConnections")} />
-            </div>
-            <div className="form-field">
-              <label className="form-label" htmlFor="rt-poll">Polling Interval (ms, 5000–600000)</label>
-              <input className="input" id="rt-poll" type="number" min={5000} max={600000} step={1000} style={numberField}
-                value={form.pollingIntervalMs} onChange={setNumber("pollingIntervalMs")} />
             </div>
             <div className="form-field">
               <label className="form-label" htmlFor="rt-heartbeat">Heartbeat Interval (ms, 5000–120000)</label>

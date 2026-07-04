@@ -26,6 +26,7 @@ class RuntimeSettingsTest {
 
         assertThat(settings.realtimeEnabled()).isFalse();
         assertThat(settings.sseEnabled()).isTrue(); // missing row -> default
+        assertThat(settings.pollingEnabled()).isFalse();
         assertThat(settings.maxPublicSseConnections()).isEqualTo(RuntimeSettings.MAX_PUBLIC_SSE_CEILING);
         assertThat(settings.maxStaffSseConnections()).isZero();
         assertThat(settings.pollingIntervalMs()).isEqualTo(RuntimeSettings.defaults().pollingIntervalMs());

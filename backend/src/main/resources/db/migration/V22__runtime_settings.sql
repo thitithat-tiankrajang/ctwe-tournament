@@ -13,8 +13,8 @@ CREATE TABLE runtime_settings (
 INSERT INTO runtime_settings (key, value) VALUES
   ('realtime.enabled',                    'true'),
   ('realtime.sse-enabled',                'true'),
-  ('realtime.polling-enabled',            'true'),
-  ('realtime.max-public-sse-connections', '600'),
+  ('realtime.polling-enabled',            'false'),
+  ('realtime.max-public-sse-connections', '1500'),
   ('realtime.max-staff-sse-connections',  '300'),
   ('realtime.polling-interval-ms',        '60000'),
   ('realtime.heartbeat-interval-ms',      '25000'),

@@ -184,29 +184,6 @@ async function readError(response: Response) {
 }
 
 export const useTournamentStore = create<TournamentState>((set, get) => {
-  const resultReconcileTimers = new Map<string, number>();
-
-  const scheduleResultReconciliation = (cardId: string) => {
-    const existing = resultReconcileTimers.get(cardId);
-    if (existing !== undefined) window.clearTimeout(existing);
-    const timer = window.setTimeout(async () => {
-      resultReconcileTimers.delete(cardId);
-      try {
-        const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}/version`, {
-          credentials: "same-origin",
-          cache: "no-store",
-        });
-        if (!response.ok) return;
-        const { version } = await response.json() as { version: number };
-        const localVersion = get().cards.find((card) => card.id === cardId)?.version;
-        if (localVersion === undefined || version > localVersion) await get().syncCard(cardId);
-      } catch {
-        // SSE remains the primary path; a later event/reconnect can still reconcile this card.
-      }
-    }, 1_500);
-    resultReconcileTimers.set(cardId, timer);
-  };
-
   const request = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
     const method = init.method?.toUpperCase() ?? "GET";
     const headers = new Headers(init.headers);
@@ -471,7 +448,6 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       );
       const patched = applyResultPatch(cardId, patch.version, patch.changedPairings);
       if (!patched) await get().syncCard(cardId); // safety net: pull the full card if we couldn't patch in place
-      scheduleResultReconciliation(cardId);
     },
     async overrideResult(cardId, matchId, scoreOne, scoreTwo) {
       await mutateCard(`/api/cards/${cardId}/matches/${matchId}/override`, cardId, {

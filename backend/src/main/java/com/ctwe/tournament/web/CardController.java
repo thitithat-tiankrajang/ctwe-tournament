@@ -67,7 +67,7 @@ public class CardController {
         return service.auditLog(cardId);
     }
 
-    /** Tiny change-detector for live-sync polling (full card is fetched only when this changes). */
+    /** Legacy diagnostic change detector; current clients synchronize through SSE. */
     @GetMapping("/{cardId}/version")
     public Map<String, Long> version(@PathVariable UUID cardId) {
         return Map.of("version", service.cardVersion(cardId));

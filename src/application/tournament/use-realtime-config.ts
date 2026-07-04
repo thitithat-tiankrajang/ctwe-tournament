@@ -14,17 +14,13 @@ export interface RealtimeConfig {
 export const REALTIME_DEFAULTS: RealtimeConfig = {
   realtimeEnabled: true,
   sseEnabled: true,
-  pollingEnabled: true,
+  pollingEnabled: false,
   pollingIntervalMs: 60_000,
   reconnectDelayMs: 2_000,
 };
 
-const REFRESH_MS = 60_000;
-
-// Module-level cache: every hook instance shares one fetch per refresh window, so a page full of
-// components costs a single tiny edge-cached request per minute.
+// Module-level cache: all hook instances share one config request for the lifetime of this page.
 let cached: RealtimeConfig | null = null;
-let fetchedAt = 0;
 let inflight: Promise<RealtimeConfig> | null = null;
 
 async function fetchConfig(): Promise<RealtimeConfig> {
@@ -41,12 +37,11 @@ async function fetchConfig(): Promise<RealtimeConfig> {
 }
 
 export async function getRealtimeConfig(): Promise<RealtimeConfig> {
-  if (cached && Date.now() - fetchedAt < REFRESH_MS) return cached;
+  if (cached) return cached;
   if (!inflight) {
     inflight = fetchConfig()
       .then((config) => {
         cached = config;
-        fetchedAt = Date.now();
         return config;
       })
       .catch(() => cached ?? REALTIME_DEFAULTS)
@@ -57,8 +52,7 @@ export async function getRealtimeConfig(): Promise<RealtimeConfig> {
 
 /**
  * Admin-tunable sync strategy for the current browser. Starts with safe defaults, resolves from
- * the edge-cached config endpoint, and re-checks once a minute so admin changes reach open tabs
- * without a reload.
+ * the config endpoint once, and then relies exclusively on SSE for the lifetime of the page.
  */
 export function useRealtimeConfig(): RealtimeConfig {
   const [config, setConfig] = useState<RealtimeConfig>(cached ?? REALTIME_DEFAULTS);
@@ -76,8 +70,7 @@ export function useRealtimeConfig(): RealtimeConfig {
           ? current : next);
     });
     refresh();
-    const timer = window.setInterval(refresh, REFRESH_MS);
-    return () => { active = false; window.clearInterval(timer); };
+    return () => { active = false; };
   }, []);
 
   return config;

@@ -115,7 +115,7 @@ public class TournamentCardService {
                 jsonText(rs.getString("old_value")), jsonText(rs.getString("new_value"))), cardId);
     }
 
-    /** Tiny change-detector for live-sync polling: avoids rebuilding the whole card when nothing changed. */
+    /** Legacy diagnostic change detector; current clients synchronize through SSE. */
     @Transactional(readOnly = true)
     public long cardVersion(UUID cardId) {
         try {

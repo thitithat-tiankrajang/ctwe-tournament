@@ -29,7 +29,7 @@ public record RuntimeSettings(
     public static final int MAX_RECONNECT_DELAY_MS = 30_000;
 
     public static RuntimeSettings defaults() {
-        return new RuntimeSettings(true, true, true, 600, 300, 60_000, 25_000, 2_000, null);
+        return new RuntimeSettings(true, true, false, 1500, 300, 60_000, 25_000, 2_000, null);
     }
 
     public static RuntimeSettings fromRows(Map<String, String> rows, Instant updatedAt) {
@@ -37,7 +37,7 @@ public record RuntimeSettings(
         return new RuntimeSettings(
             bool(rows, "realtime.enabled", base.realtimeEnabled()),
             bool(rows, "realtime.sse-enabled", base.sseEnabled()),
-            bool(rows, "realtime.polling-enabled", base.pollingEnabled()),
+            false, // SSE-only architecture; legacy database rows cannot re-enable client polling.
             clamped(rows, "realtime.max-public-sse-connections", base.maxPublicSseConnections(), 0, MAX_PUBLIC_SSE_CEILING),
             clamped(rows, "realtime.max-staff-sse-connections", base.maxStaffSseConnections(), 0, MAX_STAFF_SSE_CEILING),
             clamped(rows, "realtime.polling-interval-ms", base.pollingIntervalMs(), MIN_POLLING_INTERVAL_MS, MAX_POLLING_INTERVAL_MS),

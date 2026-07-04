@@ -60,35 +60,31 @@ Roll back to the last known deployment, keep the CDN serving the last published 
 workflow transitions until staff writes are healthy. Do not scale to multiple Render instances:
 staff SSE and in-memory event delivery currently assume one application instance.
 
-## SSE capacity and degraded mode (runtime-tunable)
+## SSE-only capacity (runtime-tunable)
 
 Live streams are hard-capped so they can never exhaust the Tomcat connector (`max-connections: 2000`)
 and freeze mutations. All realtime knobs live in the `runtime_settings` table and are managed from
-**admin console → Realtime (SSE / Polling)** — changes apply within seconds, no redeploy:
+**admin console → Realtime (SSE only)** — changes apply within seconds, no redeploy:
 
-- Realtime/SSE/Polling on-off switches, Max SSE Connections (viewers, default 600; staff, default
-  300), Polling Interval (default 60 s), Heartbeat Interval (default 25 s), Reconnect Delay
-  (default 2 s). Browsers read `/api/public/realtime-config` (edge-cached, refetched once a minute).
+- Realtime/SSE on-off switches, Max SSE Connections (viewers, default 1,500; staff, default 300),
+  Heartbeat Interval (default 25 s), and Reconnect Delay (default 2 s). Browsers read
+  `/api/public/realtime-config` once per page load.
 - Cap and switch changes affect NEW subscriptions only — established streams never drop.
-- Over-cap or switched-off subscribers receive 503 once; the browser's `EventSource` stops
-  permanently and the client falls back to version polling at the configured interval. This is the
-  intended degraded mode — later viewers see updates within the poll interval instead of instantly.
+- Over-cap or switched-off subscribers receive 503 and do not receive live updates. There is no
+  polling fallback; scale the backend before raising the cap.
 - The heartbeat prunes silently dead connections (mobile drops) within one interval instead of
   leaking them until the 45-minute stream timeout; every pruned stream frees a capacity slot.
 - All SSE socket writes happen on one dedicated `sse-send` thread with a bounded queue, so a stalled
-  viewer connection can never block a staff result-save request thread. Dropped events are safe:
-  clients reconcile through version checks and polling.
+  viewer connection can never block a staff result-save request thread.
 - On deploy shutdown all streams are completed cleanly so browsers reconnect to the new instance.
 - Live occupancy: admin Realtime panel, or `/actuator/metrics/sse.streams.public|staff`.
 
-If Render connection counts approach the connector limit during the event, lower “Max SSE
-Connections (viewers)” in the admin page — it takes effect immediately, public viewers degrade to
-polling, staff streams are unaffected. Raising the polling interval sheds edge/origin request rate
-the same way.
+If Render connection counts approach the connector limit during the event, scale the Render service.
+Lowering “Max SSE Connections (viewers)” protects staff mutations but excess viewers will not receive
+live updates.
 
-Certification load tests live in `load-tests/suite/` (viewers with SSE→polling fallback, staff
-writers, stepped 500/2000/5000 runner, server monitor, and a report with the maximum stable
-concurrent viewers verdict).
+Certification load tests live in `load-tests/suite/`; use the SSE-capable runner when certifying the
+production path.
 
 ## Web Push capacity and privacy
 

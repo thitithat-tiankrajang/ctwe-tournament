@@ -12,16 +12,14 @@ interface PublicResultEvent {
 }
 
 /**
- * An open public card uses an isolated SSE invalidation stream for live results. The edge-cached
- * version manifest remains the low-traffic fallback and keeps the public catalog in sync.
- * Strategy (SSE on/off, polling on/off + interval) follows the admin-managed runtime config; when
- * the server refuses a stream (disabled or at capacity) the polling loop is the automatic fallback.
+ * An open public card uses one isolated SSE stream for live results. There is intentionally no
+ * polling fallback: EventSource reconnects itself and avoiding per-viewer timers keeps edge request
+ * volume flat during quiet periods.
  */
 export function usePublicSync(cardId: string | undefined, enabled: boolean) {
   const cards = useTournamentStore((state) => state.cards);
   const syncCard = useTournamentStore((state) => state.syncCard);
   const applyResultPatch = useTournamentStore((state) => state.applyResultPatch);
-  const refreshCatalog = useTournamentStore((state) => state.refreshPublicCatalog);
   const config = useRealtimeConfig();
   const versionsRef = useRef(new Map<string, number>());
 
@@ -76,53 +74,4 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
       source.close();
     };
   }, [applyResultPatch, cardId, enabled, config.realtimeEnabled, config.sseEnabled, syncCard]);
-
-  useEffect(() => {
-    if (!enabled || !config.realtimeEnabled || !config.pollingEnabled) return;
-    let active = true;
-    let timer: number | undefined;
-
-    const schedule = () => {
-      if (!active) return;
-      // ±1/6 jitter spreads 5,000 viewers' polls instead of thundering the edge together.
-      const base = config.pollingIntervalMs;
-      const jitter = base / 3;
-      timer = window.setTimeout(
-        () => void poll(),
-        base - jitter / 2 + Math.random() * jitter,
-      );
-    };
-    const poll = async () => {
-      if (!active) return;
-      try {
-        const response = await fetch("/api/public/cards/versions", { credentials: "omit" });
-        if (!response.ok) return;
-        const remote = await response.json() as PublicCardVersion[];
-        const changed = remote.filter((item) => versionsRef.current.get(item.id) !== item.version);
-        const removed = [...versionsRef.current.keys()].some((id) => !remote.some((item) => item.id === id));
-        if (changed.length > 0 || removed) {
-          const versionToken = remote.map((item) => `${item.id}:${item.version}`).join(",");
-          await refreshCatalog(versionToken);
-          if (cardId && changed.some((item) => item.id === cardId)) await syncCard(cardId);
-        }
-      } catch {
-        // The current published snapshot remains usable while the network is unavailable.
-      } finally {
-        schedule();
-      }
-    };
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      if (timer !== undefined) window.clearTimeout(timer);
-      void poll();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    schedule();
-    return () => {
-      active = false;
-      if (timer !== undefined) window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [cardId, enabled, config.realtimeEnabled, config.pollingEnabled, config.pollingIntervalMs, refreshCatalog, syncCard]);
-
 }

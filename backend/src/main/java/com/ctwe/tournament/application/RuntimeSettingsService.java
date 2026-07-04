@@ -46,7 +46,8 @@ public class RuntimeSettingsService {
     public RuntimeSettings update(SettingsDtos.RealtimeSettingsRequest request, String actor) {
         upsert("realtime.enabled", String.valueOf(request.realtimeEnabled()), actor);
         upsert("realtime.sse-enabled", String.valueOf(request.sseEnabled()), actor);
-        upsert("realtime.polling-enabled", String.valueOf(request.pollingEnabled()), actor);
+        // SSE-only architecture: retain the legacy setting for compatibility, but never enable it.
+        upsert("realtime.polling-enabled", "false", actor);
         upsert("realtime.max-public-sse-connections", String.valueOf(request.maxPublicSseConnections()), actor);
         upsert("realtime.max-staff-sse-connections", String.valueOf(request.maxStaffSseConnections()), actor);
         upsert("realtime.polling-interval-ms", String.valueOf(request.pollingIntervalMs()), actor);
