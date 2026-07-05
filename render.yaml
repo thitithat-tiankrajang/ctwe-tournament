@@ -31,7 +31,7 @@ services:
       - key: DEV_TOOLS_ENABLED
         value: "false"
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://ctwe-tournament.ctwe.workers.dev"
+        value: "https://ctwe-tournament.ctwe.workers.dev,https://ct-we.com,http://192.168.1.36:3000"
       - key: DB_POOL_MAX_SIZE
         value: "5"
       - key: DB_POOL_MIN_IDLE
