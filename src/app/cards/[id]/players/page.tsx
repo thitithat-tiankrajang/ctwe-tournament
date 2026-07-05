@@ -20,6 +20,7 @@ import { ExcelPlayerImport } from "@/ui/components/excel-player-import";
 import { GameFlow } from "@/ui/components/game-flow";
 import { InstitutionCombobox } from "@/ui/components/institution-combobox";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { PlayerTermination } from "@/ui/components/player-termination";
 
 type Confirmation = { kind: "update" | "delete"; player: Player } | null;
 
@@ -63,7 +64,10 @@ export default function PlayersPage() {
   const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const latestPublishedGame = Math.max(0, ...publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
   const selectedRankingGame = rankingGame && publishedSnapshots.some((snapshot) => snapshot.gameNumbers.includes(rankingGame)) ? rankingGame : latestPublishedGame;
-  const ranked = selectedRankingGame > 0 ? rankingAfterGame({ ...card, snapshots: publishedSnapshots }, selectedRankingGame) : rankPlayers(card.players);
+  // Terminated players are shown in the terminate/restore panel, not the active ranking table.
+  const terminatedIds = new Set(card.players.filter((player) => player.terminated).map((player) => player.id));
+  const ranked = (selectedRankingGame > 0 ? rankingAfterGame({ ...card, snapshots: publishedSnapshots }, selectedRankingGame) : rankPlayers(card.players))
+    .filter((player) => !terminatedIds.has(player.id));
   const rankingCard = { ...card, snapshots: publishedSnapshots };
   const filtered = ranked.filter((player) => {
     const term = query.trim();
@@ -195,6 +199,8 @@ export default function PlayersPage() {
       {canManage && operationError && <div className="notice notice--danger" role="alert"><p><strong>ทำรายการไม่สำเร็จ</strong><span>{operationError}</span></p></div>}
       {!canManage && <div className="notice notice--info"><LockKeyhole size={18} /><p><strong>Staff ดูรายชื่อได้อย่างเดียว</strong><span>การเพิ่ม นำเข้า แก้ไข ลบ และจบการลงทะเบียนเป็นสิทธิ์ของ Director</span></p></div>}
       {directorEdit && <div className="notice notice--info"><Pencil size={18} /><p><strong>ผู้อำนวยการแก้ข้อมูลส่วนตัวได้ตลอดเวลา</strong><span>แก้ชื่อ–นามสกุล และโรงเรียน/สถาบันได้ทุกขั้นตอน · การเพิ่ม/ลบผู้เล่นทำได้เฉพาะช่วงลงทะเบียน</span></p></div>}
+
+      {directorEdit && <PlayerTermination card={card} />}
 
       {publishedSnapshots.length > 0 && (
         <Panel title="Ranking หลังจบแต่ละเกม" description="เลือกเกมเพื่อดูอันดับสะสม ณ เวลาที่เกมนั้น Publish โดยไม่ปะปนกับเกมถัดไป">

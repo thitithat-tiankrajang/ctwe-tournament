@@ -54,6 +54,7 @@ export interface Player {
   losses: number;
   winPoints: number;
   diff: number;
+  terminated: boolean;
 }
 
 export interface SeatingTable {

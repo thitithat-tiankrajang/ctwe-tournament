@@ -148,15 +148,37 @@ public class CardController {
     }
 
     @PostMapping("/{cardId}/pairings/undo")
-    public CardDtos.CardResponse undoPairing(@PathVariable UUID cardId, Authentication authentication) {
+    public CardDtos.CardResponse undoPairing(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.PasswordRequest request,
+                                             Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        reauthentication.requireCurrentPassword(authentication, request.password());
         return changed(service.undoPairing(cardId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/pairings/unpair-to-preview")
-    public CardDtos.CardResponse unpairToPreview(@PathVariable UUID cardId, Authentication authentication) {
+    public CardDtos.CardResponse unpairToPreview(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.PasswordRequest request,
+                                                 Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        reauthentication.requireCurrentPassword(authentication, request.password());
         return changed(service.unpairToPreview(cardId, authentication.getName()));
+    }
+
+    /** Director batch-terminates players out of the running competition (password-confirmed). */
+    @PostMapping("/{cardId}/players/terminate")
+    public CardDtos.CardResponse terminatePlayers(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.TerminateRequest request,
+                                                  Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        reauthentication.requireCurrentPassword(authentication, request.password());
+        return changed(service.terminatePlayers(cardId, request.playerIds(), authentication.getName()));
+    }
+
+    /** Director batch-restores terminated players (password-confirmed), charging missed games as losses. */
+    @PostMapping("/{cardId}/players/restore")
+    public CardDtos.CardResponse restorePlayers(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.RestoreRequest request,
+                                                Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        reauthentication.requireCurrentPassword(authentication, request.password());
+        return changed(service.restorePlayers(cardId, request.playerIds(), request.lossPoints(), request.unpair(), authentication.getName()));
     }
 
     @PutMapping("/{cardId}/matches/{matchId}/result")

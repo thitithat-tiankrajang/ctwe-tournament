@@ -103,8 +103,10 @@ export default function TablesPage() {
 
   const undo = async () => {
     if (!window.confirm(`ลบ Pairing preview เกม ${card.currentGame} และกลับไปสร้าง Pairing เกมนี้ใหม่? ผลและ Ranking ของเกมก่อนหน้าจะไม่เปลี่ยนแปลง`)) return;
+    const password = window.prompt("กรอกรหัสผ่านผู้อำนวยการเพื่อยืนยันการยกเลิกการจับคู่");
+    if (!password) return;
     setBusy(true);
-    try { await undoPairing(id); }
+    try { await undoPairing(id, password); }
     catch (error) { window.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ"); }
     finally { setBusy(false); }
   };

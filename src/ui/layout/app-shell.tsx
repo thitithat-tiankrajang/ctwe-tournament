@@ -152,7 +152,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     : !isStaff && pathname === "/cards" && activeTournament
       ? { type: "TOURNAMENT", id: activeTournament.id, label: activeTournament.name }
       : null;
-  const { notificationsOn, pending: notificationPending, enable: enableNotifications, disable: disableNotifications } =
+  const { notificationsOn, pending: notificationPending, support: notificationSupport, enable: enableNotifications, disable: disableNotifications } =
     usePushNotifications(notificationScope);
   const showNotificationError = (result: PushToggleResult) => {
     if (result === "denied") toast.error("การแจ้งเตือนถูกปิดในเบราว์เซอร์ — เปิดใหม่ได้จากการตั้งค่าเว็บไซต์ของเบราว์เซอร์");
@@ -435,14 +435,28 @@ export function AppShell({ children }: { children: ReactNode }) {
               <li>รอบชิงเริ่มต้น</li>
               <li>การแข่งขันจบ พร้อมชื่อผู้ชนะอันดับ 1</li>
             </ul>
-            <p className="notification-consent__privacy">ระบบเก็บเฉพาะรหัสส่งข้อความที่เบราว์เซอร์สร้างให้ ไม่ขอชื่อ ตำแหน่ง หรือข้อมูลส่วนตัวของผู้ชม คุณปิดขอบเขตนี้ได้จากปุ่มเดิมทุกเมื่อ</p>
-            <footer>
-              <Button variant="secondary" disabled={notificationPending} onClick={() => setNotificationConfirm(false)}>ไว้ภายหลัง</Button>
-              <Button disabled={notificationPending} onClick={() => void confirmEnableNotifications()}>
-                {notificationPending ? <LoaderCircle className="loading-spinner" size={16} /> : <BellRing size={16} />}
-                {notificationPending ? "กำลังเปิด…" : "อนุญาตแจ้งเตือน"}
-              </Button>
-            </footer>
+            <p className="notification-consent__privacy">แจ้งเตือนจะเด้งบนอุปกรณ์แม้ปิดหน้าเว็บหรือล็อกหน้าจอ · ระบบเก็บเฉพาะรหัสส่งข้อความที่เบราว์เซอร์สร้างให้ ไม่ขอชื่อ ตำแหน่ง หรือข้อมูลส่วนตัวของผู้ชม คุณปิดขอบเขตนี้ได้จากปุ่มเดิมทุกเมื่อ</p>
+            {notificationSupport === "ios-needs-install" ? (
+              <>
+                <div className="notice notice--info"><p><strong>บน iPhone/iPad ต้องติดตั้งเว็บก่อน</strong><span>iOS จะส่งแจ้งเตือนได้เฉพาะเมื่อเพิ่มเว็บนี้ไว้ที่หน้าจอโฮม แล้วเปิดจากไอคอนนั้น</span></p></div>
+                <ol className="notification-consent__events">
+                  <li>แตะปุ่ม <strong>แชร์</strong> ในแถบล่างของ Safari</li>
+                  <li>เลือก <strong>เพิ่มไปยังหน้าจอโฮม (Add to Home Screen)</strong></li>
+                  <li>เปิดแอปจากไอคอนบนหน้าจอโฮม แล้วกดเปิดแจ้งเตือนอีกครั้ง</li>
+                </ol>
+                <footer>
+                  <Button disabled={notificationPending} onClick={() => setNotificationConfirm(false)}>เข้าใจแล้ว</Button>
+                </footer>
+              </>
+            ) : (
+              <footer>
+                <Button variant="secondary" disabled={notificationPending} onClick={() => setNotificationConfirm(false)}>ไว้ภายหลัง</Button>
+                <Button disabled={notificationPending} onClick={() => void confirmEnableNotifications()}>
+                  {notificationPending ? <LoaderCircle className="loading-spinner" size={16} /> : <BellRing size={16} />}
+                  {notificationPending ? "กำลังเปิด…" : "อนุญาตแจ้งเตือน"}
+                </Button>
+              </footer>
+            )}
           </section>
         </div>
       )}

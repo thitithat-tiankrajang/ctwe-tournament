@@ -18,6 +18,7 @@ export function createMockPlayers(count: number, division: string, start = 1): P
       losses: (index + 1) % 3,
       winPoints: (index % 4) * 2 + (index % 2),
       diff: 120 - index * 7,
+      terminated: false,
     };
   });
 }

@@ -75,15 +75,44 @@ function supported() {
     && "PushManager" in window;
 }
 
+/** Support state for the current device, so the UI can guide instead of dead-ending. */
+export type PushSupport = "ready" | "ios-needs-install" | "unsupported";
+
+function isIOS() {
+  if (typeof navigator === "undefined") return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    // iPadOS 13+ reports as a Mac; disambiguate with touch support.
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isStandalone() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(display-mode: standalone)").matches
+    || (navigator as { standalone?: boolean }).standalone === true;
+}
+
+/**
+ * iOS delivers Web Push only to a site the user has added to the Home Screen (installed PWA); in a
+ * normal Safari tab PushManager does not exist. Detect that case specifically so we can tell the
+ * user how to enable it instead of showing a generic "unsupported".
+ */
+export function pushSupport(): PushSupport {
+  if (supported()) return "ready";
+  if (isIOS() && !isStandalone()) return "ios-needs-install";
+  return "unsupported";
+}
+
 export function usePushNotifications(scope: PushNotificationScope | null) {
   const key = scope ? scopeKey(scope) : null;
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("unsupported");
   const [savedScopes, setSavedScopes] = useState<Set<string>>(new Set());
   const [pending, setPending] = useState(false);
+  const [support, setSupport] = useState<PushSupport>("ready");
 
   useEffect(() => {
     const scopes = readScopes();
     setSavedScopes(scopes);
+    setSupport(pushSupport());
     setPermission(supported() ? Notification.permission : "unsupported");
 
     // If the browser/OS has removed the underlying subscription, do not leave a misleading active
@@ -182,5 +211,5 @@ export function usePushNotifications(scope: PushNotificationScope | null) {
     }
   }, [scope]);
 
-  return { notificationsOn, permission, pending, enable, disable };
+  return { notificationsOn, permission, pending, support, enable, disable };
 }

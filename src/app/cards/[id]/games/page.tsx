@@ -231,7 +231,9 @@ export default function GamesPage() {
   };
   const onUnpairToPreview = async () => {
     if (!window.confirm("ยกเลิกการจับคู่ของเกมนี้แล้วกลับไปหน้าแก้ pairing? (ใช้ได้เมื่อยังไม่มีการกรอกผลในเกมนี้)")) return;
-    try { await unpairToPreview(id); router.push(`/cards/${id}/tables`); }
+    const password = window.prompt("กรอกรหัสผ่านผู้อำนวยการเพื่อยืนยันการยกเลิกการจับคู่");
+    if (!password) return;
+    try { await unpairToPreview(id, password); router.push(`/cards/${id}/tables`); }
     catch (error) { window.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ"); }
   };
   const confirmPw = async () => {

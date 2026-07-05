@@ -83,8 +83,10 @@ interface TournamentState {
   submitFinalResult: (cardId: string, slot: number, gameIndex: number, scoreOne: number, scoreTwo: number) => Promise<void>;
   setFinalWinner: (cardId: string, slot: number, winnerId: string) => Promise<void>;
   publishFinal: (cardId: string) => Promise<void>;
-  undoPairing: (cardId: string) => Promise<void>;
-  unpairToPreview: (cardId: string) => Promise<void>;
+  undoPairing: (cardId: string, password: string) => Promise<void>;
+  unpairToPreview: (cardId: string, password: string) => Promise<void>;
+  terminatePlayers: (cardId: string, playerIds: string[], password: string) => Promise<void>;
+  restorePlayers: (cardId: string, playerIds: string[], password: string, lossPoints: number, unpair: boolean) => Promise<void>;
   closeCard: (cardId: string) => Promise<void>;
   deleteCard: (cardId: string) => Promise<void>;
   simulateTournament: (cardId: string) => Promise<void>;
@@ -490,11 +492,17 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async publishFinal(cardId) {
       await mutateCard(`/api/cards/${cardId}/final/publish`, cardId, { method: "POST" });
     },
-    async undoPairing(cardId) {
-      await mutateCard(`/api/cards/${cardId}/pairings/undo`, cardId, { method: "POST" });
+    async undoPairing(cardId, password) {
+      await mutateCard(`/api/cards/${cardId}/pairings/undo`, cardId, { method: "POST", body: JSON.stringify({ password }) });
     },
-    async unpairToPreview(cardId) {
-      await mutateCard(`/api/cards/${cardId}/pairings/unpair-to-preview`, cardId, { method: "POST" });
+    async unpairToPreview(cardId, password) {
+      await mutateCard(`/api/cards/${cardId}/pairings/unpair-to-preview`, cardId, { method: "POST", body: JSON.stringify({ password }) });
+    },
+    async terminatePlayers(cardId, playerIds, password) {
+      await mutateCard(`/api/cards/${cardId}/players/terminate`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password }) });
+    },
+    async restorePlayers(cardId, playerIds, password, lossPoints, unpair) {
+      await mutateCard(`/api/cards/${cardId}/players/restore`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password, lossPoints, unpair }) });
     },
     async closeCard(cardId) {
       await mutateCard(`/api/cards/${cardId}/close`, cardId, { method: "POST" });

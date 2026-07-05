@@ -78,6 +78,7 @@ function byeSide(pairing: Pairing | undefined): "one" | "two" | null {
 }
 
 interface Outcome { resultType: "WIN" | "DRAW"; winnerId?: string; diff: number; }
+type SaveResult = { ok: true } | { ok: false; reason: string };
 
 function calcOutcome(one: string, two: string, maxDiff: number, p1: string, p2: string): Outcome | null {
   if (one.trim() === "" || two.trim() === "") return null;
@@ -114,19 +115,18 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const [savingAll, setSavingAll] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
   const [swapA, setSwapA] = useState(""); const [swapB, setSwapB] = useState(""); const [swapPassword, setSwapPassword] = useState(""); const [swapping, setSwapping] = useState(false);
-  // Quick key-in bar (รหัส A → คะแนน A → รหัส B → คะแนน B → save) + result toast/highlight.
+  // Quick key-in bar (รหัส A → คะแนน A → รหัส B → คะแนน B → save) + inline feedback/highlight.
   const [qIdA, setQIdA] = useState(""); const [qScoreA, setQScoreA] = useState("");
   const [qIdB, setQIdB] = useState(""); const [qScoreB, setQScoreB] = useState("");
   const [quickSaving, setQuickSaving] = useState(false);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [quickFeedback, setQuickFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const idARef = useRef<HTMLInputElement>(null); const scoreARef = useRef<HTMLInputElement>(null);
   const idBRef = useRef<HTMLInputElement>(null); const scoreBRef = useRef<HTMLInputElement>(null);
-  const saveBtnRef = useRef<HTMLButtonElement>(null);
   const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(EDIT_COLUMNS, storageKey);
 
-  // Any "this is the pair" highlight + alert clears when the user closes it or keeps entering.
-  const clearFlash = () => { setToast(null); setHighlightId(null); };
+  // Any "this is the pair" highlight + inline feedback clears when closed or the next entry starts.
+  const clearFlash = () => { setQuickFeedback(null); setHighlightId(null); };
 
   const valueOf = (pairing: Pairing) => {
     const draft = drafts[pairing.id];
@@ -182,18 +182,19 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? base), [field]: value } }));
   };
 
-  const saveValues = async (pairing: CompletePairing, one: string, two: string): Promise<boolean> => {
-    if (!calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId)) return false;
+  const saveValues = async (pairing: CompletePairing, one: string, two: string): Promise<SaveResult> => {
+    if (!calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId))
+      return { ok: false, reason: "คะแนนต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป" };
     setSavingIds((prev) => new Set(prev).add(pairing.id));
     try {
       await onSubmit(pairing, Number(one), Number(two), isRecorded(pairing));
       setDrafts((prev) => { const next = { ...prev }; delete next[pairing.id]; return next; });
       setEditing((prev) => { if (!prev.has(pairing.id)) return prev; const next = new Set(prev); next.delete(pairing.id); return next; });
       setFailedIds((prev) => { if (!prev.has(pairing.id)) return prev; const next = new Set(prev); next.delete(pairing.id); return next; });
-      return true;
-    } catch {
+      return { ok: true };
+    } catch (error) {
       setFailedIds((prev) => new Set(prev).add(pairing.id));
-      return false;
+      return { ok: false, reason: error instanceof Error ? error.message : "ระบบไม่ตอบรับ กรุณาลองใหม่" };
     } finally {
       setSavingIds((prev) => { const next = new Set(prev); next.delete(pairing.id); return next; });
     }
@@ -202,7 +203,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const saveRow = async (pairing: Pairing): Promise<boolean> => {
     if (!isCompletePairing(pairing)) return false;
     const { one, two } = valueOf(pairing);
-    return saveValues(pairing, one, two);
+    return (await saveValues(pairing, one, two)).ok;
   };
 
   // A bye: the lone player must win. We send their entered score in their slot and 0 in the empty slot.
@@ -244,36 +245,44 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
 
   // Quick key-in: validate that A vs B is a real pairing this game (either side), then save + highlight.
   const quickSave = async () => {
+    if (quickSaving) return;
     const a = normalizePlayerCode(qIdA); const b = normalizePlayerCode(qIdB);
-    if (!a || !b) { setHighlightId(null); setToast({ type: "error", message: "กรุณากรอกรหัสทั้งสองฝ่ายก่อนบันทึก" }); return; }
+    if (!a || !b) {
+      setHighlightId(null);
+      setQuickFeedback({ type: "error", message: "ไม่สำเร็จ · กรุณากรอกรหัส A และ B" });
+      return;
+    }
     const match = rows.find((row) => isCompletePairing(row.pairing)
       && ((normalizePlayerCode(row.pairing.playerOneId) === a && normalizePlayerCode(row.pairing.playerTwoId) === b)
         || (normalizePlayerCode(row.pairing.playerOneId) === b && normalizePlayerCode(row.pairing.playerTwoId) === a)));
     if (!match || !isCompletePairing(match.pairing)) {
       setHighlightId(null);
-      setToast({ type: "error", message: `คู่นี้ไม่เจอกันจริงในเกม ${gameNumber} — รหัส ${a} กับ ${b} ไม่ใช่คู่ที่จับไว้ กรุณาตรวจสอบรหัสอีกครั้ง` });
+      setQuickFeedback({ type: "error", message: `ไม่สำเร็จ · ${a} กับ ${b} ไม่ใช่คู่ในเกม ${gameNumber}` });
       return;
     }
     const pairing = match.pairing;
     if (pairing.resultType === "PENALTY") {
       setHighlightId(pairing.id);
-      setToast({ type: "error", message: `คู่ที่ ${pairing.tableNumber} ถูกลงดาบและล็อกโดยผู้อำนวยการแล้ว` });
+      setQuickFeedback({ type: "error", message: `ไม่สำเร็จ · คู่ที่ ${pairing.tableNumber} ถูกลงดาบและล็อกแล้ว` });
       return;
     }
     const aIsOne = normalizePlayerCode(pairing.playerOneId) === a;
     const oneScore = aIsOne ? qScoreA : qScoreB;
     const twoScore = aIsOne ? qScoreB : qScoreA;
     if (!calcOutcome(oneScore, twoScore, maxDiff, pairing.playerOneId, pairing.playerTwoId)) {
-      setToast({ type: "error", message: "คะแนนไม่ถูกต้อง — กรอกเป็นจำนวนเต็ม ≥ 0 ทั้งสองฝ่าย" });
+      setQuickFeedback({ type: "error", message: "ไม่สำเร็จ · คะแนนต้องเป็นจำนวนเต็ม ≥ 0" });
       return;
     }
     setQuickSaving(true);
-    const ok = await saveValues(pairing, oneScore, twoScore);
+    const result = await saveValues(pairing, oneScore, twoScore);
     setQuickSaving(false);
-    if (!ok) { setToast({ type: "error", message: "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง" }); return; }
+    if (!result.ok) {
+      setQuickFeedback({ type: "error", message: `ไม่สำเร็จ · ${result.reason}` });
+      return;
+    }
     setHighlightId(pairing.id);
     const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
-    setToast({ type: "success", message: `บันทึกคู่ที่ ${pairing.tableNumber} แล้ว · ${p1?.id} ${oneScore} : ${twoScore} ${p2?.id}` });
+    setQuickFeedback({ type: "success", message: `สำเร็จ · คู่ที่ ${pairing.tableNumber} · ${p1?.id} ${oneScore} : ${twoScore} ${p2?.id}` });
     setQIdA(""); setQScoreA(""); setQIdB(""); setQScoreB("");
     idARef.current?.focus();
   };
@@ -313,14 +322,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
 
   return (
     <div className="entry-grid-wrap">
-      {toast && (
-        <div className={`entry-toast entry-toast--${toast.type}`} role="alert" aria-live="assertive">
-          {toast.type === "success" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-          <span>{toast.message}</span>
-          <button type="button" className="entry-toast__close" aria-label="ปิดการแจ้งเตือน" onClick={clearFlash}><X size={15} /></button>
-        </div>
-      )}
-      <div className="entry-keyin">
+      <div className={`entry-keyin${quickFeedback ? ` entry-keyin--${quickFeedback.type}` : ""}`}>
         <span className="entry-keyin__label">คีย์เร็ว</span>
         <input ref={idARef} className="entry-keyin__id" inputMode="numeric" placeholder="รหัส A เช่น 16" value={qIdA} aria-label="รหัสฝ่าย A"
           onChange={(event) => { clearFlash(); setQIdA(event.target.value.toUpperCase()); }}
@@ -334,8 +336,22 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreBRef.current?.focus(); scoreBRef.current?.select(); } }} />
         <input ref={scoreBRef} type="number" inputMode="numeric" min={0} className="entry-keyin__score" placeholder="คะแนน B" value={qScoreB} aria-label="คะแนนฝ่าย B"
           onChange={(event) => { clearFlash(); setQScoreB(event.target.value); }} onFocus={(event) => event.target.select()}
-          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); saveBtnRef.current?.focus(); } }} />
-        <Button ref={saveBtnRef} size="sm" variant="success" disabled={quickSaving} onClick={() => void quickSave()}>{quickSaving ? <LoaderCircle className="loading-spinner" size={14} /> : <Save size={14} />}บันทึกคะแนน</Button>
+          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void quickSave(); } }} />
+        <Button className="entry-keyin__save" size="sm" variant="success" disabled={quickSaving} onClick={() => void quickSave()}>{quickSaving ? <LoaderCircle className="loading-spinner" size={14} /> : <Save size={14} />}บันทึกคะแนน</Button>
+        {quickFeedback && (
+          <>
+            <div
+              className="entry-keyin__feedback"
+              role={quickFeedback.type === "error" ? "alert" : "status"}
+              aria-live={quickFeedback.type === "error" ? "assertive" : "polite"}
+              title={quickFeedback.message}
+            >
+              {quickFeedback.type === "success" ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}
+              <span>{quickFeedback.message}</span>
+            </div>
+            <button type="button" className="entry-keyin__close" aria-label="ปิดข้อความผลการบันทึก" onClick={clearFlash}><X size={16} /></button>
+          </>
+        )}
       </div>
       <div className="entry-grid-meta">
         <span className="entry-grid-meta__tags"><Badge tone="success">เซฟแล้ว {savedCount}</Badge>{dirtyCount > 0 && <Badge tone="warning">ยังไม่เซฟ {dirtyCount}</Badge>}</span>

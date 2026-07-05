@@ -67,10 +67,30 @@ public final class CardDtos {
         boolean confirmSchoolConflict
     ) {}
 
+    /** Director re-auth for pairing manipulation (undo / unpair). */
+    public record PasswordRequest(@NotBlank String password) {}
+
+    /** Batch terminate: pull players out of the running competition (director password required). */
+    public record TerminateRequest(
+        @NotNull @Size(min = 1, max = 5000) List<@NotBlank String> playerIds,
+        @NotBlank String password
+    ) {}
+
+    /**
+     * Batch restore of terminated players. {@code lossPoints} is the per-missed-game loss margin;
+     * {@code unpair} (case B) discards the current pairing so restored players re-enter it.
+     */
+    public record RestoreRequest(
+        @NotNull @Size(min = 1, max = 5000) List<@NotBlank String> playerIds,
+        @NotBlank String password,
+        @NotNull @Min(0) @Max(1000000) Integer lossPoints,
+        boolean unpair
+    ) {}
+
     public record GameResponse(String id, int number, String name, String status, int maxDiff) {}
     public record RuleResponse(int fromGame, int toGame, PairingRuleType type) {}
     public record PlayerResponse(String id, String firstName, String lastName, String school, String division,
-                                 int wins, int draws, int losses, int winPoints, int diff) {}
+                                 int wins, int draws, int losses, int winPoints, int diff, boolean terminated) {}
     public record TableResponse(String id, int number, List<String> playerIds) {}
     public record PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
                                   String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
