@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { publicApiUrl } from "@/infrastructure/http/public-api";
 
 export interface RealtimeConfig {
   realtimeEnabled: boolean;
@@ -24,7 +25,7 @@ let cached: RealtimeConfig | null = null;
 let inflight: Promise<RealtimeConfig> | null = null;
 
 async function fetchConfig(): Promise<RealtimeConfig> {
-  const response = await fetch("/api/public/realtime-config", { credentials: "omit" });
+  const response = await fetch(publicApiUrl("/api/public/realtime-config"), { credentials: "omit" });
   if (!response.ok) throw new Error(`realtime-config ${response.status}`);
   const body = await response.json() as Partial<RealtimeConfig>;
   return {

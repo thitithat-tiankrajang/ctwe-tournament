@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Card operations are designed for concurrent multi-user editing (several staff/directors on the
@@ -83,35 +84,38 @@ public class CardController {
     @ResponseStatus(HttpStatus.CREATED)
     public CardDtos.CardResponse create(@Valid @RequestBody CardDtos.CreateCardRequest request, Authentication authentication) {
         authz.requireTournamentCapability(authentication, request.tournamentId(), Capability.RUN_TOURNAMENT);
-        return changed(service.create(request, authentication.getName()));
+        return created(service.create(request, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/close")
     public CardDtos.CardResponse close(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.close(cardId, authentication.getName()));
+        return changed(cardId, () -> service.close(cardId, authentication.getName()));
     }
 
     @DeleteMapping("/{cardId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        long publicVersionBefore = publicCards.version(cardId);
         service.delete(cardId);
         events.publish(cardId, -1);
+        // Viewers resync, hit 404, and drop the card instead of watching a frozen page.
+        events.publishPublic(cardId, publicVersionBefore + 1);
     }
 
     @PostMapping("/{cardId}/players")
     @ResponseStatus(HttpStatus.CREATED)
     public CardDtos.CardResponse addPlayer(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.PlayerRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PLAYERS);
-        return changed(service.addPlayer(cardId, request, authentication.getName()));
+        return changed(cardId, () -> service.addPlayer(cardId, request, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/players/bulk")
     @ResponseStatus(HttpStatus.CREATED)
     public CardDtos.CardResponse importPlayers(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.BulkPlayersRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PLAYERS);
-        return changed(service.addPlayersBulk(cardId, request.players(), authentication.getName()));
+        return changed(cardId, () -> service.addPlayersBulk(cardId, request.players(), authentication.getName()));
     }
 
     @PutMapping("/{cardId}/players/{playerId}")
@@ -119,32 +123,32 @@ public class CardController {
                                                @Valid @RequestBody CardDtos.PlayerRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PLAYERS);
         boolean operator = authz.isAdmin(authentication) || authz.isDirector(authentication);
-        return changed(service.updatePlayer(cardId, playerId, request, authentication.getName(), operator));
+        return changed(cardId, () -> service.updatePlayer(cardId, playerId, request, authentication.getName(), operator));
     }
 
     @DeleteMapping("/{cardId}/players/{playerId}")
     public CardDtos.CardResponse removePlayer(@PathVariable UUID cardId, @PathVariable String playerId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PLAYERS);
-        return changed(service.removePlayer(cardId, playerId, authentication.getName()));
+        return changed(cardId, () -> service.removePlayer(cardId, playerId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/registration/finish")
     public CardDtos.CardResponse finishRegistration(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.finishRegistration(cardId, authentication.getName()));
+        return changed(cardId, () -> service.finishRegistration(cardId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/tables/swap")
     public CardDtos.CardResponse swap(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.SwapRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(service.swapPlayers(cardId, request, authentication.getName()));
+        return changed(cardId, () -> service.swapPlayers(cardId, request, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/pairings/preview")
     public CardDtos.CardResponse previewPairings(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.generatePairingPreview(cardId, authentication.getName()));
+        return changed(cardId, () -> service.generatePairingPreview(cardId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/pairings/undo")
@@ -152,7 +156,7 @@ public class CardController {
                                              Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(service.undoPairing(cardId, authentication.getName()));
+        return changed(cardId, () -> service.undoPairing(cardId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/pairings/unpair-to-preview")
@@ -160,7 +164,7 @@ public class CardController {
                                                  Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(service.unpairToPreview(cardId, authentication.getName()));
+        return changed(cardId, () -> service.unpairToPreview(cardId, authentication.getName()));
     }
 
     /** Director batch-terminates players out of the running competition (password-confirmed). */
@@ -169,7 +173,7 @@ public class CardController {
                                                   Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(service.terminatePlayers(cardId, request.playerIds(), authentication.getName()));
+        return changed(cardId, () -> service.terminatePlayers(cardId, request.playerIds(), authentication.getName()));
     }
 
     /** Director batch-restores terminated players (password-confirmed), charging missed games as losses. */
@@ -178,13 +182,14 @@ public class CardController {
                                                 Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(service.restorePlayers(cardId, request.playerIds(), request.lossPoints(), request.unpair(), authentication.getName()));
+        return changed(cardId, () -> service.restorePlayers(cardId, request.playerIds(), request.lossPoints(), request.unpair(), authentication.getName()));
     }
 
     @PutMapping("/{cardId}/matches/{matchId}/result")
     public CardDtos.ResultPatch submitResult(@PathVariable UUID cardId, @PathVariable String matchId,
                                              @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
+        long publicVersionBefore = publicCards.version(cardId);
         CardDtos.ResultPatch patch = service.submitResult(
             cardId, matchId, request, authentication.getName(), !authz.isStaff(authentication));
         events.publishResult(cardId, patch);
@@ -193,6 +198,9 @@ public class CardController {
             .toList();
         if (!publicChanges.isEmpty())
             events.publishPublicResult(cardId, publicCards.version(cardId), publicChanges);
+        else
+            // A result on an unpublished pairing can still change public data (e.g. a stage flip).
+            publishPublicIfBumped(cardId, publicVersionBefore);
         return patch;
     }
 
@@ -200,7 +208,7 @@ public class CardController {
     public CardDtos.CardResponse overrideResult(@PathVariable UUID cardId, @PathVariable String matchId,
                                                 @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.overrideResult(cardId, matchId, request, authentication.getName()));
+        return changed(cardId, () -> service.overrideResult(cardId, matchId, request, authentication.getName()));
     }
 
     /** Director "ลงดาบ": force both players of a pairing to lose by the given points. Password-confirmed. */
@@ -209,13 +217,13 @@ public class CardController {
                                          @Valid @RequestBody CardDtos.PenaltyRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(service.applyPenalty(cardId, matchId, request.points(), authentication.getName()));
+        return changed(cardId, () -> service.applyPenalty(cardId, matchId, request.points(), authentication.getName()));
     }
 
     @PostMapping("/{cardId}/pairings/confirm")
     public CardDtos.CardResponse confirm(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        CardDtos.CardResponse card = changed(service.confirmPairingPreview(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changed(cardId, () -> service.confirmPairingPreview(cardId, authentication.getName()));
         push.pairingPublished(cardId, card.currentGame());
         return card;
     }
@@ -224,31 +232,29 @@ public class CardController {
     public CardDtos.CardResponse publishNextPairing(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         long previousPublicVersion = publicCards.version(cardId);
-        CardDtos.CardResponse card = changed(service.publishPairResultDestination(cardId, authentication.getName()));
-        long nextPublicVersion = publicCards.version(cardId);
-        if (nextPublicVersion > previousPublicVersion) {
-            events.publishPublic(cardId, nextPublicVersion);
+        // changed() already notifies viewer streams on the bump; here the bump also gates Web Push.
+        CardDtos.CardResponse card = changed(cardId, () -> service.publishPairResultDestination(cardId, authentication.getName()));
+        if (publicCards.version(cardId) > previousPublicVersion)
             push.pairingPublished(cardId, card.currentGame() + 1);
-        }
         return card;
     }
 
     @PostMapping("/{cardId}/results/review")
     public CardDtos.CardResponse reviewResults(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.reviewResults(cardId, authentication.getName()));
+        return changed(cardId, () -> service.reviewResults(cardId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/results/reopen")
     public CardDtos.CardResponse reopenResults(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        return changed(service.reopenResults(cardId, authentication.getName()));
+        return changed(cardId, () -> service.reopenResults(cardId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/results/publish")
     public CardDtos.CardResponse publishResults(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        CardDtos.CardResponse card = changed(service.publishResults(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changed(cardId, () -> service.publishResults(cardId, authentication.getName()));
         CardDtos.SnapshotResponse snapshot = card.snapshots().stream()
             .filter(item -> item.confirmedAt() != null && !item.confirmedAt().isBlank())
             .max(java.util.Comparator.comparingInt(item ->
@@ -268,7 +274,7 @@ public class CardController {
     @PostMapping("/{cardId}/final/start")
     public CardDtos.CardResponse startFinal(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        CardDtos.CardResponse card = changed(service.startFinalRound(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changed(cardId, () -> service.startFinalRound(cardId, authentication.getName()));
         push.finalStarted(cardId);
         return card;
     }
@@ -277,27 +283,50 @@ public class CardController {
     public CardDtos.CardResponse submitFinalResult(@PathVariable UUID cardId, @PathVariable int slot, @PathVariable int gameIndex,
                                                    @Valid @RequestBody CardDtos.FinalResultRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
-        return changed(service.submitFinalResult(cardId, slot, gameIndex, request.scoreOne(), request.scoreTwo(), authentication.getName()));
+        return changed(cardId, () -> service.submitFinalResult(cardId, slot, gameIndex, request.scoreOne(), request.scoreTwo(), authentication.getName()));
     }
 
     @PutMapping("/{cardId}/final/{slot}/winner")
     public CardDtos.CardResponse setFinalWinner(@PathVariable UUID cardId, @PathVariable int slot,
                                                 @Valid @RequestBody CardDtos.FinalWinnerRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
-        return changed(service.setFinalWinner(cardId, slot, request.winnerId(), authentication.getName()));
+        return changed(cardId, () -> service.setFinalWinner(cardId, slot, request.winnerId(), authentication.getName()));
     }
 
     @PostMapping("/{cardId}/final/publish")
     public CardDtos.CardResponse publishFinal(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        CardDtos.CardResponse card = changed(service.publishFinalRound(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changed(cardId, () -> service.publishFinalRound(cardId, authentication.getName()));
         push.competitionCompleted(cardId);
         return card;
     }
 
-    private CardDtos.CardResponse changed(CardDtos.CardResponse card) {
+    /**
+     * Runs a card mutation, notifies staff streams with the full new state, and — whenever the
+     * mutation bumped the card's public version — notifies anonymous viewer streams too. Routing
+     * every endpoint through this check is what keeps published data live for viewers no matter
+     * which staff action produced it (rankings publish, overrides, penalties, player edits, the
+     * final round, …), not just result entry and pairing publication.
+     */
+    private CardDtos.CardResponse changed(UUID cardId, Supplier<CardDtos.CardResponse> action) {
+        long publicVersionBefore = publicCards.version(cardId);
+        CardDtos.CardResponse card = action.get();
+        events.publish(card);
+        publishPublicIfBumped(cardId, publicVersionBefore);
+        return card;
+    }
+
+    /** Create has no prior public version to compare; new cards appear via the (SSE-less) catalog. */
+    private CardDtos.CardResponse created(CardDtos.CardResponse card) {
         events.publish(card);
         return card;
+    }
+
+    private boolean publishPublicIfBumped(UUID cardId, long publicVersionBefore) {
+        long current = publicCards.version(cardId);
+        if (current <= publicVersionBefore) return false;
+        events.publishPublic(cardId, current);
+        return true;
     }
 
     /** Any authenticated back-office principal (admin/director/staff) sees the internal staff view. */

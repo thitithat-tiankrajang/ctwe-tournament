@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicTournamentSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
+import { publicApiUrl } from "@/infrastructure/http/public-api";
 
 export interface AuthState {
   authenticated: boolean;
@@ -219,7 +220,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 
   const fetchPublicCatalog = async (versionToken?: string) => {
     const suffix = versionToken ? `?v=${encodeURIComponent(versionToken)}` : "";
-    const response = await fetch(`/api/public/cards${suffix}`, { credentials: "omit" });
+    const response = await fetch(publicApiUrl(`/api/public/cards${suffix}`), { credentials: "omit" });
     if (!response.ok) throw new Error(await readError(response));
     return response.json() as Promise<PublicCardSummary[]>;
   };
@@ -307,7 +308,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
           ? ""
           : `?v=${encodeURIComponent(expectedPublicVersion)}`;
         const response = await fetch(
-          backOffice ? `/api/cards/${cardId}` : `/api/public/cards/${cardId}${publicVersionQuery}`,
+          backOffice ? `/api/cards/${cardId}` : publicApiUrl(`/api/public/cards/${cardId}${publicVersionQuery}`),
           backOffice
             ? { credentials: "same-origin", cache: "no-store" }
             : { credentials: "omit" },
@@ -520,17 +521,17 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 
     // ---- public (anonymous) link-scoped entry ----
     async loadPublicTournaments() {
-      const response = await fetch("/api/public/tournaments", { credentials: "omit", cache: "no-store" });
+      const response = await fetch(publicApiUrl("/api/public/tournaments"), { credentials: "omit", cache: "no-store" });
       if (!response.ok) throw new Error(await readError(response));
       return response.json() as Promise<PublicTournamentSummary[]>;
     },
     async loadPublicArchives() {
-      const response = await fetch("/api/public/archives", { credentials: "omit", cache: "no-store" });
+      const response = await fetch(publicApiUrl("/api/public/archives"), { credentials: "omit", cache: "no-store" });
       if (!response.ok) throw new Error(await readError(response));
       return response.json() as Promise<TournamentArchive[]>;
     },
     async resolveTournamentToken(token) {
-      const response = await fetch(`/api/public/tournaments/${encodeURIComponent(token)}`, { credentials: "omit", cache: "no-store" });
+      const response = await fetch(publicApiUrl(`/api/public/tournaments/${encodeURIComponent(token)}`), { credentials: "omit", cache: "no-store" });
       if (!response.ok) throw new Error(await readError(response));
       return response.json() as Promise<PublicTournamentSummary>;
     },

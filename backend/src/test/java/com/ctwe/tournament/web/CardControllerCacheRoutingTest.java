@@ -168,6 +168,50 @@ class CardControllerCacheRoutingTest {
         verify(push).competitionCompleted(cardId);
     }
 
+    @Test
+    void mutationThatBumpsPublicVersionNotifiesViewerStreams() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = director();
+        var snapshot = new CardDtos.SnapshotResponse("2", List.of(2, 3), List.of(), Instant.EPOCH.toString());
+        CardDtos.CardResponse response = withStage(card(cardId), RuntimeStage.RESULT_COLLECTION, 3, List.of(snapshot));
+        when(cards.publishResults(cardId, "director")).thenReturn(response);
+        when(publicCards.version(cardId)).thenReturn(4L, 5L);
+
+        controller.publishResults(cardId, authentication);
+
+        verify(events).publish(response);
+        verify(events).publishPublic(cardId, 5L);
+    }
+
+    @Test
+    void mutationWithoutPublicEffectStaysOffTheViewerStream() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = director();
+        CardDtos.CardResponse response = card(cardId);
+        var request = new CardDtos.PlayerRequest(null, "First", "Last", "School");
+        when(authz.isDirector(authentication)).thenReturn(true);
+        when(cards.updatePlayer(cardId, "P001", request, "director", true)).thenReturn(response);
+        when(publicCards.version(cardId)).thenReturn(4L);
+
+        controller.updatePlayer(cardId, "P001", request, authentication);
+
+        verify(events).publish(response);
+        verify(events, never()).publishPublic(org.mockito.ArgumentMatchers.eq(cardId), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void deletingACardForcesViewerStreamsToResync() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = director();
+        when(publicCards.version(cardId)).thenReturn(9L);
+
+        controller.delete(cardId, authentication);
+
+        verify(cards).delete(cardId);
+        verify(events).publish(cardId, -1);
+        verify(events).publishPublic(cardId, 10L);
+    }
+
     private static UsernamePasswordAuthenticationToken director() {
         return new UsernamePasswordAuthenticationToken(
             "director", "n/a", List.of(new SimpleGrantedAuthority("ROLE_DIRECTOR")));

@@ -137,6 +137,7 @@ npm run cf:build
 ```text
 NODE_VERSION=22.13.0
 BACKEND_URL=https://YOUR-RENDER-SERVICE.onrender.com
+NEXT_PUBLIC_PUBLIC_API_ORIGIN=https://YOUR-RENDER-SERVICE.onrender.com
 ```
 
 10. หลังสร้าง Worker ไปที่ **Settings → Variables & Secrets** แล้วเพิ่ม runtime variable:
@@ -148,14 +149,24 @@ BACKEND_URL=https://YOUR-RENDER-SERVICE.onrender.com
 ต้องตั้ง `BACKEND_URL` ทั้ง Build และ Runtime; ห้ามชี้ production ไป `localhost` และ Render URL
 ต้องเป็น HTTPS เมื่อ deploy สำเร็จให้เปิด `https://ctwe-tournament.YOUR-SUBDOMAIN.workers.dev`
 
-Cloudflare route handlers proxy `/api`, `/login`, `/logout` ไป backend ทำให้ browser ใช้ session
-cookie แบบ same-origin, ไม่ต้องเปิด CORS และยัง stream SSE ได้
+`NEXT_PUBLIC_PUBLIC_API_ORIGIN` เป็นค่า **build-time เท่านั้น** (ถูกฝังลง JavaScript ตอน build):
+ผู้ชมนิรนามจะยิง `/api/public/**` และ SSE ตรงไปที่ origin นี้ ไม่ผ่าน Worker เพื่อประหยัดโควตา
+100k requests/วัน ของ Workers free tier — ถ้าไม่ตั้ง ระบบจะ fallback ไปใช้ proxy ผ่าน Worker
+เหมือนเดิม (ใช้ค่านี้กับ local dev ไม่ได้เพราะต้องเป็น HTTPS)
+
+ฝั่ง Render ต้องอนุญาต CORS จาก origin ของหน้าเว็บ: ตรวจว่า `CORS_ALLOWED_ORIGINS` ตรงกับ
+`https://ctwe-tournament.YOUR-SUBDOMAIN.workers.dev` (ค่า default ใน `application.yml` คือ
+origin ของโปรเจกต์นี้ — ถ้า subdomain ต่างไปต้องตั้ง env นี้เอง)
+
+Cloudflare route handlers ยัง proxy `/api`, `/login`, `/logout` ไป backend สำหรับ**เจ้าหน้าที่**
+(session cookie ต้อง same-origin) ส่วนผู้ชมสาธารณะไปตรงตาม `NEXT_PUBLIC_PUBLIC_API_ORIGIN`
 
 ## 6. Production smoke test
 
 ทดสอบตามลำดับ:
 
-1. Public เปิด `/cards` ได้โดยไม่ login
+1. Public เปิด `/cards` ได้โดยไม่ login และใน Network tab คำขอ `/api/public/**` + SSE
+   ต้องชี้ไปที่ `NEXT_PUBLIC_PUBLIC_API_ORIGIN` (ไม่ใช่ origin ของเว็บ) โดยไม่มี CORS error
 2. Public เข้า `/cards/{id}/players`, `/tables`, `/games`, `/audit` ไม่ได้
 3. Staff login ได้และ cookie มี `Secure`, `HttpOnly`, `SameSite=Strict`
 4. สร้าง test card → เพิ่มผู้เล่น → Finish registration

@@ -33,12 +33,8 @@ class PublicCardControllerTest {
         var response = controller.cards(new MockHttpServletRequest());
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getHeaders().getCacheControl()).contains("public").contains("max-age=2");
-        assertThat(response.getHeaders().getFirst("CDN-Cache-Control"))
-            .isEqualTo("max-age=5, stale-while-revalidate=10");
-        assertThat(response.getHeaders().getFirst("Vercel-CDN-Cache-Control"))
-            .isEqualTo("max-age=5, stale-while-revalidate=10");
-        assertThat(response.getHeaders().getFirst("Vercel-Cache-Tag")).isEqualTo("public-cards");
+        assertThat(response.getHeaders().getCacheControl())
+            .isEqualTo("public, max-age=2, s-maxage=5, stale-while-revalidate=10");
         assertThat(response.getHeaders().getETag()).isNotBlank();
         assertThat(response.getHeaders()).doesNotContainKey(HttpHeaders.SET_COOKIE);
     }
@@ -57,19 +53,47 @@ class PublicCardControllerTest {
     }
 
     @Test
-    void givesMatchingVersionedCardUrlsALongerEdgeLifetime() {
+    void marksMatchingVersionedCardUrlsImmutable() {
         UUID cardId = UUID.randomUUID();
-        when(cards.get(cardId)).thenReturn(new CardDtos.CardResponse(
-            cardId, UUID.randomUUID(), "Card", "Division", CardStatus.RUNNING,
-            RuntimeStage.RESULT_COLLECTION, 2, 7, List.of(), List.of(), List.of(),
-            List.of(), List.of(), List.of(), "NONE", 0, null, false, Instant.EPOCH));
+        when(cards.get(cardId)).thenReturn(cardResponse(cardId, 7));
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setParameter("v", "7");
 
         var response = controller.card(cardId, request);
 
-        assertThat(response.getHeaders().getFirst("Vercel-CDN-Cache-Control"))
-            .isEqualTo("max-age=300, stale-while-revalidate=60");
+        assertThat(response.getHeaders().getCacheControl())
+            .isEqualTo("public, max-age=31536000, immutable");
+    }
+
+    @Test
+    void keepsUnversionedCardUrlsNearLive() {
+        UUID cardId = UUID.randomUUID();
+        when(cards.get(cardId)).thenReturn(cardResponse(cardId, 7));
+
+        var response = controller.card(cardId, new MockHttpServletRequest());
+
+        assertThat(response.getHeaders().getCacheControl())
+            .isEqualTo("public, max-age=2, s-maxage=5, stale-while-revalidate=10");
+    }
+
+    @Test
+    void keepsStaleVersionedCardUrlsNearLive() {
+        UUID cardId = UUID.randomUUID();
+        when(cards.get(cardId)).thenReturn(cardResponse(cardId, 7));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setParameter("v", "6");
+
+        var response = controller.card(cardId, request);
+
+        assertThat(response.getHeaders().getCacheControl())
+            .isEqualTo("public, max-age=2, s-maxage=5, stale-while-revalidate=10");
+    }
+
+    private CardDtos.CardResponse cardResponse(UUID cardId, long version) {
+        return new CardDtos.CardResponse(
+            cardId, UUID.randomUUID(), "Card", "Division", CardStatus.RUNNING,
+            RuntimeStage.RESULT_COLLECTION, 2, version, List.of(), List.of(), List.of(),
+            List.of(), List.of(), List.of(), "NONE", 0, null, false, Instant.EPOCH);
     }
 
     private PublicCardDtos.CardSummary summary() {

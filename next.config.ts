@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: process.cwd(),
   async headers() {
     const devEval = process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
+    // High-volume anonymous reads (and the public SSE stream) bypass the Worker proxy and hit
+    // this origin directly, so the CSP must allow it. Same-origin staff traffic is unaffected.
+    const publicApiOrigin = (process.env.NEXT_PUBLIC_PUBLIC_API_ORIGIN ?? "").trim().replace(/\/+$/, "");
+    const connectSrc = `'self'${publicApiOrigin ? ` ${publicApiOrigin}` : ""}`;
     return [
       // Opt in only the representation-stable public reads. The SSE route must always stream
       // directly from the origin and must never share a CDN cache entry.
@@ -26,7 +30,7 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-          { key: "Content-Security-Policy", value: `default-src 'self'; script-src 'self' 'unsafe-inline'${devEval}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'` },
+          { key: "Content-Security-Policy", value: `default-src 'self'; script-src 'self' 'unsafe-inline'${devEval}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ${connectSrc}; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'` },
         ],
       },
     ];
