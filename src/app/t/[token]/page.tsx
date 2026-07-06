@@ -25,7 +25,7 @@ export default function TournamentLinkPage() {
       try {
         const tournament = await resolveTournamentToken(token);
         if (!active) return;
-        setActiveTournament({ id: tournament.id, name: tournament.name });
+        setActiveTournament({ id: tournament.id, name: tournament.name, accessToken: tournament.accessToken });
         router.replace("/cards");
       } catch {
         if (active) setError(true);
