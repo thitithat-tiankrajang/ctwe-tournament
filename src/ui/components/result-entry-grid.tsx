@@ -174,7 +174,18 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const filtersActive = controls.active || status !== "all";
   const savedCount = rows.filter((row) => row.status === "saved").length;
   const dirtyCount = rows.filter((row) => row.status === "dirty").length;
-  const filteredSavable = filtered.filter((row) => isCompletePairing(row.pairing) && row.status === "dirty" && calcOutcome(row.one ?? "", row.two ?? "", maxDiff, row.pairing.playerOneId, row.pairing.playerTwoId));
+  const filteredSavable = filtered.filter((row) => {
+    if (!row.pairing || row.status !== "dirty") return false;
+    const side = row.slot.isBye ? byeSide(row.pairing) : null;
+    if (side) {
+      const value = drafts[row.pairing.id]?.[side]
+        ?? (side === "one" ? row.pairing.scoreOne : row.pairing.scoreTwo)?.toString()
+        ?? "";
+      return value.trim() !== "" && Number.isInteger(Number(value)) && Number(value) > 0;
+    }
+    return isCompletePairing(row.pairing)
+      && Boolean(calcOutcome(row.one ?? "", row.two ?? "", maxDiff, row.pairing.playerOneId, row.pairing.playerTwoId));
+  });
 
   const setDraft = (id: string, field: "one" | "two", value: string, base: { one: string; two: string }) => {
     clearFlash();
@@ -236,7 +247,9 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     setSavingAll(true);
     try {
       for (const row of filteredSavable) {
-        if (row.pairing) await saveRow(row.pairing);
+        if (!row.pairing) continue;
+        if (row.slot.isBye && byeSide(row.pairing)) await saveByeRow(row.pairing);
+        else await saveRow(row.pairing);
       }
     } finally {
       setSavingAll(false);

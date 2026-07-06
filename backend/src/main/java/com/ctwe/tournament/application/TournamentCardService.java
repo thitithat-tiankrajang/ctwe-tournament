@@ -5,6 +5,7 @@ import com.ctwe.tournament.domain.model.PairingRuleType;
 import com.ctwe.tournament.domain.model.RuntimeStage;
 import com.ctwe.tournament.domain.pairing.GibsonAnalysis;
 import com.ctwe.tournament.domain.pairing.PairingStrategy;
+import com.ctwe.tournament.domain.pairing.SchoolAwarePairing;
 import com.ctwe.tournament.infrastructure.cache.EvictPublicCard;
 import com.ctwe.tournament.infrastructure.cache.TournamentCaches;
 import com.ctwe.tournament.web.dto.CardDtos;
@@ -434,68 +435,38 @@ public class TournamentCardService {
 
     private void generateInitialTables(UUID cardId) {
         jdbc.update("DELETE FROM table_seats WHERE card_id = ?", cardId);
-        var players = jdbc.query("SELECT code, school FROM players WHERE card_id = ? AND terminated_at IS NULL AND rejoin_game <= 1 ORDER BY code",
-            (rs, row) -> new SeatPlayer(rs.getInt("code"), rs.getString("school")), cardId);
+        List<PairingStrategy.PlayerScore> players = new ArrayList<>(jdbc.query("""
+            SELECT code, school FROM players
+            WHERE card_id = ? AND terminated_at IS NULL AND rejoin_game <= 1
+            ORDER BY code
+            """, (rs, row) -> new PairingStrategy.PlayerScore(
+                String.valueOf(rs.getInt("code")), rs.getString("school"), 0, 0), cardId));
         Collections.shuffle(players, secureRandom);
-        // An odd field leaves one player without an opponent — they become the game-1 bye, seated last.
-        SeatPlayer bye = players.size() % 2 != 0 ? players.remove(players.size() - 1) : null;
-        var pairs = randomizedSchoolSafePairs(players);
-        Collections.shuffle(pairs, secureRandom);
+        // The random pre-shuffle also selects a different bye when the preview is regenerated.
+        PairingStrategy.PlayerScore bye = players.size() % 2 != 0 ? players.remove(players.size() - 1) : null;
+        List<PairingStrategy.Pair> pairs = players.isEmpty() ? List.of()
+            : strategies.resolve(PairingRuleType.RANDOM).generate(players,
+                new PairingStrategy.PairingContext(1, List.of()));
+        pairs = SchoolAwarePairing.orderForTables(
+            pairs, players, secureRandom, bye == null ? null : bye.playerId());
         int tableNumber = 1;
         for (int pairIndex = 0; pairIndex < pairs.size(); pairIndex += 2) {
             int seatNumber = 1;
             for (int offset = 0; offset < 2 && pairIndex + offset < pairs.size(); offset++) {
-                InitialPair pair = pairs.get(pairIndex + offset);
-                jdbc.update("INSERT INTO table_seats (card_id, table_no, seat_no, player_code) VALUES (?, ?, ?, ?)", cardId, tableNumber, seatNumber++, pair.one().code());
-                jdbc.update("INSERT INTO table_seats (card_id, table_no, seat_no, player_code) VALUES (?, ?, ?, ?)", cardId, tableNumber, seatNumber++, pair.two().code());
+                PairingStrategy.Pair pair = pairs.get(pairIndex + offset);
+                jdbc.update("INSERT INTO table_seats (card_id, table_no, seat_no, player_code) VALUES (?, ?, ?, ?)",
+                    cardId, tableNumber, seatNumber++, Integer.parseInt(pair.playerOneId()));
+                jdbc.update("INSERT INTO table_seats (card_id, table_no, seat_no, player_code) VALUES (?, ?, ?, ?)",
+                    cardId, tableNumber, seatNumber++, Integer.parseInt(pair.playerTwoId()));
             }
             tableNumber++;
         }
         if (bye != null) {
-            jdbc.update("INSERT INTO table_seats (card_id, table_no, seat_no, player_code) VALUES (?, ?, 1, ?)", cardId, tableNumber, bye.code());
+            int byeTable = pairs.size() % 2 != 0 ? tableNumber - 1 : tableNumber;
+            int byeSeat = pairs.size() % 2 != 0 ? 3 : 1;
+            jdbc.update("INSERT INTO table_seats (card_id, table_no, seat_no, player_code) VALUES (?, ?, ?, ?)",
+                cardId, byeTable, byeSeat, Integer.parseInt(bye.playerId()));
         }
-    }
-
-    /**
-     * Random game-1 pairing that avoids same-school matchups when possible, and ALLOWS them with the
-     * mathematically minimum number when unavoidable (no exception). Greedy: every step pairs the two
-     * largest *different* schools, which maximises cross-school pairs; same-school pairs only remain when
-     * one school's players outnumber everyone else combined — those land on that largest (most-crowded)
-     * school, so the unavoidable pressure falls on a big school rather than a small one. Tie-break and
-     * within-school order are random, and {@code generateInitialTables} re-shuffles pairs into table
-     * numbers, so the result isn't reverse-engineerable.
-     */
-    private List<InitialPair> randomizedSchoolSafePairs(List<SeatPlayer> shuffledPlayers) {
-        if (shuffledPlayers.size() % 2 != 0)
-            throw new IllegalArgumentException("จำนวนผู้เล่นต้องเป็นเลขคู่ก่อนสร้าง pairing");
-
-        Map<String, List<SeatPlayer>> grouped = new HashMap<>();
-        for (SeatPlayer player : shuffledPlayers)
-            grouped.computeIfAbsent(schoolKey(player.school()), key -> new ArrayList<>()).add(player);
-        List<List<SeatPlayer>> buckets = new ArrayList<>(grouped.values());
-        for (List<SeatPlayer> bucket : buckets) Collections.shuffle(bucket, secureRandom);
-
-        List<InitialPair> pairs = new ArrayList<>();
-        while (true) {
-            buckets.removeIf(List::isEmpty);
-            if (buckets.isEmpty()) break;
-            Collections.shuffle(buckets, secureRandom);                       // random tie-break among equal sizes
-            buckets.sort((left, right) -> Integer.compare(right.size(), left.size())); // stable: largest first
-            List<SeatPlayer> largest = buckets.get(0);
-            if (buckets.size() == 1) {
-                // Only one school left: pair its surplus internally (the minimum unavoidable same-school pairs).
-                while (largest.size() >= 2)
-                    pairs.add(new InitialPair(largest.remove(largest.size() - 1), largest.remove(largest.size() - 1)));
-            } else {
-                List<SeatPlayer> second = buckets.get(1);
-                pairs.add(new InitialPair(largest.remove(largest.size() - 1), second.remove(second.size() - 1)));
-            }
-        }
-        return pairs;
-    }
-
-    private String schoolKey(String school) {
-        return school.trim().toLowerCase(Locale.ROOT);
     }
 
     @Transactional
@@ -734,8 +705,8 @@ public class TournamentCardService {
         if (updatesPairResultDestination && !deferredSwissSource)
             syncPairResultSource(cardId, card.currentGame(), match.tableNumber());
         // The bottom Swiss group is not materialised live — it auto-pairs once all its results are in.
-        if (deferredSwissSource)
-            tryMaterializeDeferredSwiss(cardId, card.currentGame());
+        boolean deferredSwissMaterialized = deferredSwissSource
+            && tryMaterializeDeferredSwiss(cardId, card.currentGame());
         if (match.pairingPublishedAt() != null || match.snapshotNo() != null)
             publishPublic(cardId);
         // A normal save changes one row. PAIR_RESULT can additionally materialize/update two
@@ -745,12 +716,27 @@ public class TournamentCardService {
             ? ((match.tableNumber() - 1) / 2) * 2 + 1
             : -1;
         return new CardDtos.ResultPatch(cardVersion(cardId),
-            changedResultPairings(cardId, key, destinationGame, destinationGroupStart));
+            changedResultPairings(cardId, key, destinationGame, destinationGroupStart, deferredSwissMaterialized));
     }
 
     private List<CardDtos.PairingResponse> changedResultPairings(
-        UUID cardId, MatchKey source, int destinationGame, int destinationGroupStart
+        UUID cardId, MatchKey source, int destinationGame, int destinationGroupStart,
+        boolean includeWholeDestination
     ) {
+        if (includeWholeDestination) {
+            return jdbc.query("""
+                SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
+                       m.score_one, m.score_two, m.result_type, m.calculated_diff,
+                       m.snapshot_no, m.pairing_published_at, s.confirmed_at
+                FROM matches m
+                LEFT JOIN pairing_snapshots s ON s.card_id = m.card_id AND s.snapshot_no = m.snapshot_no
+                WHERE m.card_id = ? AND m.snapshot_no IS NULL
+                  AND ((m.game_number = ? AND m.table_number = ?) OR m.game_number = ?)
+                ORDER BY m.game_number, m.table_number
+                """, this::mapPairingRow,
+                cardId, source.gameNumber(), source.tableNumber(), destinationGame)
+                .stream().map(row -> toPairingResponse(row, true)).toList();
+        }
         return jdbc.query("""
             SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
                    m.score_one, m.score_two, m.result_type, m.calculated_diff,
@@ -1166,48 +1152,47 @@ public class TournamentCardService {
      * multiple of four, the bottom 6 (remainder 2) / bottom 5 (remainder 1) — the last 3 game-1 tables
      * — are paired into game 2 by Swiss rather than the live win/win–lose/lose rule.
      */
-    private int deferredSwissTableCount(UUID cardId) {
-        // The bottom Swiss group is fixed by the game-1 field, so count who actually played game 1
-        // (robust to later termination/restore, which never rewrites game 1).
+    private int deferredSwissTableCount(UUID cardId, int sourceGame) {
+        // Count who actually entered this source game. This also works after terminate/restore.
         long players = count("""
             SELECT COUNT(*) FROM players p WHERE p.card_id = ? AND EXISTS (
-              SELECT 1 FROM matches m WHERE m.card_id = p.card_id AND m.game_number = 1
+              SELECT 1 FROM matches m WHERE m.card_id = p.card_id AND m.game_number = ?
                 AND (m.player_one = p.code OR m.player_two = p.code))
-            """, cardId);
-        if (players == 0) players = activeInGame(cardId, 1);
+            """, cardId, sourceGame);
+        if (players == 0) players = activeInGame(cardId, sourceGame);
         int remainder = (int) (players % 4);
         if (remainder != 1 && remainder != 2) return 0;
-        int tables = (int) ((players + 1) / 2); // ceil(N/2) = game-1 matches
+        int tables = (int) ((players + 1) / 2); // ceil(N/2) = source-game matches
         return Math.min(3, tables);
     }
 
     private boolean isDeferredSwissSource(UUID cardId, int sourceGame, int sourceTable) {
-        if (sourceGame != 1) return false; // remainder handling lives in the game 1 -> 2 PAIR_RESULT block
-        int deferred = deferredSwissTableCount(cardId);
+        int deferred = deferredSwissTableCount(cardId, sourceGame);
         if (deferred == 0) return false;
         return sourceTable > gameMatchCount(cardId, sourceGame) - deferred;
     }
 
     /**
-     * Once every game-1 result of the bottom group is recorded, Swiss-pair those players (scored from
-     * game 1 only) into game 2. An odd group leaves its lowest-ranked player as a game-2 bye. The
+     * Once every source-game result of the bottom group is recorded, Swiss-pair those players (scored
+     * from that source game only) into the destination game. An odd group leaves its lowest-ranked
+     * player as a destination-game bye. The
      * destination tables sit after the live win/win–lose/lose tables.
      */
-    private void tryMaterializeDeferredSwiss(UUID cardId, int sourceGame) {
-        int deferred = deferredSwissTableCount(cardId);
-        if (deferred == 0) return;
+    private boolean tryMaterializeDeferredSwiss(UUID cardId, int sourceGame) {
+        int deferred = deferredSwissTableCount(cardId, sourceGame);
+        if (deferred == 0) return false;
         int total = gameMatchCount(cardId, sourceGame);
         int firstDeferred = total - deferred + 1;
         Long pending = jdbc.queryForObject("""
             SELECT COUNT(*) FROM matches
             WHERE card_id = ? AND game_number = ? AND table_number >= ? AND result_type IS NULL
             """, Long.class, cardId, sourceGame, firstDeferred);
-        if (pending != null && pending > 0) return;
+        if (pending != null && pending > 0) return false;
         int destGame = sourceGame + 1;
         int topTables = firstDeferred - 1; // live destination tables occupy 1..topTables
         Long already = jdbc.queryForObject("SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = ? AND table_number > ?",
             Long.class, cardId, destGame, topTables);
-        if (already != null && already > 0) return;
+        if (already != null && already > 0) return false;
 
         var rows = jdbc.query("""
             SELECT player_one, player_two, winner, result_type, calculated_diff
@@ -1242,6 +1227,7 @@ public class TournamentCardService {
         PairingStrategy.PlayerScore byePlayer = ranked.size() % 2 != 0 ? ranked.remove(ranked.size() - 1) : null;
         List<PairingStrategy.Pair> pairs = ranked.isEmpty() ? List.of()
             : strategies.resolve(PairingRuleType.SWISS).generate(ranked, new PairingStrategy.PairingContext(destGame, List.of()));
+        pairs = orderPairsForTables(cardId, pairs, byePlayer == null ? null : byePlayer.playerId());
         int tableNumber = topTables + 1;
         for (PairingStrategy.Pair pair : pairs) {
             jdbc.update("""
@@ -1255,6 +1241,7 @@ public class TournamentCardService {
         jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number = ?", cardId, destGame);
         audit(cardId, "system", "MATERIALIZE_DEFERRED_SWISS", null, Map.of(
             "sourceGame", sourceGame, "players", score.size(), "destTablesFrom", topTables + 1));
+        return true;
     }
 
     /** A materialised game-2 bye is final only when every source match of its group has a result. */
@@ -1343,21 +1330,26 @@ public class TournamentCardService {
         PairingRuleType appliedRule = ruleForGame(cardId, gameNumber);
         if (appliedRule == PairingRuleType.PAIR_RESULT)
             throw new IllegalArgumentException("เกมแบบแพ้เจอแพ้/ชนะเจอชนะต้องถูกสร้างจากผลของเกมก่อนหน้าโดยอัตโนมัติ");
-        // An odd field (e.g. after a termination, or an odd roster) gives the lowest-ranked player a
-        // bye this game; the Swiss/KotH strategies only pair the even remainder.
+        // Every strategy receives an even field. Ranked modes give the lowest-ranked player the bye;
+        // RANDOM chooses it from a pre-shuffle so regenerating the preview produces a fresh result.
         Integer byePlayer = null;
         if (scores.size() % 2 != 0) {
-            Comparator<PairingStrategy.PlayerScore> ranking = Comparator.comparingInt(PairingStrategy.PlayerScore::winPoints).reversed()
-                .thenComparing(Comparator.comparingInt(PairingStrategy.PlayerScore::diff).reversed())
-                .thenComparing(PairingStrategy.PlayerScore::playerId);
             List<PairingStrategy.PlayerScore> ranked = new ArrayList<>(scores);
-            ranked.sort(ranking);
-            PairingStrategy.PlayerScore bye = ranked.remove(ranked.size() - 1); // lowest-ranked sits out
+            if (appliedRule == PairingRuleType.RANDOM) Collections.shuffle(ranked, secureRandom);
+            else {
+                Comparator<PairingStrategy.PlayerScore> ranking = Comparator.comparingInt(PairingStrategy.PlayerScore::winPoints).reversed()
+                    .thenComparing(Comparator.comparingInt(PairingStrategy.PlayerScore::diff).reversed())
+                    .thenComparing(PairingStrategy.PlayerScore::playerId);
+                ranked.sort(ranking);
+            }
+            PairingStrategy.PlayerScore bye = ranked.remove(ranked.size() - 1);
             byePlayer = Integer.valueOf(bye.playerId());
             scores = ranked;
         }
         var context = new PairingStrategy.PairingContext(gameNumber, history);
-        var pairs = applyGibsonPairing(cardId, gameNumber, scores, context, appliedRule);
+        var pairs = orderPairsForTables(cardId,
+            applyGibsonPairing(cardId, gameNumber, scores, context, appliedRule),
+            byePlayer == null ? null : String.valueOf(byePlayer));
         int table = 1;
         for (var pair : pairs) {
             jdbc.update("""
@@ -1371,6 +1363,19 @@ public class TournamentCardService {
                 VALUES (?, ?, ?, ?, NULL)
                 """, cardId, gameNumber, table, byePlayer);
         return appliedRule;
+    }
+
+    private List<PairingStrategy.Pair> orderPairsForTables(
+        UUID cardId,
+        List<PairingStrategy.Pair> pairs,
+        String byePlayerId
+    ) {
+        if (pairs.size() < 2) return pairs;
+        List<PairingStrategy.PlayerScore> players = jdbc.query("""
+            SELECT code, school FROM players WHERE card_id = ?
+            """, (rs, row) -> new PairingStrategy.PlayerScore(
+                String.valueOf(rs.getInt("code")), rs.getString("school"), 0, 0), cardId);
+        return SchoolAwarePairing.orderForTables(pairs, players, secureRandom, byePlayerId);
     }
 
     /**
@@ -1812,8 +1817,6 @@ public class TournamentCardService {
             return Map.of("id", pcode(code), "firstName", firstName, "lastName", lastName, "school", school);
         }
     }
-    private record SeatPlayer(int code, String school) {}
-    private record InitialPair(SeatPlayer one, SeatPlayer two) {}
     private record Seat(int tableNo, int seatNo, int playerCode) {}
     private record MatchSlot(int tableNumber, Integer oneId, Integer twoId, boolean hasResult) {}
     private record MatchKey(int gameNumber, int tableNumber) {}

@@ -3,6 +3,11 @@ package com.ctwe.tournament.domain.pairing;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.stream.IntStream;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -45,8 +50,77 @@ class PairingStrategiesTest {
         );
     }
 
+    @Test
+    void randomPairingAvoidsSameSchoolAndSpreadsSchoolsAcrossFourSeatTables() {
+        var players = List.of(
+            score("A1", "A"), score("A2", "A"),
+            score("B1", "B"), score("B2", "B"),
+            score("C1", "C"), score("C2", "C"),
+            score("D1", "D"), score("D2", "D")
+        );
+        var schools = players.stream().collect(Collectors.toMap(
+            PairingStrategy.PlayerScore::playerId, PairingStrategy.PlayerScore::school));
+
+        var pairs = SchoolAwarePairing.randomPairs(players, new Random(42));
+
+        assertThat(pairs).hasSize(4);
+        assertThat(pairs).allSatisfy(pair ->
+            assertThat(schools.get(pair.playerOneId())).isNotEqualTo(schools.get(pair.playerTwoId())));
+        for (int index = 0; index < pairs.size(); index += 2) {
+            Set<String> tableSchools = Set.of(
+                schools.get(pairs.get(index).playerOneId()),
+                schools.get(pairs.get(index).playerTwoId()),
+                schools.get(pairs.get(index + 1).playerOneId()),
+                schools.get(pairs.get(index + 1).playerTwoId())
+            );
+            assertThat(tableSchools).hasSize(4);
+        }
+    }
+
+    @Test
+    void randomPairingUsesOnlyMinimumUnavoidableSameSchoolMatches() {
+        var players = List.of(
+            score("A1", "A"), score("A2", "A"), score("A3", "A"),
+            score("A4", "A"), score("A5", "A"), score("A6", "A"),
+            score("B1", "B"), score("B2", "B"), score("C1", "C"), score("C2", "C")
+        );
+        Map<String, String> schools = players.stream().collect(Collectors.toMap(
+            PairingStrategy.PlayerScore::playerId, PairingStrategy.PlayerScore::school));
+
+        var pairs = SchoolAwarePairing.randomPairs(players, new Random(7));
+        long sameSchool = pairs.stream().filter(pair ->
+            schools.get(pair.playerOneId()).equals(schools.get(pair.playerTwoId()))).count();
+
+        assertThat(pairs).hasSize(5);
+        assertThat(sameSchool).isEqualTo(1);
+        assertThat(pairs.stream().flatMap(pair -> List.of(pair.playerOneId(), pair.playerTwoId()).stream()))
+            .containsExactlyInAnyOrderElementsOf(players.stream().map(PairingStrategy.PlayerScore::playerId).toList());
+    }
+
+    @Test
+    void randomPairingPlansElevenAndThirtyOnePlayerFieldsWithoutDroppingAnyone() {
+        for (int fieldSize : List.of(11, 31)) {
+            var field = new java.util.ArrayList<>(IntStream.rangeClosed(1, fieldSize)
+                .mapToObj(index -> score("P" + index, "S" + (index % 8))).toList());
+            var bye = field.remove(field.size() - 1);
+
+            var pairs = SchoolAwarePairing.randomPairs(field, new Random(fieldSize));
+            pairs = SchoolAwarePairing.orderForTables(pairs, field, new Random(fieldSize + 1), bye.playerId());
+
+            assertThat(pairs).hasSize(fieldSize / 2);
+            assertThat(pairs.stream().flatMap(pair -> List.of(pair.playerOneId(), pair.playerTwoId()).stream()))
+                .containsExactlyInAnyOrderElementsOf(field.stream().map(PairingStrategy.PlayerScore::playerId).toList());
+            assertThat(bye.playerId()).isNotIn(
+                pairs.stream().flatMap(pair -> List.of(pair.playerOneId(), pair.playerTwoId()).stream()).toList());
+        }
+    }
+
     private static PairingStrategy.PlayerScore score(String id, int winPoints, int diff) {
         return new PairingStrategy.PlayerScore(id, "school", winPoints, diff);
+    }
+
+    private static PairingStrategy.PlayerScore score(String id, String school) {
+        return new PairingStrategy.PlayerScore(id, school, 0, 0);
     }
 
     private static PairingStrategy.Pair pair(String one, String two) {

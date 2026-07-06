@@ -1,9 +1,9 @@
 "use client";
 
-import { LoaderCircle, RotateCcw, UserMinus, UserPlus } from "lucide-react";
+import { LoaderCircle, RotateCcw, UserMinus, UserPlus, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
-import type { Player, TournamentCard } from "@/domain/tournament/types";
+import type { TournamentCard } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 import { Panel } from "@/ui/components/page";
 
@@ -65,14 +65,12 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
     }
   };
 
-  const label = (p: Player) => `${p.id} · ${p.firstName} ${p.lastName} · ${p.school}`;
-
   return (
     <Panel
       title="ถอน / ดึงผู้เล่นกลับ (Terminate / Restore)"
       description="ผู้อำนวยการถอนผู้เล่นออกจากการแข่งขันเป็นหมู่ได้ และดึงกลับภายหลัง โดยเกมที่ผู้เล่นหายไปจะถูกปรับแพ้ตามแต้มที่กำหนด · ต้องยืนยันด้วยรหัสผ่าน"
     >
-      <div className="panel-padding" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <div className="panel-padding termination-actions">
         <Button variant="secondary" size="sm" disabled={active.length === 0} onClick={() => open("terminate")}>
           <UserMinus size={15} />ถอนผู้เล่น (Terminate)
         </Button>
@@ -82,58 +80,68 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
       </div>
 
       {terminated.length > 0 && (
-        <div className="panel-padding" style={{ paddingTop: 0 }}>
-          <p className="muted" style={{ fontSize: 13, marginBottom: 6 }}>ผู้เล่นที่ถูกถอนออก (เก็บไว้ ดึงกลับได้)</p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {terminated.map((p) => <span key={p.id} style={{ fontSize: 13, padding: "3px 9px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--muted)" }}>{p.id} · {p.firstName} {p.lastName}</span>)}
+        <div className="panel-padding termination-summary">
+          <p>ผู้เล่นที่ถูกถอนออก <strong>{terminated.length} คน</strong> · เก็บประวัติเดิมไว้และดึงกลับได้</p>
+          <div className="termination-chips">
+            {terminated.map((p) => <span key={p.id}>{p.id} · {p.firstName} {p.lastName}</span>)}
           </div>
         </div>
       )}
 
       {mode && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={close}>
-          <section className="confirm-dialog" role="dialog" aria-modal="true" style={{ maxWidth: 560 }} onMouseDown={(e) => e.stopPropagation()}>
+          <section className={`confirm-dialog termination-dialog${mode === "terminate" ? " confirm-dialog--danger" : ""}`} role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
             <header>
               <div className="confirm-dialog__icon">{mode === "terminate" ? <UserMinus size={20} /> : <RotateCcw size={20} />}</div>
               <div><span>ผู้อำนวยการเท่านั้น</span><h2>{mode === "terminate" ? "ถอนผู้เล่นออกจากการแข่งขัน" : "ดึงผู้เล่นกลับเข้าการแข่งขัน"}</h2></div>
+              <button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={busy} onClick={close}><X size={18} /></button>
             </header>
 
-            <div style={{ maxHeight: 240, overflowY: "auto", display: "grid", gap: 4, margin: "4px 0" }}>
-              {(mode === "terminate" ? active : terminated).map((p) => (
-                <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-                  <input type="checkbox" checked={selected.has(p.id)} disabled={busy} onChange={() => toggle(p.id)} />
-                  {label(p)}
-                </label>
-              ))}
-            </div>
+            <div className="termination-dialog__body">
+              <div className="termination-picker__toolbar">
+                <div><strong>เลือกผู้เล่น</strong><span>{selected.size} จาก {(mode === "terminate" ? active : terminated).length} คน</span></div>
+                <div>
+                  <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setSelected(new Set((mode === "terminate" ? active : terminated).map((p) => p.id)))}>เลือกทั้งหมด</Button>
+                  <Button type="button" variant="ghost" size="sm" disabled={busy || selected.size === 0} onClick={() => setSelected(new Set())}>ล้าง</Button>
+                </div>
+              </div>
+              <div className="termination-picker">
+                {(mode === "terminate" ? active : terminated).map((p) => (
+                  <label key={p.id} className={`termination-player${selected.has(p.id) ? " termination-player--selected" : ""}`}>
+                    <input type="checkbox" checked={selected.has(p.id)} disabled={busy} onChange={() => toggle(p.id)} />
+                    <span><strong>{p.id} · {p.firstName} {p.lastName}</strong><small>{p.school}</small></span>
+                  </label>
+                ))}
+              </div>
 
-            {mode === "terminate" ? (
-              <p className="muted" style={{ fontSize: 13 }}>ผู้เล่นที่ถอนออกจะไม่ถูกจับคู่ในเกมถัดไป · ผลและอันดับของเกมที่ผ่านมายังคงอยู่ · หากผู้เล่นยังมีคู่ในเกมปัจจุบันที่ยังไม่กรอกผล ระบบจะไม่ให้ถอนจนกว่าจะกรอกผลคู่นั้นก่อน</p>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
+              {mode === "terminate" ? (
+                <div className="notice notice--warning termination-notice"><p><strong>ผลเดิมจะยังอยู่ครบ</strong><span>ผู้เล่นที่ถอนจะไม่ถูกจับคู่เกมถัดไป หากยังมีคู่ที่ยังไม่กรอกผลในเกมปัจจุบัน ต้องบันทึกผลคู่นั้นก่อน</span></p></div>
+              ) : (
+                <div className="termination-restore-options">
                 {restoreCase === "A" && <div className="notice notice--info"><p><span>ผู้เล่นเหล่านี้จะเข้าไปเล่นต่อในเกมที่ <strong>{card.currentGame}</strong> และผลการแข่งขันในเกมที่เขาหายไปจะถูกปรับแพ้เกมละแต้มที่กรอกด้านล่าง</span></p></div>}
                 {restoreCase === "B" && (
                   <>
                     <div className="notice notice--warning"><p><span>Pairing เกมปัจจุบัน (เกม {card.currentGame}) ถูกสร้างขึ้นแล้ว ต้องการ <strong>un-pairing</strong> เพื่อนำผู้เล่นเหล่านี้เข้าสู่ pairing ปัจจุบันหรือไม่?</span></p></div>
-                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}><input type="radio" name="unpair" checked={unpair} disabled={busy} onChange={() => setUnpair(true)} />Un-pairing แล้วนำเข้าเกมนี้</label>
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}><input type="radio" name="unpair" checked={!unpair} disabled={busy} onChange={() => setUnpair(false)} />ไม่ต้อง (ปรับแพ้เกมนี้ แล้วเล่นเกมถัดไป)</label>
+                    <div className="termination-radio-group">
+                      <label><input type="radio" name="unpair" checked={unpair} disabled={busy} onChange={() => setUnpair(true)} /><span><strong>Un-pairing</strong><small>นำผู้เล่นเข้าเกมปัจจุบัน</small></span></label>
+                      <label><input type="radio" name="unpair" checked={!unpair} disabled={busy} onChange={() => setUnpair(false)} /><span><strong>คง Pairing เดิม</strong><small>ปรับแพ้เกมนี้ แล้วเล่นเกมถัดไป</small></span></label>
                     </div>
                   </>
                 )}
                 {restoreCase === "C" && <div className="notice notice--warning"><p><span>Pairing เกมปัจจุบันมีการกรอกผลแล้ว จึง un-pairing ไม่ได้ · ผู้เล่นจะถูกปรับแพ้ในเกมที่ {card.currentGame} และเกมที่หายไป เกมละแต้มด้านล่าง แล้วกลับมาเล่นในเกมถัดไป</span></p></div>}
                 <div className="form-field">
                   <label className="form-label" htmlFor="loss-points">แต้มที่ปรับแพ้ต่อเกมที่หายไป</label>
-                  <input className="input" id="loss-points" type="number" min={0} style={{ maxWidth: 160 }} value={lossPoints} disabled={busy} onChange={(e) => setLossPoints(e.target.value)} />
+                  <input className="input termination-points" id="loss-points" type="number" min={0} value={lossPoints} disabled={busy} onChange={(e) => setLossPoints(e.target.value)} />
                 </div>
               </div>
-            )}
+              )}
 
-            <div className="form-field" style={{ marginTop: 6 }}>
-              <label className="form-label" htmlFor="term-password">รหัสผ่านผู้อำนวยการ</label>
-              <input className="input" id="term-password" type="password" autoComplete="current-password" value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} placeholder="รหัสผ่านบัญชีของคุณ" />
+              <div className="form-field termination-password">
+                <label className="form-label" htmlFor="term-password">รหัสผ่านผู้อำนวยการ</label>
+                <input className="input" id="term-password" type="password" autoComplete="current-password" value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} placeholder="รหัสผ่านบัญชีของคุณ" />
+              </div>
+              {error && <p className="form-error">{error}</p>}
             </div>
-            {error && <p className="form-error">{error}</p>}
 
             <footer>
               <Button variant="secondary" disabled={busy} onClick={close}>ยกเลิก</Button>

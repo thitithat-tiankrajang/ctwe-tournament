@@ -3,6 +3,8 @@
 import { Beaker, FastForward, LockKeyhole, RotateCcw, School, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
+import { appDialog } from "@/application/ui/dialog";
+import { toast } from "@/application/ui/toast";
 import { isAdmin } from "@/domain/tournament/roles";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
@@ -24,8 +26,8 @@ export default function DevToolsPage() {
   }, [cardId, cards]);
   const locked = card?.status === "CLOSED";
   const run = async (action: () => Promise<void>, message: string) => {
-    try { await action(); window.alert(message); }
-    catch (error) { window.alert(error instanceof Error ? error.message : "เกิดข้อผิดพลาด"); }
+    try { await action(); toast.success(message); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เกิดข้อผิดพลาด", "ดำเนินการไม่สำเร็จ", true); }
   };
   const preparePairing = async () => {
     if (card?.runtimeStage === "PLAYER_REGISTRATION") await finishRegistration(cardId);
@@ -44,7 +46,9 @@ export default function DevToolsPage() {
         <section className="dev-action"><h2><Users size={19} />สร้าง Mock Players</h2><p>แทนที่รายชื่อปัจจุบันด้วยข้อมูลผู้เล่นที่กระจายหลายโรงเรียน</p><div className="page-actions" style={{ justifyContent: "flex-start" }}><Button variant="secondary" disabled={!cardId || locked} onClick={() => run(() => generatePlayers(cardId, 300), "สร้างผู้เล่น 300 คนแล้ว")}>300 คน</Button><Button variant="secondary" disabled={!cardId || locked} onClick={() => run(() => generatePlayers(cardId, 400), "สร้างผู้เล่น 400 คนแล้ว")}>400 คน</Button><Button disabled={!cardId || locked} onClick={() => run(() => generatePlayers(cardId, 1000), "สร้างผู้เล่น 1,000 คนแล้ว")}>1,000 คน</Button></div></section>
         <section className="dev-action"><h2><School size={19} />เตรียม Pairing</h2><p>จบการลงทะเบียนและสร้าง pairing preview ตาม workflow</p><Button disabled={!cardId || locked || !card?.players.length || !["PLAYER_REGISTRATION", "TABLE_PAIRING"].includes(card?.runtimeStage ?? "")} onClick={() => run(preparePairing, "สร้าง pairing preview แล้ว")}>สร้างโต๊ะ/Pairing</Button></section>
         <section className="dev-action"><h2><FastForward size={19} />จำลองการแข่งขันเต็มรูปแบบ</h2><p>สร้างผลทุกเกม snapshot ถาวร และอันดับสุดท้ายในครั้งเดียว</p><Button variant="success" disabled={!cardId || locked || !card?.players.length} onClick={() => run(() => simulate(cardId), "จำลองการแข่งขันครบทุกเกมแล้ว")}>Simulate Tournament</Button></section>
-        <section className="dev-action danger-zone"><h2><RotateCcw size={19} />รีเซ็ตการ์ด</h2><p>ล้างผล โต๊ะ และ snapshot แต่เก็บรายชื่อกับโครงสร้างเกมไว้</p><Button variant="danger" disabled={!cardId || locked} onClick={() => window.confirm("รีเซ็ตข้อมูล runtime ของการ์ดนี้หรือไม่?") && void resetCard(cardId)}>Reset Card</Button></section>
+        <section className="dev-action danger-zone"><h2><RotateCcw size={19} />รีเซ็ตการ์ด</h2><p>ล้างผล โต๊ะ และ snapshot แต่เก็บรายชื่อกับโครงสร้างเกมไว้</p><Button variant="danger" disabled={!cardId || locked} onClick={async () => {
+          if (await appDialog.confirm("รีเซ็ตข้อมูล runtime ของการ์ดนี้หรือไม่?", { title: "Reset Card", confirmLabel: "Reset Card", danger: true })) await resetCard(cardId);
+        }}>Reset Card</Button></section>
       </div>
     </>
   );

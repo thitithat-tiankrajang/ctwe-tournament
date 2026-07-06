@@ -18,6 +18,23 @@ const pairSequentially = (players: Player[], gameNumber: number): Pairing[] => {
       playerTwoId: players[index + 1].id,
     });
   }
+  if (players.length % 2 !== 0) {
+    result.push({
+      id: `g${gameNumber}-m${result.length + 1}`,
+      tableNumber: result.length + 1,
+      playerOneId: players[players.length - 1].id,
+      playerTwoId: null,
+    });
+  }
+  return result;
+};
+
+const shuffled = <T,>(values: T[]) => {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index--) {
+    const target = Math.floor(Math.random() * (index + 1));
+    [result[index], result[target]] = [result[target], result[index]];
+  }
   return result;
 };
 
@@ -40,7 +57,15 @@ export const pairingStrategies: Record<PairingRuleType, PairingStrategy> = {
         if (group.length === 0) return;
         if (group.length % 2 !== 0) {
           const lower = groups.slice(groupIndex + 1).find((candidate) => candidate.length > 0);
-          if (!lower) throw new Error("Swiss pairing requires an even number of players");
+          if (!lower) {
+            pairings.push({
+              id: `g${gameNumber}-m${pairings.length + 1}`,
+              tableNumber: pairings.length + 1,
+              playerOneId: group.pop()!.id,
+              playerTwoId: null,
+            });
+            return;
+          }
           group.push(lower.shift()!);
         }
         const half = group.length / 2;
@@ -50,6 +75,10 @@ export const pairingStrategies: Record<PairingRuleType, PairingStrategy> = {
       });
       return pairings;
     },
+  },
+  RANDOM: {
+    type: "RANDOM",
+    generate: (players, gameNumber) => pairSequentially(shuffled(players), gameNumber),
   },
   PAIR_RESULT: {
     type: "PAIR_RESULT",

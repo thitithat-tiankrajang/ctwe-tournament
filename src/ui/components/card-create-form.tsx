@@ -6,12 +6,14 @@ import { ArrowRight, Info, Save, Trophy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTournamentStore } from "@/application/tournament/store";
+import { appDialog } from "@/application/ui/dialog";
 import { createCardSchema, type CreateCardForm } from "@/domain/tournament/schemas";
 import type { FinalType, PairingRuleType, Tournament } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 import { Panel } from "@/ui/components/page";
 
 const ruleLabels: Record<PairingRuleType, string> = {
+  RANDOM: "Random — สุ่มใหม่ พร้อมกระจายสถาบันระดับคู่และโต๊ะ",
   SWISS: "Swiss — จับคู่ตามคะแนนและผลต่าง",
   KING_OF_THE_HILL: "King of the Hill — อันดับใกล้กันพบกัน",
   PAIR_RESULT: "แพ้เจอแพ้ / ชนะเจอชนะ — กรอกผล 2 เกมเป็นหนึ่งชุด",
@@ -58,16 +60,16 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
 
   const onSubmit = async (values: CreateCardForm) => {
     if (rules.some((rule, index) => rule === "PAIR_RESULT" && rules[index - 1] === "PAIR_RESULT")) {
-      window.alert("PAIR_RESULT เชื่อมต่อกันเกิน 2 เกมไม่ได้ กรุณาเลือกกติกาอื่นคั่นระหว่างชุด");
+      await appDialog.alert("PAIR_RESULT เชื่อมต่อกันเกิน 2 เกมไม่ได้ กรุณาเลือกกติกาอื่นคั่นระหว่างชุด", "กติกา Pairing ไม่ถูกต้อง", true);
       return;
     }
     const tour = resolveTournament();
-    if (!tour) { window.alert("กรุณาเลือกรายการแข่งขัน (tournament) ก่อนสร้างการ์ด"); return; }
+    if (!tour) { await appDialog.alert("กรุณาเลือกรายการแข่งขัน (tournament) ก่อนสร้างการ์ด"); return; }
     try {
       const id = await createCard({ tournamentId: tour.id, ...values, rules, gameMaxDiffs, finalType, finalGames: finalType === "NONE" ? 0 : finalGames, gibsonEnabled });
       onCreated(id, tour);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "ไม่สามารถสร้างการ์ดได้");
+      await appDialog.alert(error instanceof Error ? error.message : "ไม่สามารถสร้างการ์ดได้", "สร้างการ์ดไม่สำเร็จ", true);
     }
   };
 
@@ -150,7 +152,7 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
 
       <Panel title="ลำดับเกมและกติกาการจับคู่" description="ทุกเส้นเชื่อมต้องมีกติกาหนึ่งรายการก่อนบันทึก">
         <div className="notice notice--info" style={{ margin: 18 }}><Info size={18} /><p><strong>กติกามีผลกับเกมถัดไป</strong><span>ตัวอย่าง: กติกาบนเส้น เกม 1 → เกม 2 ใช้สร้างคู่แข่งขันของเกม 2</span></p></div>
-        {rules.includes("PAIR_RESULT") && <div className="notice notice--warning" style={{ margin: 18 }}><Info size={18} /><p><strong>แพ้เจอแพ้ / ชนะเจอชนะ ใช้ผู้เล่นเป็นกลุ่มละ 4 คน</strong><span>เจ้าหน้าที่จะกรอกผลทั้ง Game ต้นทางและ Game ถัดไปในชุดเดียวกัน จำนวนผู้เล่นต้องหาร 4 ลงตัว และห้ามเลือกกติกานี้ต่อกันสองเส้น</span></p></div>}
+        {rules.includes("PAIR_RESULT") && <div className="notice notice--warning" style={{ margin: 18 }}><Info size={18} /><p><strong>แพ้เจอแพ้ / ชนะเจอชนะ รองรับจำนวนผู้เล่นทุกจำนวน</strong><span>เจ้าหน้าที่จะกรอกผลทั้ง Game ต้นทางและ Game ถัดไปในชุดเดียวกัน ระบบสร้างคู่บายและจัดกลุ่มเศษให้อัตโนมัติ · ห้ามเลือกกติกานี้ต่อกันสองเส้น</span></p></div>}
         <div className="rule-list">
           {rules.map((rule, index) => (
             <div className="rule-row" key={index}>

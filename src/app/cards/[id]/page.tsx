@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { ArrowRight, ClipboardCheck, FilterX, LockKeyhole, Trophy, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament } from "@/domain/tournament/roles";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import type { Pairing, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
@@ -247,7 +248,9 @@ export default function CardOverviewPage() {
                 </div>
               </div>
             )}
-            {canClose && <Button variant="danger" onClick={() => window.confirm("ปิดการ์ดถาวรหรือไม่?") && void closeCard(id)}><LockKeyhole size={16} />ปิดการ์ด</Button>}
+            {canClose && <Button variant="danger" onClick={async () => {
+              if (await appDialog.confirm("การ์ดที่ปิดแล้วจะไม่สามารถแก้ไขได้อีก", { title: "ปิดการ์ดถาวรหรือไม่?", confirmLabel: "ปิดการ์ด", danger: true })) await closeCard(id);
+            }}><LockKeyhole size={16} />ปิดการ์ด</Button>}
           </div>
         ) : undefined}
       />

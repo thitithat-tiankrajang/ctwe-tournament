@@ -5,6 +5,7 @@ import { Check, LockKeyhole } from "lucide-react";
 import type { PairingRuleType, TournamentCard } from "@/domain/tournament/types";
 
 const ruleLabels: Record<PairingRuleType, string> = {
+  RANDOM: "Random",
   PAIR_RESULT: "แพ้เจอแพ้ / ชนะเจอชนะ",
   SWISS: "Swiss",
   KING_OF_THE_HILL: "King of the Hill",

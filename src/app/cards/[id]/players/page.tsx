@@ -7,6 +7,7 @@ import { ArrowRight, FilterX, LoaderCircle, LockKeyhole, Pencil, Plus, Save, Tra
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { rankPlayers, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { appDialog } from "@/application/ui/dialog";
 import { matchesPlayerCode } from "@/domain/tournament/player-code";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { playerSchema, type PlayerForm } from "@/domain/tournament/schemas";
@@ -93,7 +94,10 @@ export default function PlayersPage() {
     const duplicates = card.players.filter((player) => `${player.firstName} ${player.lastName}`.trim().toLocaleLowerCase("th") === normalized);
     if (duplicates.length > 0) {
       const codes = duplicates.map((player) => player.id).join(", ");
-      if (!window.confirm(`ชื่อนี้ซ้ำกับรหัส ${codes} นะ ยืนยันว่าจะเพิ่มผู้เล่นชื่อนี้หรือไม่?`)) return;
+      if (!await appDialog.confirm(`ชื่อนี้ซ้ำกับรหัส ${codes} นะ ยืนยันว่าจะเพิ่มผู้เล่นชื่อนี้หรือไม่?`, {
+        title: "พบชื่อผู้เล่นซ้ำ",
+        confirmLabel: "เพิ่มผู้เล่นต่อ",
+      })) return;
     }
     setOperationError("");
     setPending("add");
@@ -146,7 +150,10 @@ export default function PlayersPage() {
   };
 
   const finish = async () => {
-    if (!window.confirm(`ยืนยันจบการลงทะเบียนผู้เล่น ${card.players.length} คน? หลังจากนี้จะแก้รายชื่อไม่ได้`)) return;
+    if (!await appDialog.confirm(`ยืนยันจบการลงทะเบียนผู้เล่น ${card.players.length} คน? หลังจากนี้จะแก้รายชื่อไม่ได้`, {
+      title: "จบการลงทะเบียน",
+      confirmLabel: "จบการลงทะเบียน",
+    })) return;
     try {
       await finishRegistration(id);
       router.push(`/cards/${id}/tables`);
@@ -173,7 +180,7 @@ export default function PlayersPage() {
             : "รายชื่อถูกล็อกแล้ว ผลการแข่งขันเรียงตาม Win Point และ Total Difference"}
         actions={canManage
           ? registrationOpen
-            ? <Button variant="success" disabled={busy || card.players.length < 2 || card.players.length % 2 !== 0} onClick={finish}>Finish registration <ArrowRight size={16} /></Button>
+            ? <Button variant="success" disabled={busy || card.players.length < 2} onClick={finish}>Finish registration <ArrowRight size={16} /></Button>
             : <Link href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link>
           : undefined}
       />

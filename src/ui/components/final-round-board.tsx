@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { FinalSlot, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
+import { appDialog } from "@/application/ui/dialog";
 import { Panel } from "@/ui/components/page";
 
 const slotTitle = (slot: number) => (slot === 0 ? "ชิงอันดับ 1 - 2" : "ชิงอันดับ 3 - 4");
@@ -60,7 +61,7 @@ export function FinalRoundBoard({ card, readOnly = false, canManage = false, onS
           )}
           {!locked && canManage && (
             <div className="form-actions" style={{ paddingLeft: 0 }}>
-              <Button disabled={!allDecided || busy} onClick={async () => { setBusy(true); try { await onPublish?.(); } catch (error) { window.alert(error instanceof Error ? error.message : "เผยแพร่ไม่สำเร็จ"); } finally { setBusy(false); } }}>
+              <Button disabled={!allDecided || busy} onClick={async () => { setBusy(true); try { await onPublish?.(); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เผยแพร่ไม่สำเร็จ", "เผยแพร่ไม่สำเร็จ", true); } finally { setBusy(false); } }}>
                 {busy ? <LoaderCircle className="loading-spinner" size={16} /> : <Trophy size={16} />}Finish &amp; Publish รอบชิง
               </Button>
             </div>
@@ -90,7 +91,7 @@ function FinalSlotCard({ slot, name, locked, onSubmitGame, onSetWinner }: {
     if (!Number.isInteger(one) || !Number.isInteger(two) || one < 0 || two < 0) return;
     const game = slot.games.find((entry) => entry.gameIndex === gameIndex);
     if (game && game.scoreOne === one && game.scoreTwo === two) return;
-    try { await onSubmitGame?.(slot.slot, gameIndex, one, two); } catch (error) { window.alert(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ"); }
+    try { await onSubmitGame?.(slot.slot, gameIndex, one, two); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ", "บันทึกไม่สำเร็จ", true); }
   };
 
   return (

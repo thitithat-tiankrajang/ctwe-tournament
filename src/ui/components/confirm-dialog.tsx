@@ -11,6 +11,7 @@ interface ConfirmDialogProps {
   confirmLabel: string;
   busy?: boolean;
   danger?: boolean;
+  hideCancel?: boolean;
   error?: string;
   onConfirm: () => void;
   onCancel: () => void;
@@ -23,6 +24,7 @@ export function ConfirmDialog({
   confirmLabel,
   busy = false,
   danger = false,
+  hideCancel = false,
   error,
   onConfirm,
   onCancel,
@@ -55,7 +57,7 @@ export function ConfirmDialog({
         <p id="confirm-dialog-description">{description}</p>
         {error && <div className="confirm-dialog__error" role="alert">{error}</div>}
         <footer>
-          <Button variant="secondary" disabled={busy} onClick={onCancel}>ยกเลิก</Button>
+          {!hideCancel && <Button variant="secondary" disabled={busy} onClick={onCancel}>ยกเลิก</Button>}
           <Button variant={danger ? "danger" : "primary"} disabled={busy} onClick={onConfirm}>
             {busy && <LoaderCircle className="loading-spinner" size={16} />}{busy ? "กำลังบันทึก…" : confirmLabel}
           </Button>

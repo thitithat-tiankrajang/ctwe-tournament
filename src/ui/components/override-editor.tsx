@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
+import { appDialog } from "@/application/ui/dialog";
 import { Panel } from "@/ui/components/page";
 
 const validScore = (value: string) => value.trim() !== "" && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 1_000_000_000;
@@ -45,7 +46,7 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onDo
       for (const change of changes) await onCommit(change.pairing.id, Number(change.newOne), Number(change.newTwo));
       setEdits({}); setConfirmOpen(false); onDone();
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "บันทึกการแก้ไขไม่สำเร็จ");
+      await appDialog.alert(error instanceof Error ? error.message : "บันทึกการแก้ไขไม่สำเร็จ", "บันทึกไม่สำเร็จ", true);
     } finally {
       setCommitting(false);
     }

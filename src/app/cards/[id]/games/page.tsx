@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Eye, Gamepad2, Gavel, LockKeyhole, Megaphone, Trophy } from "lucide-react";
 import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, isOperator } from "@/domain/tournament/roles";
 import { allResultBlocks, isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
 import { rankingAfterGame } from "@/domain/tournament/history";
@@ -100,9 +101,13 @@ function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, o
   const needed = card.finalType === "CHAMPION_AND_THIRD" ? 4 : 2;
   const seeds = [...card.players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff).slice(0, needed);
   const start = async () => {
-    if (!window.confirm("เริ่มรอบชิง? ผู้เข้าชิงจะถูกล็อกตามอันดับนี้ และจะแก้ไขผล/ยกเลิกการจับคู่ของเกมปกติไม่ได้อีก")) return;
+    if (!await appDialog.confirm("ผู้เข้าชิงจะถูกล็อกตามอันดับนี้ และจะแก้ไขผล/ยกเลิกการจับคู่ของเกมปกติไม่ได้อีก", {
+      title: "เริ่มรอบชิง?",
+      confirmLabel: "เริ่มรอบชิง",
+      danger: true,
+    })) return;
     setBusy(true);
-    try { await onStart(); } catch (error) { window.alert(error instanceof Error ? error.message : "เริ่มรอบชิงไม่สำเร็จ"); } finally { setBusy(false); }
+    try { await onStart(); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เริ่มรอบชิงไม่สำเร็จ", "เริ่มรอบชิงไม่สำเร็จ", true); } finally { setBusy(false); }
   };
   return (
     <>
@@ -172,7 +177,12 @@ export default function GamesPage() {
   const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.includes(card.currentGame));
   const pairings = currentSnapshot?.pairings.filter((pairing) => activeGames.includes(pairing.gameNumber ?? card.currentGame)) ?? [];
   const resultCollection = card.runtimeStage === "RESULT_COLLECTION"; const reviewing = card.runtimeStage === "RESULT_REVIEW";
-  const expectedCount = Math.ceil(card.players.length / 2) * activeGames.length; // ceil accounts for a bye
+  // PAIR_RESULT materialises exactly one destination row per source row, including byes.
+  // Deriving from the live source avoids terminated/restored players skewing the UI count.
+  const sourceCount = pairResultBlock
+    ? pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === activeGames[0]).length
+    : pairings.length;
+  const expectedCount = pairResultBlock ? sourceCount * activeGames.length : sourceCount;
   const completedCount = pairings.filter(isRecorded).length;
   const allComplete = pairings.length === expectedCount && completedCount === expectedCount;
   const pairingsForGame = (gameNumber: number) => pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === gameNumber);
@@ -198,43 +208,61 @@ export default function GamesPage() {
   };
 
   const saveResult = (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => submitResult(id, pairing.id, scoreOne, scoreTwo, editExisting);
-  const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { window.alert(error instanceof Error ? error.message : "เปิดหน้า review ไม่สำเร็จ"); } finally { setBusy(false); } };
+  const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เปิดหน้า review ไม่สำเร็จ", "เปิด Review ไม่สำเร็จ", true); } finally { setBusy(false); } };
   const publishDestinationPairing = async () => {
-    if (!window.confirm(`Publish Pairing เกม ${activeGames[1]} ให้ Viewer เห็นตอนนี้?`)) return;
+    if (!await appDialog.confirm(`Publish Pairing เกม ${activeGames[1]} ให้ Viewer เห็นตอนนี้?`, {
+      title: "เผยแพร่ Pairing",
+      confirmLabel: "Publish Pairing",
+    })) return;
     setBusy(true);
     try { await publishNextPairing(id); }
-    catch (error) { window.alert(error instanceof Error ? error.message : "Publish Pairing ไม่สำเร็จ"); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "Publish Pairing ไม่สำเร็จ", "Publish Pairing ไม่สำเร็จ", true); }
     finally { setBusy(false); }
   };
   const publish = async () => {
-    if (!window.confirm(`ยืนยัน Publish ผล ${blockLabel}? ข้อมูลจะขึ้นหน้าภาพรวมและแก้ไขไม่ได้`)) return;
+    if (!await appDialog.confirm(`ยืนยัน Publish ผล ${blockLabel}? ข้อมูลจะขึ้นหน้าภาพรวมและแก้ไขไม่ได้`, {
+      title: "เผยแพร่ผลการแข่งขัน",
+      confirmLabel: "Finish & Publish",
+    })) return;
     const finalGame = activeGames[activeGames.length - 1] === card.games.length; setBusy(true);
     try { await publishResults(id); router.push(finalGame ? `/cards/${id}` : `/cards/${id}/tables`); }
-    catch (error) { window.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ"); } finally { setBusy(false); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ", "Publish ผลไม่สำเร็จ", true); } finally { setBusy(false); }
   };
   // Director edit-pairing during result collection. The API verifies the password again as well.
   const onSwapPairing = async (a: string, b: string, password: string): Promise<boolean> => {
     if (!await verifyPassword(password)) {
-      window.alert("รหัสผ่านไม่ถูกต้อง");
+      await appDialog.alert("รหัสผ่านไม่ถูกต้อง", "ยืนยันตัวตนไม่สำเร็จ", true);
       return false;
     }
     try { await swapPlayers(id, a, b, password, false); return true; }
     catch (error) {
       const message = error instanceof Error ? error.message : "สลับผู้เล่นไม่สำเร็จ";
-      if (message.includes("SCHOOL_CONFLICT") && window.confirm(`${message.replace("SCHOOL_CONFLICT: ", "")}\n\nยืนยันสลับต่อหรือไม่?`)) {
+      if (message.includes("SCHOOL_CONFLICT") && await appDialog.confirm(message.replace("SCHOOL_CONFLICT: ", ""), {
+        title: "พบผู้เล่นสถาบันเดียวกัน",
+        confirmLabel: "ยืนยันการสลับ",
+      })) {
         try { await swapPlayers(id, a, b, password, true); return true; }
-        catch (retry) { window.alert(retry instanceof Error ? retry.message : "สลับผู้เล่นไม่สำเร็จ"); return false; }
+        catch (retry) { await appDialog.alert(retry instanceof Error ? retry.message : "สลับผู้เล่นไม่สำเร็จ", "สลับผู้เล่นไม่สำเร็จ", true); return false; }
       }
-      if (!message.includes("SCHOOL_CONFLICT")) window.alert(message);
+      if (!message.includes("SCHOOL_CONFLICT")) await appDialog.alert(message, "สลับผู้เล่นไม่สำเร็จ", true);
       return false;
     }
   };
   const onUnpairToPreview = async () => {
-    if (!window.confirm("ยกเลิกการจับคู่ของเกมนี้แล้วกลับไปหน้าแก้ pairing? (ใช้ได้เมื่อยังไม่มีการกรอกผลในเกมนี้)")) return;
-    const password = window.prompt("กรอกรหัสผ่านผู้อำนวยการเพื่อยืนยันการยกเลิกการจับคู่");
+    if (!await appDialog.confirm("ยกเลิกการจับคู่ของเกมนี้แล้วกลับไปหน้าแก้ pairing? ใช้ได้เมื่อยังไม่มีการกรอกผลในเกมนี้", {
+      title: "กลับไปแก้ Pairing",
+      confirmLabel: "ดำเนินการต่อ",
+      danger: true,
+    })) return;
+    const password = await appDialog.prompt("กรอกรหัสผ่านผู้อำนวยการเพื่อยืนยันการยกเลิกการจับคู่", {
+      title: "ยืนยัน Un-pairing",
+      label: "รหัสผ่านผู้อำนวยการ",
+      type: "password",
+      confirmLabel: "Un-pairing",
+    });
     if (!password) return;
     try { await unpairToPreview(id, password); router.push(`/cards/${id}/tables`); }
-    catch (error) { window.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ"); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ", "Un-pairing ไม่สำเร็จ", true); }
   };
   const confirmPw = async () => {
     if (!pwInput) return;

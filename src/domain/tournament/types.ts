@@ -8,7 +8,7 @@ export type RuntimeStage =
   | "FINAL_SEEDING"
   | "FINAL_COLLECTION"
   | "FINAL_PUBLISHED";
-export type PairingRuleType = "PAIR_RESULT" | "SWISS" | "KING_OF_THE_HILL";
+export type PairingRuleType = "PAIR_RESULT" | "SWISS" | "KING_OF_THE_HILL" | "RANDOM";
 export type FinalType = "NONE" | "CHAMPION" | "CHAMPION_AND_THIRD";
 
 export interface FinalGameResult {

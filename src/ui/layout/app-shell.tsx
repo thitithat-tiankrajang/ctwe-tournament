@@ -36,6 +36,7 @@ import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
 import { Button } from "@/ui/components/button";
 import { Toaster } from "@/ui/components/toaster";
+import { GlobalDialogHost } from "@/ui/components/global-dialog-host";
 
 const OPENED_KEY = "ctwe.openedCards";
 const LOCKED_KEY = "ctwe.sidebarLocked";
@@ -461,6 +462,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
       <Toaster />
+      <GlobalDialogHost />
     </div>
   );
 }
