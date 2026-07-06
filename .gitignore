@@ -14,3 +14,6 @@ coverage
 .wrangler
 .vercel
 backend/target
+load-testing/results/*
+!load-testing/results/.gitkeep
+load-testing/reports/runbook-*.md

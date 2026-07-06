@@ -15,7 +15,11 @@ public final class TenantDtos {
 
     public static final String USERNAME_PATTERN = "^[A-Za-z0-9_.@-]{3,64}$";
 
-    public record CreateTournamentRequest(@NotBlank @Size(max = 180) String name) {}
+    /** slug becomes the permanent /tour/{slug} viewer URL; lowercase letters/digits separated by dashes. */
+    public record CreateTournamentRequest(
+        @NotBlank @Size(max = 180) String name,
+        @NotBlank @Size(min = 3, max = 64) @Pattern(regexp = "^[a-z0-9]+(?:-[a-z0-9]+)*$") String slug
+    ) {}
 
     public record TournamentResponse(
         UUID id, String name, String status, String createdBy, Instant createdAt, long version,
@@ -28,6 +32,12 @@ public final class TenantDtos {
     /** Public, anonymous view of an OPEN tournament shown on the root landing + token resolver. */
     public record PublicTournamentResponse(
         UUID id, String name, String accessToken, int cardCount, int publishedCardCount
+    ) {}
+
+    /** One-shot viewer payload: tournament metadata plus every card's full public data. */
+    public record PublicTournamentBundle(
+        UUID id, String name, String accessToken, int cardCount, int publishedCardCount,
+        List<com.ctwe.tournament.web.dto.CardDtos.CardResponse> cards
     ) {}
 
     public record GrantTournamentRequest(@NotNull UUID tournamentId) {}

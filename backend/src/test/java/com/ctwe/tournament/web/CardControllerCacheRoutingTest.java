@@ -115,15 +115,35 @@ class CardControllerCacheRoutingTest {
         var privateDestination = new CardDtos.PairingResponse(
             "g2-t1", 2, 1, "P001", null, null, null, null, null, null, false);
         var patch = new CardDtos.ResultPatch(8, List.of(publishedSource, privateDestination));
-        when(authz.isStaff(authentication)).thenReturn(true);
-        when(cards.submitResult(cardId, "g1-t1", request, "staff", false)).thenReturn(patch);
+        when(cards.submitResult(cardId, "g1-t1", request, "staff")).thenReturn(patch);
         when(publicCards.version(cardId)).thenReturn(5L);
 
         assertThat(controller.submitResult(cardId, "g1-t1", request, authentication)).isSameAs(patch);
 
         verify(events).publishResult(cardId, patch);
         verify(events).publishPublicResult(eq(cardId), eq(5L), eq(List.of(publishedSource)));
-        verify(cards).submitResult(cardId, "g1-t1", request, "staff", false);
+        verify(cards).submitResult(cardId, "g1-t1", request, "staff");
+    }
+
+    @Test
+    void penaltyAndWithdrawalRequireDirectorCapabilityAndCurrentPassword() {
+        UUID cardId = UUID.randomUUID();
+        var authentication = director();
+        var penaltyRequest = new CardDtos.PenaltyRequest(100, "director-password");
+        var revokeRequest = new CardDtos.PasswordRequest("director-password");
+        CardDtos.CardResponse response = card(cardId);
+        when(cards.applyPenalty(cardId, "g1-t1", 100, "director")).thenReturn(response);
+        when(cards.revokePenalty(cardId, "g1-t1", "director")).thenReturn(response);
+
+        assertThat(controller.penalty(cardId, "g1-t1", penaltyRequest, authentication)).isSameAs(response);
+        assertThat(controller.revokePenalty(cardId, "g1-t1", revokeRequest, authentication)).isSameAs(response);
+
+        verify(authz, org.mockito.Mockito.times(2)).requireCardCapability(
+            authentication, cardId, AuthorizationService.Capability.PENALIZE_RESULT);
+        verify(reauthentication, org.mockito.Mockito.times(2))
+            .requireCurrentPassword(authentication, "director-password");
+        verify(cards).applyPenalty(cardId, "g1-t1", 100, "director");
+        verify(cards).revokePenalty(cardId, "g1-t1", "director");
     }
 
     @Test

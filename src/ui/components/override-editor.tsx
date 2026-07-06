@@ -15,11 +15,12 @@ const validScore = (value: string) => value.trim() !== "" && Number.isInteger(Nu
  * opens a log-style confirm of every change; on confirm it commits each via `onCommit` (overrideResult,
  * which recalculates standings + is public), then exits edit mode. Re-editing requires the password again.
  */
-export function OverrideEditor({ block, pairingsForGame, players, onCommit, onDone }: {
+export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRevokePenalty, onDone }: {
   block: number[];
   pairingsForGame: (game: number) => Pairing[];
   players: Map<string, Player>;
   onCommit: (matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
+  onRevokePenalty: (pairing: Pairing) => void;
   onDone: () => void;
 }) {
   const [edits, setEdits] = useState<Record<string, { one: string; two: string }>>({});
@@ -63,16 +64,17 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onDo
                 <thead><tr><th className="numeric">คู่</th><th>ฝ่ายที่ 1</th><th>ฝ่ายที่ 2</th><th className="numeric">เดิม</th><th className="numeric">คะแนน 1</th><th className="numeric">คะแนน 2</th></tr></thead>
                 <tbody>
                   {pairings.length === 0 ? <tr><td colSpan={6} className="egrid-empty"><strong>ยังไม่มีผลที่เผยแพร่</strong></td></tr> : pairings.map((pairing) => {
+                    const penalty = pairing.resultType === "PENALTY";
                     const draft = draftOf(pairing);
-                    const dirty = Boolean(edits[pairing.id]) && (draft.one !== (pairing.scoreOne?.toString() ?? "") || draft.two !== (pairing.scoreTwo?.toString() ?? ""));
+                    const dirty = !penalty && Boolean(edits[pairing.id]) && (draft.one !== (pairing.scoreOne?.toString() ?? "") || draft.two !== (pairing.scoreTwo?.toString() ?? ""));
                     return (
-                      <tr key={pairing.id} className={dirty ? "player-row--editing" : undefined}>
+                      <tr key={pairing.id} className={penalty ? "egrid-row--locked egrid-row--penalty" : dirty ? "player-row--editing" : undefined}>
                         <td className="numeric">{pairing.tableNumber}</td>
                         <td title={nameOf(pairing.playerOneId)}>{nameOf(pairing.playerOneId)}</td>
                         <td title={nameOf(pairing.playerTwoId)}>{nameOf(pairing.playerTwoId)}</td>
-                        <td className="numeric">{pairing.scoreOne ?? "—"} : {pairing.scoreTwo ?? "—"}</td>
-                        <td><input className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 1 คู่ ${pairing.tableNumber}`} value={draft.one} disabled={committing} onChange={(event) => setScore(pairing, "one", event.target.value)} /></td>
-                        <td><input className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 2 คู่ ${pairing.tableNumber}`} value={draft.two} disabled={committing} onChange={(event) => setScore(pairing, "two", event.target.value)} /></td>
+                        <td className="numeric">{penalty ? <Badge tone="danger">ลงดาบ −{pairing.calculatedDiff ?? 0}</Badge> : <>{pairing.scoreOne ?? "—"} : {pairing.scoreTwo ?? "—"}</>}</td>
+                        <td>{penalty ? <Badge tone="danger">ล็อก</Badge> : <input className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 1 คู่ ${pairing.tableNumber}`} value={draft.one} disabled={committing} onChange={(event) => setScore(pairing, "one", event.target.value)} />}</td>
+                        <td>{penalty ? <Button size="sm" variant="secondary" disabled={committing} onClick={() => onRevokePenalty(pairing)}>ถอนดาบ</Button> : <input className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 2 คู่ ${pairing.tableNumber}`} value={draft.two} disabled={committing} onChange={(event) => setScore(pairing, "two", event.target.value)} />}</td>
                       </tr>
                     );
                   })}

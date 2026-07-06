@@ -93,7 +93,7 @@ function recordedDiff(pairing: Pairing) {
   return pairing.resultType === "DRAW" ? 0 : pairing.calculatedDiff ?? 0;
 }
 
-export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKey, onSubmit, onPenalty, pairingEdit }: {
+export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKey, onSubmit, onPenalty, onRevokePenalty, pairingEdit }: {
   gameNumber: number;
   slots: EntrySlot[];
   players: Map<string, Player>;
@@ -103,6 +103,8 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   onSubmit: (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => Promise<void>;
   /** Director-only "ลงดาบ" penalty for a pairing (incl. a bye). Opens the page's penalty dialog. */
   onPenalty?: (pairing: Pairing) => void;
+  /** Director-only withdrawal. A penalized row cannot otherwise be edited. */
+  onRevokePenalty?: (pairing: Pairing) => void;
   /** Director-only pairing edit during result collection. Swaps require password re-authentication. */
   pairingEdit?: { onSwap: (a: string, b: string, password: string) => Promise<boolean>; onUnpair: () => Promise<void> };
 }) {
@@ -431,8 +433,8 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
                   <td className="egrid-td egrid-td--center cell-score">-</td>
                   <td className="egrid-td egrid-td--center cell-diff cell-diff--penalty">-{penalty}</td>
                   <td className="egrid-td cell-action">
-                    {onPenalty
-                      ? <Button size="sm" variant="danger" title="แก้ไขแต้มลงดาบ" onClick={() => onPenalty(pairing)}>แก้ลงดาบ</Button>
+                    {onRevokePenalty
+                      ? <Button size="sm" variant="secondary" title="ถอนดาบเพื่อกลับไปกรอกผลใหม่" onClick={() => onRevokePenalty(pairing)}>ถอนดาบ</Button>
                       : <Badge tone="danger">ล็อกโดยผู้อำนวยการ</Badge>}
                   </td>
                 </tr>;

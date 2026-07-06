@@ -642,8 +642,7 @@ public class TournamentCardService {
 
     @Transactional
     @EvictPublicCard
-    public CardDtos.ResultPatch submitResult(UUID cardId, String matchId, CardDtos.ResultRequest request, String actor,
-                                             boolean canOverridePenalty) {
+    public CardDtos.ResultPatch submitResult(UUID cardId, String matchId, CardDtos.ResultRequest request, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
         int scoreOne = request.scoreOne();
         int scoreTwo = request.scoreTwo();
@@ -655,9 +654,8 @@ public class TournamentCardService {
         if (match.oneId() == null && match.twoId() == null)
             throw new IllegalArgumentException("คู่แข่งขันของเกมนี้ยังไม่ครบ รอผลจาก Game ต้นทางก่อน");
         if (match.snapshotNo() != null) throw new IllegalArgumentException("Confirmed results are immutable");
-        if ("PENALTY".equals(match.resultType()) && !canOverridePenalty)
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                "ผลคู่นี้ถูกลงดาบและล็อกโดยผู้อำนวยการ เจ้าหน้าที่ไม่สามารถแก้ไขได้");
+        if ("PENALTY".equals(match.resultType()))
+            throw new IllegalArgumentException("ผลคู่นี้ถูกลงดาบและล็อกอยู่ ต้องถอนดาบก่อนจึงจะกรอกผลใหม่ได้");
         List<Integer> activeGames = activeResultGames(card);
         if (!activeGames.contains(match.gameNumber()))
             throw new IllegalArgumentException("แก้ผลได้เฉพาะเกมใน Result block ปัจจุบัน " + activeGames);
@@ -764,7 +762,7 @@ public class TournamentCardService {
         long completed = count("""
             SELECT COUNT(*) FROM matches
             WHERE card_id = ? AND game_number BETWEEN ? AND ? AND snapshot_no IS NULL
-              AND result_type IN ('W', 'D') AND calculated_diff IS NOT NULL
+              AND result_type IN ('W', 'D', 'P') AND calculated_diff IS NOT NULL
             """, cardId, firstGame, lastGame);
         if (total != expected || completed != expected)
             throw new IllegalArgumentException("ต้องบันทึกผลให้ครบทุกคู่ของเกม " + games + " ก่อน Review (" + completed + "/" + expected + ")");
@@ -926,6 +924,8 @@ public class TournamentCardService {
         requireRegularEditable(cardId);
         MatchKey key = parseMatchId(matchId);
         MatchPlayers match = matchRow(cardId, key);
+        if ("PENALTY".equals(match.resultType()))
+            throw new IllegalArgumentException("ผลคู่นี้ถูกลงดาบและล็อกอยู่ ต้องถอนดาบก่อนจึงจะแก้ไขผลได้");
         boolean bye = isBye(match);
         if (match.oneId() == null && match.twoId() == null)
             throw new IllegalArgumentException("คู่แข่งขันนี้ยังไม่ครบ");
@@ -975,18 +975,60 @@ public class TournamentCardService {
     public CardDtos.CardResponse applyPenalty(UUID cardId, String matchId, int points, String actor) {
         ensureEditable(cardId);
         requireRegularEditable(cardId);
+        CardRow card = cardRow(cardId);
         if (points < 0) throw new IllegalArgumentException("แต้มลงดาบต้องไม่ติดลบ");
         MatchKey key = parseMatchId(matchId);
         MatchPlayers match = matchRow(cardId, key);
         if (match.oneId() == null && match.twoId() == null)
             throw new IllegalArgumentException("คู่แข่งขันนี้ยังไม่ครบ");
+        if ("PENALTY".equals(match.resultType()))
+            throw new IllegalArgumentException("ผลคู่นี้ถูกลงดาบอยู่ หากต้องการเปลี่ยนแปลงให้ถอนดาบก่อน");
         boolean existing = match.resultType() != null;
         Object previous = existing ? previousResultAudit(match) : Map.of("matchId", matchId, "status", "UNRECORDED");
         saveResultColumns(cardId, key, null, 0, 0, "PENALTY", points, actor);
+        if (match.snapshotNo() == null && match.gameNumber() == card.currentGame()
+            && isOutgoingPairResult(cardId, card.currentGame())) {
+            if (isDeferredSwissSource(cardId, card.currentGame(), match.tableNumber()))
+                tryMaterializeDeferredSwiss(cardId, card.currentGame());
+            else
+                syncPairResultSource(cardId, card.currentGame(), match.tableNumber());
+        }
         recalculateStandings(cardId);
         touch(cardId);
         publishPublic(cardId);
         audit(cardId, actor, "PENALTY_RESULT", previous, Map.of("points", points, "game", match.gameNumber(), "table", match.tableNumber()));
+        return get(cardId, true);
+    }
+
+    /**
+     * Withdraw a director penalty. All result columns are cleared so the match behaves exactly like
+     * a result that has never been entered; a new normal result may be submitted afterwards.
+     */
+    @Transactional
+    @EvictPublicCard
+    public CardDtos.CardResponse revokePenalty(UUID cardId, String matchId, String actor) {
+        ensureEditable(cardId);
+        requireRegularEditable(cardId);
+        MatchKey key = parseMatchId(matchId);
+        MatchPlayers match = matchRow(cardId, key);
+        if (!"PENALTY".equals(match.resultType()))
+            throw new IllegalArgumentException("คู่นี้ไม่มีผลลงดาบให้ถอน");
+        CardRow card = cardRow(cardId);
+        if (match.snapshotNo() == null && match.gameNumber() == card.currentGame()
+            && isOutgoingPairResult(cardId, card.currentGame()))
+            clearPairResultSource(cardId, card.currentGame(), match.tableNumber());
+        Object previous = previousResultAudit(match);
+        jdbc.update("""
+            UPDATE matches
+            SET winner = NULL, score_one = NULL, score_two = NULL, result_type = NULL,
+                calculated_diff = NULL, submitted_by = NULL, submitted_at = NULL
+            WHERE card_id = ? AND game_number = ? AND table_number = ?
+            """, cardId, key.gameNumber(), key.tableNumber());
+        recalculateStandings(cardId);
+        touch(cardId);
+        publishPublic(cardId);
+        audit(cardId, actor, "REVOKE_PENALTY", previous,
+            Map.of("matchId", matchId, "status", "UNRECORDED"));
         return get(cardId, true);
     }
 
@@ -1090,7 +1132,7 @@ public class TournamentCardService {
                 scoreTwo = firstWins ? 72 : 100;
             }
             submitResult(cardId, matchApiId(match.gameNumber(), match.tableNumber()),
-                new CardDtos.ResultRequest(scoreOne, scoreTwo, false), actor, true);
+                new CardDtos.ResultRequest(scoreOne, scoreTwo, false), actor);
             generated++;
         }
         if (generated == 0) throw new IllegalArgumentException("Open the current result block before generating results");
@@ -1283,6 +1325,45 @@ public class TournamentCardService {
                 "destinationTables", List.of(groupStart, groupStart + 1),
                 "slot", slotNumber
             ));
+    }
+
+    /**
+     * Undo the destination slots derived from one source result. A destination result must be
+     * withdrawn/cleared first; silently changing an already-played pairing would corrupt history.
+     */
+    private void clearPairResultSource(UUID cardId, int sourceGame, int sourceTableNumber) {
+        int deferred = deferredSwissTableCount(cardId, sourceGame);
+        int sourceTables = gameMatchCount(cardId, sourceGame);
+        int firstDeferred = deferred == 0 ? Integer.MAX_VALUE : sourceTables - deferred + 1;
+        int destinationGame = sourceGame + 1;
+        if (sourceTableNumber >= firstDeferred) {
+            int topTables = firstDeferred - 1;
+            long recorded = count("""
+                SELECT COUNT(*) FROM matches
+                WHERE card_id = ? AND game_number = ? AND table_number > ? AND result_type IS NOT NULL
+                """, cardId, destinationGame, topTables);
+            if (recorded > 0)
+                throw new IllegalArgumentException("ถอนดาบไม่ได้ เพราะมีการกรอกผลเกมปลายทางแล้ว");
+            jdbc.update("DELETE FROM matches WHERE card_id = ? AND game_number = ? AND table_number > ?",
+                cardId, destinationGame, topTables);
+            return;
+        }
+
+        int groupStart = ((sourceTableNumber - 1) / 2) * 2 + 1;
+        long recorded = count("""
+            SELECT COUNT(*) FROM matches
+            WHERE card_id = ? AND game_number = ? AND table_number IN (?, ?) AND result_type IS NOT NULL
+            """, cardId, destinationGame, groupStart, groupStart + 1);
+        if (recorded > 0)
+            throw new IllegalArgumentException("ถอนดาบไม่ได้ เพราะมีการกรอกผลเกมปลายทางแล้ว");
+        String slot = sourceTableNumber == groupStart ? "player_one" : "player_two";
+        jdbc.update("UPDATE matches SET " + slot + " = NULL WHERE card_id = ? AND game_number = ? AND table_number IN (?, ?)",
+            cardId, destinationGame, groupStart, groupStart + 1);
+        jdbc.update("""
+            DELETE FROM matches
+            WHERE card_id = ? AND game_number = ? AND table_number IN (?, ?)
+              AND player_one IS NULL AND player_two IS NULL
+            """, cardId, destinationGame, groupStart, groupStart + 1);
     }
 
     private PairResultSlots pairResultSlots(PairResultSource source) {

@@ -40,6 +40,7 @@ export default function AdminConsolePage() {
   const [directors, setDirectors] = useState<ManagedUser[]>([]);
   const [busy, setBusy] = useState(false);
   const [tName, setTName] = useState("");
+  const [tSlug, setTSlug] = useState("");
   const [dUser, setDUser] = useState("");
   const [dPass, setDPass] = useState("");
   const [dTournaments, setDTournaments] = useState<string[]>([]);
@@ -85,8 +86,11 @@ export default function AdminConsolePage() {
   const closeDialogs = () => { if (!dialogBusy) { setConfirm(null); setPrompt(null); setDialogError(""); } };
 
   // The link is the public entry to a tournament; opening/closing it requires the admin's password.
+  // Legacy hex tokens also resolve under /tour/, so one link shape serves both generations.
   const tournamentLink = (token: string) =>
-    typeof window === "undefined" ? `/t/${token}` : `${window.location.origin}/t/${token}`;
+    typeof window === "undefined" ? `/tour/${token}` : `${window.location.origin}/tour/${token}`;
+  // Viewer URL slug: lowercase letters/digits separated by single dashes, fixed after creation.
+  const slugValid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tSlug) && tSlug.length >= 3 && tSlug.length <= 64;
   const copyLink = async (token: string) => {
     const ok = await copyText(tournamentLink(token));
     if (ok) toast.success("คัดลอกลิงก์แล้ว"); else toast.error("คัดลอกไม่สำเร็จ — กดค้างที่ลิงก์เพื่อคัดลอกเอง");
@@ -117,12 +121,30 @@ export default function AdminConsolePage() {
       <PageHeader eyebrow="Platform admin" title="ผู้ดูแลระบบ" description="สร้างรายการแข่งขัน สร้างบัญชีผู้อำนวยการ และกำหนดสิทธิ์ให้แต่ละ tournament" actions={<Badge tone="warning">ADMIN ONLY</Badge>} />
 
       <Panel title="รายการแข่งขัน (Tournaments)" description="เฉพาะผู้ดูแลระบบเท่านั้นที่สร้าง/ลบรายการแข่งขันได้">
-        <div className="panel-padding" style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div className="form-field" style={{ flex: 1, minWidth: 240 }}>
-            <label className="form-label" htmlFor="t-name">ชื่อรายการแข่งขัน</label>
-            <input className="input" id="t-name" value={tName} placeholder="เช่น CTWE 2026" onChange={(e) => setTName(e.target.value)} />
+        <div className="panel-padding" style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div className="form-field" style={{ flex: 1, minWidth: 220 }}>
+              <label className="form-label" htmlFor="t-name">ชื่อรายการแข่งขัน</label>
+              <input className="input" id="t-name" value={tName} placeholder="เช่น CTWE 2026" onChange={(e) => setTName(e.target.value)} />
+            </div>
+            <div className="form-field" style={{ flex: 1, minWidth: 220 }}>
+              <label className="form-label" htmlFor="t-slug">ลิงก์เข้าชม (ตั้งแล้วแก้ไม่ได้)</label>
+              <input
+                className="input"
+                id="t-slug"
+                value={tSlug}
+                placeholder="เช่น bkk-th-ms-championship"
+                onChange={(e) => setTSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+              />
+            </div>
+            <Button disabled={busy || tName.trim().length === 0 || !slugValid} onClick={() => act(async () => { await createTournament(tName.trim(), tSlug); setTName(""); setTSlug(""); })}><Plus size={16} />สร้าง Tournament</Button>
           </div>
-          <Button disabled={busy || tName.trim().length === 0} onClick={() => act(async () => { await createTournament(tName.trim()); setTName(""); })}><Plus size={16} />สร้าง Tournament</Button>
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+            ใช้ a-z, 0-9 และขีดกลางคั่นคำ (3-64 ตัวอักษร) · ลิงก์ถาวร แก้ไขไม่ได้หลังสร้าง
+            {tSlug && (slugValid
+              ? <> · ผู้ชมจะเข้าที่ <code>{tournamentLink(tSlug)}</code></>
+              : <span style={{ color: "var(--danger, #d4380d)" }}> · รูปแบบลิงก์ยังไม่ถูกต้อง</span>)}
+          </p>
         </div>
         <div className="panel-padding" style={{ display: "grid", gap: 12 }}>
           {tournaments.length === 0 && <p className="muted">ยังไม่มีรายการแข่งขัน</p>}

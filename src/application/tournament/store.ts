@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicTournamentSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicTournamentBundle, PublicTournamentSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 
 export interface AuthState {
@@ -78,6 +78,7 @@ interface TournamentState {
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
   overrideResult: (cardId: string, matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
   applyPenalty: (cardId: string, matchId: string, points: number, password: string) => Promise<void>;
+  revokePenalty: (cardId: string, matchId: string, password: string) => Promise<void>;
   verifyPassword: (password: string) => Promise<boolean>;
   reviewResults: (cardId: string) => Promise<void>;
   reopenResults: (cardId: string) => Promise<void>;
@@ -96,11 +97,11 @@ interface TournamentState {
   resetCard: (cardId: string) => Promise<void>;
   // public (anonymous) link-scoped entry
   loadPublicTournaments: () => Promise<PublicTournamentSummary[]>;
+  enterPublicTournament: (token: string) => Promise<PublicTournamentBundle>;
   loadPublicArchives: () => Promise<TournamentArchive[]>;
-  resolveTournamentToken: (token: string) => Promise<PublicTournamentSummary>;
   // tenant + account management
   loadTournaments: () => Promise<Tournament[]>;
-  createTournament: (name: string) => Promise<Tournament>;
+  createTournament: (name: string, slug: string) => Promise<Tournament>;
   deleteTournament: (tournamentId: string) => Promise<void>;
   loadArchives: () => Promise<TournamentArchive[]>;
   archiveTournament: (tournamentId: string) => Promise<void>;
@@ -227,18 +228,52 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     return response.json() as Promise<PublicCardSummary[]>;
   };
 
-  const fetchPublicTournamentCatalog = async (token: string) => {
-    const response = await fetch(
-      publicApiUrl(`/api/public/tournaments/${encodeURIComponent(token)}/cards`),
-      { credentials: "omit", cache: "no-store" },
-    );
-    if (!response.ok) throw new Error(await readError(response));
-    return response.json() as Promise<PublicCardSummary[]>;
+  // Set as soon as a /tour/{token} (or legacy /t/{token}) page starts resolving. This prevents a
+  // slower, app-wide catalog request started during initial hydration from overwriting the newer
+  // link-scoped result.
+  let publicScopeToken: string | null = null;
+
+  // Route chunks load lazily, so on a cold /tour/{token} document the app-wide load() effect can
+  // run BEFORE the page effect sets the scope. Reading the token straight off the URL makes the
+  // scoped one-request bundle path deterministic instead of racing the page mount.
+  const tokenFromLocation = () => {
+    if (typeof window === "undefined") return null;
+    const match = window.location.pathname.match(/^\/(?:tour|t)\/([^/]+)\/?$/);
+    return match ? decodeURIComponent(match[1]) : null;
   };
 
-  // Set as soon as /t/{token} starts resolving. This prevents a slower, app-wide catalog request
-  // started during initial hydration from overwriting the newer link-scoped result.
-  let publicScopeToken: string | null = null;
+  // Default cache mode (not no-store): the server tags the bundle with an ETag, so refresh spam
+  // revalidates to a tiny 304 instead of re-downloading the whole tournament.
+  const fetchTournamentBundle = async (token: string) => {
+    const response = await fetch(
+      publicApiUrl(`/api/public/tournaments/${encodeURIComponent(token)}/bundle`),
+      { credentials: "omit" },
+    );
+    if (!response.ok) throw new Error(await readError(response));
+    return response.json() as Promise<PublicTournamentBundle>;
+  };
+
+  // One network call shared between the viewer page effect and the app-wide hydration load().
+  let bundleInflight: { token: string; promise: Promise<PublicTournamentBundle> } | null = null;
+
+  const loadBundle = (token: string) => {
+    if (bundleInflight?.token === token) return bundleInflight.promise;
+    const promise = fetchTournamentBundle(token)
+      .then((bundle) => {
+        // Staff/directors hold richer card data from /api/cards; never clobber it with the
+        // public projection. Anonymous viewers get the full bundle in one shot.
+        if (publicScopeToken === token && !get().auth.authenticated && !hasStaffSessionHint()) {
+          get().setActiveTournament({ id: bundle.id, name: bundle.name, accessToken: bundle.accessToken });
+          set({ cards: bundle.cards, error: null });
+        }
+        return bundle;
+      })
+      .finally(() => {
+        if (bundleInflight?.token === token) bundleInflight = null;
+      });
+    bundleInflight = { token, promise };
+    return promise;
+  };
 
   const mergePublicCatalog = (summaries: PublicCardSummary[]) => set((state) => {
     const existing = new Map(state.cards.map((card) => [card.id, card]));
@@ -360,15 +395,18 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
           if (!auth.authenticated) clearStaffSessionHint();
         }
         let cards: TournamentCard[];
+        const scopeToken = publicScopeToken ?? tokenFromLocation();
         if (auth.authenticated) {
           const response = await fetch("/api/cards", { credentials: "same-origin", cache: "no-store" });
           if (!response.ok) throw new Error(await readError(response));
           cards = await response.json() as TournamentCard[];
+        } else if (scopeToken) {
+          // A token-scoped viewer page is active: its bundle already carries everything, so
+          // hydration must not issue a second, coarser catalog request.
+          publicScopeToken = scopeToken;
+          cards = (await loadBundle(scopeToken)).cards;
         } else {
-          let summaries = await fetchPublicCatalog();
-          // The token route may have started while the global request was in flight.
-          if (publicScopeToken) summaries = await fetchPublicTournamentCatalog(publicScopeToken);
-          cards = summaries.map(publicSummaryCard);
+          cards = (await fetchPublicCatalog()).map(publicSummaryCard);
         }
         set({ auth, cards, loading: false });
       } catch (error) {
@@ -483,6 +521,12 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         body: JSON.stringify({ points, password }),
       });
     },
+    async revokePenalty(cardId, matchId, password) {
+      await mutateCard(`/api/cards/${cardId}/matches/${matchId}/penalty/revoke`, cardId, {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+    },
     async verifyPassword(password) {
       // Re-auth: a wrong password is a 401 we must NOT treat as a lost session, so bypass the shared helper.
       const headers = new Headers({ "Content-Type": "application/json" });
@@ -549,22 +593,10 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       if (!response.ok) throw new Error(await readError(response));
       return response.json() as Promise<TournamentArchive[]>;
     },
-    async resolveTournamentToken(token) {
+    async enterPublicTournament(token) {
       publicScopeToken = token;
-      const encoded = encodeURIComponent(token);
       try {
-        const response = await fetch(publicApiUrl(`/api/public/tournaments/${encoded}`), { credentials: "omit", cache: "no-store" });
-        if (!response.ok) throw new Error(await readError(response));
-        const tournament = await response.json() as PublicTournamentSummary;
-
-        // AppProviders loads the anonymous global catalog only once. Always refresh this exact
-        // tournament before routing, otherwise an older empty catalog survives in the viewer state.
-        const summaries = await fetchPublicTournamentCatalog(token);
-        if (publicScopeToken === token) set({
-          cards: summaries.map(publicSummaryCard),
-          error: null,
-        });
-        return tournament;
+        return await loadBundle(token);
       } catch (error) {
         if (publicScopeToken === token) publicScopeToken = null;
         throw error;
@@ -575,8 +607,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async loadTournaments() {
       return request<Tournament[]>("/api/tournaments");
     },
-    async createTournament(name) {
-      return request<Tournament>("/api/admin/tournaments", { method: "POST", body: JSON.stringify({ name }) });
+    async createTournament(name, slug) {
+      return request<Tournament>("/api/admin/tournaments", { method: "POST", body: JSON.stringify({ name, slug }) });
     },
     async deleteTournament(tournamentId) {
       await request(`/api/admin/tournaments/${tournamentId}`, { method: "DELETE" });

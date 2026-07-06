@@ -66,7 +66,7 @@ public class AdminController {
     @ResponseStatus(HttpStatus.CREATED)
     public TenantDtos.TournamentResponse createTournament(@Valid @RequestBody TenantDtos.CreateTournamentRequest request,
                                                           Authentication auth) {
-        return tenant.createTournament(request.name(), auth.getName());
+        return tenant.createTournament(request.name(), request.slug(), auth.getName());
     }
 
     @DeleteMapping("/tournaments/{tournamentId}")

@@ -71,6 +71,18 @@ class AuthorizationServiceTest {
             .isInstanceOf(ResponseStatusException.class);
         assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.RUN_TOURNAMENT))
             .isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.PENALIZE_RESULT))
+            .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void onlyDirectorMayApplyOrWithdrawPenalty() {
+        cardBelongsToTournament();
+        userTournaments(tournamentId);
+        assertThatCode(() -> authz.requireCardCapability(auth("ROLE_DIRECTOR"), cardId, Capability.PENALIZE_RESULT))
+            .doesNotThrowAnyException();
+        assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_ADMIN"), cardId, Capability.PENALIZE_RESULT))
+            .isInstanceOf(ResponseStatusException.class);
     }
 
     @Test

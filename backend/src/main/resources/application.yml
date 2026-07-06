@@ -35,7 +35,12 @@ server:
       max: ${TOMCAT_MAX_THREADS:50}
       min-spare: 5
     accept-count: 100
-    max-connections: 2000
+    # Every open SSE stream holds one connection. Load tests raise this together with
+    # LOAD_TEST_MODE/MAX_SSE_CONNECTIONS; production keeps the 2000 default.
+    max-connections: ${TOMCAT_MAX_CONNECTIONS:2000}
+    # Publish tomcat.threads.* / tomcat.connections.* Micrometer metrics for the load-test monitor.
+    mbeanregistry:
+      enabled: true
   servlet:
     session:
       timeout: 30m
@@ -52,6 +57,12 @@ security:
     password-hash: ${STAFF_PASSWORD_HASH}
 app:
   dev-tools-enabled: ${DEV_TOOLS_ENABLED:false}
+  # Load-testing escape hatch (see load-testing/README.md). With LOAD_TEST_MODE=true the public
+  # SSE cap (and its 1500 ceiling) is replaced by MAX_SSE_CONNECTIONS so capacity tests can push
+  # the connector to its real limit. Never enable on a deployment serving a real event.
+  load-test:
+    enabled: ${LOAD_TEST_MODE:false}
+    max-sse-connections: ${MAX_SSE_CONNECTIONS:10000}
   security:
     allowed-origins: "${CORS_ALLOWED_ORIGINS:https://ctwe-tournament.ctwe.workers.dev,https://ct-we.com,http://192.168.1.36:3000}"
   # SSE caps, heartbeat, polling interval and reconnect delay moved to the runtime_settings table
@@ -83,3 +94,9 @@ management:
       probes:
         enabled: true
       show-details: never
+  metrics:
+    distribution:
+      # Server-side latency percentiles for the load-test report (client percentiles are also
+      # measured by the harness; these expose the origin's own view at /actuator/metrics).
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99

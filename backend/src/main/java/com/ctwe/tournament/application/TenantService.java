@@ -37,11 +37,25 @@ public class TenantService {
 
     // ----------------------------------------------------------------- tournaments (admin)
 
+    /** Admin-chosen viewer URL slug: lowercase letters/digits separated by single dashes. */
+    public static final String TOKEN_SLUG_PATTERN = "^[a-z0-9]+(?:-[a-z0-9]+)*$";
+
     @Transactional
-    public TenantDtos.TournamentResponse createTournament(String name, String actor) {
+    public TenantDtos.TournamentResponse createTournament(String name, String slug, String actor) {
+        String token = slug == null ? null : slug.trim();
+        if (token == null || !token.matches(TOKEN_SLUG_PATTERN) || token.length() < 3 || token.length() > 64)
+            throw new IllegalArgumentException("ลิงก์ใช้ได้เฉพาะ a-z, 0-9 และขีดกลางคั่นคำ (3-64 ตัวอักษร)");
         UUID id = UUID.randomUUID();
-        jdbc.update("INSERT INTO tournaments (id, name, created_by) VALUES (?, ?, ?)", id, name.trim(), actor);
-        audit(actor, "CREATE_TOURNAMENT", null, Map.of("id", id.toString(), "name", name.trim()));
+        try {
+            // The slug becomes the permanent access token. There is intentionally no update path:
+            // published viewer URLs must never break, so a wrong slug means a new tournament
+            // (or a manual database fix by a developer).
+            jdbc.update("INSERT INTO tournaments (id, name, access_token, created_by) VALUES (?, ?, ?, ?)",
+                id, name.trim(), token, actor);
+        } catch (org.springframework.dao.DuplicateKeyException duplicate) {
+            throw new IllegalArgumentException("ลิงก์ /tour/" + token + " ถูกใช้ไปแล้ว — เลือกคำอื่น");
+        }
+        audit(actor, "CREATE_TOURNAMENT", null, Map.of("id", id.toString(), "name", name.trim(), "token", token));
         return getTournament(id);
     }
 

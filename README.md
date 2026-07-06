@@ -119,3 +119,15 @@ curl http://localhost:8080/actuator/health
 ```
 
 API contract อยู่ที่ [`backend/API_CONTRACT.md`](backend/API_CONTRACT.md)
+
+## Performance capacity testing
+
+The complete staged SSE/viewer capacity framework is documented in
+[`load-testing/README.md`](load-testing/README.md). After configuration, run:
+
+```bash
+npm run loadtest
+```
+
+It records real client and Spring Boot Actuator metrics and generates
+`load-testing/reports/runbook.md`.

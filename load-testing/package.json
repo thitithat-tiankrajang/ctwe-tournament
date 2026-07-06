@@ -1,0 +1,22 @@
+{
+  "name": "ctwe-load-testing",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Staged SSE capacity testing framework: drives real viewer traffic, samples real JVM metrics, and generates a production runbook with recommended maxSseConnections and Render sizing.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "loadtest": "bash scripts/run-load-test.sh",
+    "loadtest:quick": "STAGES=${STAGES:-100,250,500,1000} HOLD_SECONDS=${HOLD_SECONDS:-45} RAMP_SECONDS=${RAMP_SECONDS:-15} bash scripts/run-load-test.sh",
+    "preflight": "tsx scripts/orchestrator.ts --preflight",
+    "runbook": "tsx runbook-generator.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

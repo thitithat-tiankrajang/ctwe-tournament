@@ -27,11 +27,12 @@ function isRecorded(pairing: Pairing) {
 }
 
 /** Non-active view: ranking per game (window-slide); click a player row to see their history. */
-function GamesBrowse({ card, players, canEdit, onOverride }: {
+function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
   card: TournamentCard;
   players: Map<string, Player>;
   canEdit: boolean;
   onOverride: (matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
+  onRevokePenalty: (pairing: Pairing) => void;
 }) {
   const [rankingGame, setRankingGame] = useState<number | null>(null);
   const [editGame, setEditGame] = useState<number | null>(null);
@@ -69,7 +70,7 @@ function GamesBrowse({ card, players, canEdit, onOverride }: {
             actions={<div className="overview-game-select"><label htmlFor="override-game">เลือกเกม</label><select id="override-game" className="select" value={target} onChange={(event) => setEditGame(Number(event.target.value))}>{games.map((g) => <option key={g} value={g}>เกม {g}</option>)}</select></div>}
           >
             <div className="notice notice--warning" style={{ margin: 18 }}><LockKeyhole size={18} /><p><strong>การแก้ผลที่เผยแพร่แล้วมีผลต่ออันดับทันที</strong><span>ระบบบันทึก audit log ทุกครั้ง · กรอกคะแนนแล้วกด Enter เพื่อบันทึก</span></p></div>
-            <ResultEntryGrid gameNumber={target} slots={slots} players={players} maxDiff={maxDiff} storageKey={`${card.id}:override:${target}`} onSubmit={(pairing, scoreOne, scoreTwo) => onOverride(pairing.id, scoreOne, scoreTwo)} />
+            <ResultEntryGrid gameNumber={target} slots={slots} players={players} maxDiff={maxDiff} storageKey={`${card.id}:override:${target}`} onSubmit={(pairing, scoreOne, scoreTwo) => onOverride(pairing.id, scoreOne, scoreTwo)} onRevokePenalty={onRevokePenalty} />
           </Panel>
         );
       })()}
@@ -147,6 +148,7 @@ export default function GamesPage() {
   const reopenResults = useTournamentStore((state) => state.reopenResults); const publishResults = useTournamentStore((state) => state.publishResults);
   const overrideResult = useTournamentStore((state) => state.overrideResult);
   const applyPenalty = useTournamentStore((state) => state.applyPenalty);
+  const revokePenalty = useTournamentStore((state) => state.revokePenalty);
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
   const unpairToPreview = useTournamentStore((state) => state.unpairToPreview);
   const publishNextPairing = useTournamentStore((state) => state.publishNextPairing);
@@ -286,6 +288,22 @@ export default function GamesPage() {
     catch (error) { setPenaltyError(error instanceof Error ? error.message : "ลงดาบไม่สำเร็จ"); }
     finally { setPenaltyBusy(false); }
   };
+  const withdrawPenalty = async (pairing: Pairing) => {
+    const password = await appDialog.prompt(
+      "ผลคู่นี้จะกลับเป็นช่องว่างเหมือนยังไม่เคยกรอกผล และจึงจะกรอกคะแนนใหม่ได้",
+      {
+        title: "ถอนดาบ?",
+        label: "รหัสผ่านผู้อำนวยการ",
+        type: "password",
+        confirmLabel: "ยืนยันถอนดาบ",
+      },
+    );
+    if (!password) return;
+    try { await revokePenalty(id, pairing.id, password); }
+    catch (error) {
+      await appDialog.alert(error instanceof Error ? error.message : "ถอนดาบไม่สำเร็จ", "ถอนดาบไม่สำเร็จ", true);
+    }
+  };
 
   if (card.runtimeStage === "FINAL_SEEDING" || card.runtimeStage === "FINAL_COLLECTION" || (card.runtimeStage === "FINAL_PUBLISHED" && card.finalType !== "NONE")) {
     return <FinalRoundView card={card} canManage={isDirector}
@@ -295,7 +313,7 @@ export default function GamesPage() {
       onPublish={() => publishFinal(id)} />;
   }
 
-  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} canEdit={canManageTournament(auth)} onOverride={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} /></>;
+  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} canEdit={isDirector} onOverride={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onRevokePenalty={withdrawPenalty} /></>;
 
   return (
     <>
@@ -335,7 +353,7 @@ export default function GamesPage() {
       )}
       {resultCollection && !viewingCurrent ? (
         editUnlocked ? (
-          <OverrideEditor key={effectiveKey} block={selectedBlock} pairingsForGame={publishedPairingsForGame} players={playerMap} onCommit={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onDone={() => setEditUnlocked(false)} />
+          <OverrideEditor key={effectiveKey} block={selectedBlock} pairingsForGame={publishedPairingsForGame} players={playerMap} onCommit={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onRevokePenalty={withdrawPenalty} onDone={() => setEditUnlocked(false)} />
         ) : (
           <>
             <div className="notice notice--warning"><LockKeyhole size={18} /><p><strong>แก้ไขผลย้อนหลัง (เฉพาะผู้อำนวยการ)</strong><span>ยืนยันรหัสผ่านบัญชีของคุณก่อน จึงจะแก้ผลของบล็อกนี้ได้ · แก้ได้หลายคู่แล้วบันทึกทีเดียว</span></p><Button size="sm" onClick={() => { setPwError(""); setPwInput(""); setPwOpen(true); }}><LockKeyhole size={14} />ยืนยันรหัสผ่านเพื่อแก้ไข</Button></div>
@@ -359,7 +377,7 @@ export default function GamesPage() {
           const completed = gamePairings.filter(isRecorded).length;
           if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`Game ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยัน pairing เกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
           return <Panel key={gameNumber} title={`กรอกผล Game ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === slots.length ? "success" : "warning"}>{completed}/{slots.length} คู่</Badge>}>
-            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={canManageTournament(auth) ? openPenalty : undefined} pairingEdit={canManageTournament(auth) && gameNumber === card.currentGame ? { onSwap: onSwapPairing, onUnpair: onUnpairToPreview } : undefined} />
+            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} pairingEdit={isDirector && gameNumber === card.currentGame ? { onSwap: onSwapPairing, onUnpair: onUnpairToPreview } : undefined} />
           </Panel>;
         })}
       </> : (

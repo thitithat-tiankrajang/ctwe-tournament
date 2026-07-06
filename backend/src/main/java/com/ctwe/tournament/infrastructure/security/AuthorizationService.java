@@ -24,8 +24,8 @@ import java.util.UUID;
  */
 @Service
 public class AuthorizationService {
-    /** RUN_TOURNAMENT covers every operator action (pairing, publish, manage cards/players any time). */
-    public enum Capability { MANAGE_PLAYERS, SUBMIT_RESULT, RUN_TOURNAMENT }
+    /** PENALIZE_RESULT is intentionally director-only, including withdrawal of an existing penalty. */
+    public enum Capability { MANAGE_PLAYERS, SUBMIT_RESULT, RUN_TOURNAMENT, PENALIZE_RESULT }
 
     private final JdbcTemplate jdbc;
 
@@ -88,6 +88,11 @@ public class AuthorizationService {
     }
 
     private void enforceRole(Authentication auth, Capability capability) {
+        if (capability == Capability.PENALIZE_RESULT) {
+            if (isDirector(auth)) return;
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "การลงดาบและถอนดาบสงวนสำหรับผู้อำนวยการเท่านั้น");
+        }
         if (isAdmin(auth) || isDirector(auth)) return; // operators may do everything within scope
         // Remaining principals are result-entry staff. They may submit match results only;
         // player registration and every tournament-control action belong to directors/admins.

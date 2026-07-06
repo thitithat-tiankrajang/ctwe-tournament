@@ -144,13 +144,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
   useCardSync(isStaff ? id : undefined);
   usePublicSync(id, !isStaff);
+  const onTournamentViewer = pathname.startsWith("/tour/") || pathname.startsWith("/t/");
   const notificationScope: PushNotificationScope | null = !isStaff && id && pathname === `/cards/${id}`
     ? {
         type: "CARD",
         id,
         label: currentCard ? `${currentCard.name} · ${currentCard.division}` : "รุ่นการแข่งขันนี้",
       }
-    : !isStaff && pathname === "/cards" && activeTournament
+    : !isStaff && (pathname === "/cards" || onTournamentViewer) && activeTournament
       ? { type: "TOURNAMENT", id: activeTournament.id, label: activeTournament.name }
       : null;
   const { notificationsOn, pending: notificationPending, support: notificationSupport, enable: enableNotifications, disable: disableNotifications } =

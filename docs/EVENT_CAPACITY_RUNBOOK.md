@@ -31,20 +31,52 @@ at the backend origin. Staff traffic stays same-origin through the Worker proxy 
 - **Render bandwidth** is protected by: gzip (`server.compression`), ETag/304 revalidation,
   version-keyed immutable card responses (`?v=` URLs cache forever in the browser), SSE result
   patches instead of full refetches during result entry, and jittered refetches on publish events.
+- **Neon free tier** is insulated from audience size: every anonymous read (bundle, catalog, card)
+  is composed from the Caffeine read cache, so viewer traffic — including refresh storms — reaches
+  the database only as one query set per cache miss, never per viewer.
+
+### The /tour viewer page (one URL, one request)
+
+`/tour/{slug}` (and legacy `/t/{hex}`) render the whole tournament on that URL — no redirect to
+`/cards`. The page issues ONE `/api/public/tournaments/{token}/bundle` request carrying every
+card's full public payload; picking a card and going back are hash-only transitions
+(`#card=<id>`) that never touch any server. A refresh keeps the hash (viewer lands back on the
+same card) and revalidates the bundle by ETag — verified: `transferSize=0` on reload, so refresh
+spam costs the origin nothing but a 304. New tournaments use an admin-chosen permanent slug
+(lowercase English letters, digits, and dashes; immutable after creation); old hex links keep
+working on both routes.
 
 ### Request budget (per viewer, typical competition day)
 
 | Traffic | Path | Worker requests | Render requests |
 | --- | --- | --- | --- |
-| Page shell + assets | Worker + free assets | ~2–4 per visit | 0 |
-| Catalog + card + config | direct CORS | 0 | 3 per visit |
+| Page shell + assets | Worker + free assets | ~1–2 per visit | 0 |
+| Tournament bundle + config | direct CORS | 0 | 1–2 per visit |
+| Switch between cards | hash only | 0 | 0 |
 | SSE stream | direct CORS | 0 | 1 per 45 min |
 | Result updates | SSE patch | 0 | 0 (pushed in-stream) |
-| Pairing/ranking publishes | jittered refetch | 0 | ~1 per publish |
+| Pairing/ranking publishes | jittered `?v=` refetch | 0 | ~1 per publish |
+| Browser refresh | doc + 304 bundle | 1 | ~0 (304) |
 
-Even 5,000 viewers stay far below the Worker cap; the Worker budget is consumed almost entirely by
-page loads. Watch the Cloudflare dashboard request graph during the event; if it trends toward the
-cap, the cause is page reload loops, not data traffic.
+### SSE vs. manual refresh (why realtime is the SAFER choice here)
+
+Counter-intuitively, realtime SSE consumes far fewer edge requests than letting users refresh,
+because viewer SSE and data bypass the Worker entirely while every refresh loads the page document
+through the Worker:
+
+- **SSE mode, 2,000 viewers × 10 h:** ~2 Worker requests each (initial page loads) ≈ **4k
+  requests/day** — 4% of the free-tier cap. Updates arrive in ≤5 s.
+- **Refresh mode, 2,000 viewers refreshing every 5 min × 10 h:** 2,000 × 12 × 10 ≈ **240k
+  requests/day — 2.4× OVER the cap; the site goes down mid-event.** During exciting moments people
+  refresh far more often than that, and the failure hits exactly at peak interest.
+
+SSE also keeps the load *deterministic*: connections scale with audience size (Render spec can be
+raised), while refresh storms scale with audience excitement (uncontrollable). Therefore realtime
+SSE stays the primary mechanism, refresh is merely tolerated (and cheap), and the polling fallback
+covers over-cap viewers.
+
+Watch the Cloudflare dashboard request graph during the event; if it trends toward the cap, the
+cause is page reload loops, not data traffic.
 
 ## Custom-domain upgrade path (optional, strongest setup)
 
@@ -66,8 +98,9 @@ No code change is needed — only the origin env var and DNS/cache configuration
 
 1. Create a staging copy with three cards and generate 400 players in each card.
 2. Complete enough games to make the public card payload representative of the final day.
-3. Run public tests at 100, 500, 1,000, 2,500, then 5,000 viewers (suite in `load-tests/suite/`),
-   pointed at the DIRECT public origin, not the Worker.
+3. Run the staged capacity framework in `load-testing/` with `npm run loadtest`, pointed at the
+   DIRECT public origin, not the Worker. Keep increasing stages until it records NEAR LIMIT/FAIL;
+   archive the generated `load-testing/reports/runbook.md`.
 4. Run ten staff result writers while at least 2,500 public viewers remain active.
 5. Verify in the browser network tab that public data requests go to the public origin (not
    `/api/...` on the site origin) and that `?v=` card responses return
@@ -92,7 +125,8 @@ No code change is needed — only the origin env var and DNS/cache configuration
 1. Freeze deployments and schema changes.
 2. Temporarily upgrade Render (e.g. Standard 2 GB / 1 CPU) and raise
    "Max SSE Connections (viewers)" in admin → Realtime to match the expected audience
-   (each stream holds one Tomcat connection; `server.tomcat.max-connections` is 2000).
+   (each stream holds one Tomcat connection; production defaults Tomcat to 2,000 and load-test
+   deployments can override it with `TOMCAT_MAX_CONNECTIONS`).
 3. Confirm `/actuator/health/readiness` returns `UP`.
 4. Warm `/api/public/cards`, every active `/api/public/cards/{id}`, and `/api/public/cards/versions`.
 5. Open one staff session per card and confirm SSE reconnects after a network interruption.

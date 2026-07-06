@@ -191,7 +191,7 @@ public class CardController {
         authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
         long publicVersionBefore = publicCards.version(cardId);
         CardDtos.ResultPatch patch = service.submitResult(
-            cardId, matchId, request, authentication.getName(), !authz.isStaff(authentication));
+            cardId, matchId, request, authentication.getName());
         events.publishResult(cardId, patch);
         List<CardDtos.PairingResponse> publicChanges = patch.changedPairings().stream()
             .filter(CardDtos.PairingResponse::pairingPublished)
@@ -215,9 +215,19 @@ public class CardController {
     @PostMapping("/{cardId}/matches/{matchId}/penalty")
     public CardDtos.CardResponse penalty(@PathVariable UUID cardId, @PathVariable String matchId,
                                          @Valid @RequestBody CardDtos.PenaltyRequest request, Authentication authentication) {
-        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        authz.requireCardCapability(authentication, cardId, Capability.PENALIZE_RESULT);
         reauthentication.requireCurrentPassword(authentication, request.password());
         return changed(cardId, () -> service.applyPenalty(cardId, matchId, request.points(), authentication.getName()));
+    }
+
+    /** Director-only withdrawal. The match returns to an unrecorded state and can then be entered normally. */
+    @PostMapping("/{cardId}/matches/{matchId}/penalty/revoke")
+    public CardDtos.CardResponse revokePenalty(@PathVariable UUID cardId, @PathVariable String matchId,
+                                               @Valid @RequestBody CardDtos.PasswordRequest request,
+                                               Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.PENALIZE_RESULT);
+        reauthentication.requireCurrentPassword(authentication, request.password());
+        return changed(cardId, () -> service.revokePenalty(cardId, matchId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/pairings/confirm")

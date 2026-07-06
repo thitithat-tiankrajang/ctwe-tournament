@@ -114,6 +114,11 @@ export interface PublicTournamentSummary {
   publishedCardCount: number;
 }
 
+/** One-shot viewer payload: tournament metadata plus every card's full public data. */
+export interface PublicTournamentBundle extends PublicTournamentSummary {
+  cards: TournamentCard[];
+}
+
 export type ManagedRole = "ROLE_ADMIN" | "ROLE_DIRECTOR" | "ROLE_STAFF";
 
 export interface ManagedUser {

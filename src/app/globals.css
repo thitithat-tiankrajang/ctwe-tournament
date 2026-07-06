@@ -1144,3 +1144,7 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   .entry-keyin__save svg { margin: 0; }
   .entry-keyin__feedback { flex-basis: 92px; font-size: 10px; gap: 3px; }
 }
+
+/* Back link from an open card to the /tour card list (hash navigation, no page load). */
+.tour-back-link { align-items: center; color: var(--blue); display: inline-flex; font-size: 14px; font-weight: 600; gap: 6px; margin-bottom: 10px; text-decoration: none; width: fit-content; }
+.tour-back-link:hover { text-decoration: underline; }

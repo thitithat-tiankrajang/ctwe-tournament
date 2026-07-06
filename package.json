@@ -11,6 +11,9 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "loadtest": "bash load-testing/scripts/run-load-test.sh",
+    "loadtest:preflight": "bash load-testing/scripts/run-load-test.sh --preflight",
+    "loadtest:runbook": "tsx load-testing/runbook-generator.ts",
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "npm run cf:build && opennextjs-cloudflare preview",
     "cf:deploy": "npm run cf:build && opennextjs-cloudflare deploy",
@@ -39,6 +42,7 @@
     "@types/react-dom": "^19.0.2",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.5.18",
+    "tsx": "^4.23.0",
     "typescript": "^5.7.2",
     "wrangler": "^4.107.0"
   },

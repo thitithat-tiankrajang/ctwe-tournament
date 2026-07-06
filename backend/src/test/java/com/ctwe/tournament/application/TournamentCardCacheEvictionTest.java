@@ -16,7 +16,8 @@ class TournamentCardCacheEvictionTest {
     private static final Set<String> PUBLIC_MUTATIONS = Set.of(
         "updatePlayer", "removePlayer", "finishRegistration", "swapPlayers",
         "confirmPairingPreview", "unpairToPreview", "submitResult", "publishResults", "publishFinalRound",
-        "undoPairing", "overrideResult", "close", "generateTestPlayers", "resetRuntime", "simulate"
+        "undoPairing", "overrideResult", "applyPenalty", "revokePenalty", "close",
+        "generateTestPlayers", "resetRuntime", "simulate"
     );
     private static final Set<String> PRIVATE_MUTATIONS = Set.of(
         "addPlayer", "addPlayersBulk", "generatePairingPreview",

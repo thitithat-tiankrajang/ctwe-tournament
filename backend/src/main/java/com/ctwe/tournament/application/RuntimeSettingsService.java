@@ -2,6 +2,9 @@ package com.ctwe.tournament.application;
 
 import com.ctwe.tournament.infrastructure.cache.TournamentCaches;
 import com.ctwe.tournament.web.dto.SettingsDtos;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,10 +24,27 @@ import java.util.Map;
  */
 @Service
 public class RuntimeSettingsService {
-    private final JdbcTemplate jdbc;
+    private static final Logger log = LoggerFactory.getLogger(RuntimeSettingsService.class);
 
-    public RuntimeSettingsService(JdbcTemplate jdbc) {
+    private final JdbcTemplate jdbc;
+    private final boolean loadTestMode;
+    private final int loadTestMaxSseConnections;
+
+    public RuntimeSettingsService(
+        JdbcTemplate jdbc,
+        @Value("${app.load-test.enabled:false}") boolean loadTestMode,
+        @Value("${app.load-test.max-sse-connections:10000}") int loadTestMaxSseConnections
+    ) {
         this.jdbc = jdbc;
+        this.loadTestMode = loadTestMode;
+        this.loadTestMaxSseConnections = loadTestMaxSseConnections;
+        if (loadTestMode) {
+            if (loadTestMaxSseConnections < 1)
+                throw new IllegalArgumentException("MAX_SSE_CONNECTIONS must be at least 1 in load-test mode");
+            log.warn("LOAD_TEST_MODE is ENABLED: public SSE cap overridden to {} (ceiling bypassed). "
+                + "This must never be set on a production deployment serving a real event.",
+                loadTestMaxSseConnections);
+        }
     }
 
     @Cacheable(cacheNames = TournamentCaches.RUNTIME_SETTINGS, key = "'all'", sync = true)
@@ -38,7 +58,23 @@ public class RuntimeSettingsService {
             if (updated != null && (latest[0] == null || updated.toInstant().isAfter(latest[0])))
                 latest[0] = updated.toInstant();
         });
-        return RuntimeSettings.fromRows(rows, latest[0]);
+        return withLoadTestOverride(RuntimeSettings.fromRows(rows, latest[0]));
+    }
+
+    /**
+     * Load-test escape hatch: with {@code LOAD_TEST_MODE=true} the public SSE cap (and its
+     * hard ceiling) is replaced by {@code MAX_SSE_CONNECTIONS} so capacity tests can push the
+     * connector to its real limit. Everything else — switches, staff cap, heartbeats, reconnect
+     * delay — behaves exactly as in production, and with the flag off (the default) this method
+     * is an identity function.
+     */
+    private RuntimeSettings withLoadTestOverride(RuntimeSettings settings) {
+        if (!loadTestMode) return settings;
+        return new RuntimeSettings(
+            settings.realtimeEnabled(), settings.sseEnabled(), settings.pollingEnabled(),
+            loadTestMaxSseConnections, settings.maxStaffSseConnections(),
+            settings.pollingIntervalMs(), settings.heartbeatIntervalMs(), settings.reconnectDelayMs(),
+            settings.updatedAt());
     }
 
     @CacheEvict(cacheNames = TournamentCaches.RUNTIME_SETTINGS, allEntries = true)
@@ -70,7 +106,7 @@ public class RuntimeSettingsService {
             if (updated != null && (latest[0] == null || updated.toInstant().isAfter(latest[0])))
                 latest[0] = updated.toInstant();
         });
-        return RuntimeSettings.fromRows(rows, latest[0]);
+        return withLoadTestOverride(RuntimeSettings.fromRows(rows, latest[0]));
     }
 
     private void upsert(String key, String value, String actor) {
