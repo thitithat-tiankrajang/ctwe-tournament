@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import type { TournamentCard } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
+import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { Panel } from "@/ui/components/page";
 
 /**
@@ -37,7 +38,11 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
   const open = (next: "terminate" | "restore") => {
     setMode(next); setSelected(new Set()); setPassword(""); setLossPoints("100"); setUnpair(false); setError("");
   };
-  const close = () => { if (!busy) setMode(null); };
+  const close = () => {
+    if (busy) return;
+    setPassword("");
+    setMode(null);
+  };
   const toggle = (id: string) => setSelected((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -57,6 +62,7 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
         if (!Number.isInteger(points) || points < 0) { setError("แต้มปรับแพ้ต้องเป็นจำนวนเต็ม ≥ 0"); setBusy(false); return; }
         await restorePlayers(card.id, ids, password, points, restoreCase === "B" && unpair);
       }
+      setPassword("");
       setMode(null);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "ทำรายการไม่สำเร็จ");
@@ -138,7 +144,7 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
 
               <div className="form-field termination-password">
                 <label className="form-label" htmlFor="term-password">รหัสผ่านผู้อำนวยการ</label>
-                <input className="input" id="term-password" type="password" autoComplete="current-password" value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} placeholder="รหัสผ่านบัญชีของคุณ" />
+                <FreshSecretInput className="input" id="term-password" value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} placeholder="รหัสผ่านบัญชีของคุณ" />
               </div>
               {error && <p className="form-error">{error}</p>}
             </div>

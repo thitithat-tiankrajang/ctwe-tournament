@@ -7,6 +7,7 @@ import { normalizePlayerCode } from "@/domain/tournament/player-code";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { applyColumnControls, GridHead, uniqueColumnValues, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
+import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 
 /** Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair). */
 const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "id2", "name2", "school2"];
@@ -23,17 +24,17 @@ export interface EntrySlot {
 type RowStatus = "pending" | "empty" | "dirty" | "saved";
 
 const EDIT_COLUMNS: GridColumnBase[] = [
-  { key: "pair", label: "คู่", min: 32, width: 42, align: "center" },
-  { key: "id1", label: "รหัส 1", min: 58, width: 72, filterKind: "playerCode" },
-  { key: "name1", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
-  { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
-  { key: "id2", label: "รหัส 2", min: 58, width: 72, filterKind: "playerCode" },
-  { key: "name2", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
-  { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
-  { key: "score1", label: "คะแนน 1", min: 48, width: 62, align: "center" },
-  { key: "score2", label: "คะแนน 2", min: 48, width: 62, align: "center" },
-  { key: "diff", label: "Diff", min: 52, width: 68, align: "center" },
-  { key: "action", label: "จัดการ", min: 82, width: 106 },
+  { key: "pair", label: "คู่", min: 32, fitMin: 32, width: 42, align: "center" },
+  { key: "id1", label: "รหัส 1", min: 58, fitMin: 58, width: 72, filterKind: "playerCode" },
+  { key: "name1", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138 },
+  { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132 },
+  { key: "id2", label: "รหัส 2", min: 58, fitMin: 58, width: 72, filterKind: "playerCode" },
+  { key: "name2", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138 },
+  { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132 },
+  { key: "score1", label: "คะแนน 1", min: 48, fitMin: 48, width: 62, align: "center" },
+  { key: "score2", label: "คะแนน 2", min: 48, fitMin: 48, width: 62, align: "center" },
+  { key: "diff", label: "Diff", min: 52, fitMin: 52, width: 68, align: "center" },
+  { key: "action", label: "จัดการ", min: 220, fitMin: 220, width: 220 },
 ];
 
 const VIEW_COLUMNS: GridColumnBase[] = [
@@ -385,7 +386,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
           <Button variant="secondary" size="sm" disabled={!filtersActive} onClick={() => { controls.clearAll(); setStatus("all"); }}><X size={14} />ล้างตัวกรอง</Button>
           <Button size="sm" variant="success" disabled={savingAll || filteredSavable.length === 0} onClick={() => void saveAll()}>{savingAll ? <LoaderCircle className="loading-spinner" size={14} /> : <SaveAll size={14} />}บันทึกทั้งหมด ({filteredSavable.length})</Button>
           {pairingEdit && <Button size="sm" variant="secondary" onClick={() => setSwapOpen((open) => !open)} title="สลับผู้เล่นในคู่ที่ยังไม่กรอกผล (เฉพาะผู้อำนวยการ)"><Shuffle size={14} />สลับผู้เล่น</Button>}
-          {pairingEdit && savedCount === 0 && <Button size="sm" variant="secondary" onClick={() => void pairingEdit.onUnpair()} title="ยกเลิกการยืนยันและกลับไปหน้า pairing preview (เฉพาะผู้อำนวยการ)"><Undo2 size={14} />กลับไปแก้ Pairing</Button>}
+          {pairingEdit && savedCount === 0 && <Button size="sm" variant="secondary" onClick={() => void pairingEdit.onUnpair()} title="ลบ pairing ปัจจุบันและกลับไปสถานะรอกด Pairing ใหม่ (เฉพาะผู้อำนวยการ)"><Undo2 size={14} />Unpairing</Button>}
         </div>
       </div>
       {pairingEdit && swapOpen && (
@@ -394,13 +395,13 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
           <input className="entry-keyin__id" inputMode="numeric" placeholder="รหัส A เช่น 16" value={swapA} aria-label="รหัสผู้เล่น A ที่จะสลับ" onChange={(event) => setSwapA(event.target.value.toUpperCase())} />
           <span className="entry-keyin__vs">↔</span>
           <input className="entry-keyin__id" inputMode="numeric" placeholder="รหัส B เช่น 16" value={swapB} aria-label="รหัสผู้เล่น B ที่จะสลับ" onChange={(event) => setSwapB(event.target.value.toUpperCase())} />
-          <input className="entry-swap__password" type="password" autoComplete="current-password" placeholder="รหัสผ่านผู้อำนวยการ" value={swapPassword} aria-label="รหัสผ่านผู้อำนวยการเพื่อยืนยันการสลับคู่" onChange={(event) => setSwapPassword(event.target.value)} />
+          <FreshSecretInput className="entry-swap__password" wrapperClassName="entry-swap__password-field" placeholder="รหัสผ่านผู้อำนวยการ" value={swapPassword} aria-label="รหัสผ่านผู้อำนวยการเพื่อยืนยันการสลับคู่" onChange={(event) => setSwapPassword(event.target.value)} />
           <Button size="sm" variant="success" disabled={swapping || !swapA.trim() || !swapB.trim() || !swapPassword} onClick={() => void doSwap()}>{swapping ? <LoaderCircle className="loading-spinner" size={14} /> : <Shuffle size={14} />}ยืนยันการสลับ</Button>
           <Button size="sm" variant="ghost" aria-label="ปิด" onClick={() => { setSwapOpen(false); setSwapPassword(""); }}><X size={14} /></Button>
         </div>
       )}
 
-      <div className="entry-grid-scroll" ref={scrollRef}>
+      <div className="entry-grid-scroll entry-grid-scroll--result-entry" ref={scrollRef}>
         <table className="entry-grid entry-grid--match" style={{ width: totalWidth }}>
           <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => ENTRY_FILTER_KEYS.includes(key),

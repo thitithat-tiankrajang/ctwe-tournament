@@ -618,14 +618,15 @@ public class TournamentCardService {
     }
 
     /**
-     * Edit-pairing during result collection when NO result is recorded yet for the current game:
-     * revert RESULT_COLLECTION -> PAIRING_PREVIEW for that game so the director can re-edit the pairing
-     * on the preview page. If any result exists, the caller must use swap instead. Director-only upstream.
+     * Fully un-pair the active result block when no result has been recorded yet. Unlike preview undo,
+     * this starts in RESULT_COLLECTION and returns directly to TABLE_PAIRING so the director must
+     * generate a fresh pairing rather than reviewing the old one.
      */
     @Transactional
     @EvictPublicCard
-    public CardDtos.CardResponse unpairToPreview(UUID cardId, String actor) {
+    public CardDtos.CardResponse unpairCurrentPairing(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
+        requireRegularEditable(cardId);
         List<Integer> games = activeResultGames(card);
         long results = count("""
             SELECT COUNT(*) FROM matches
@@ -633,16 +634,11 @@ public class TournamentCardService {
             """, cardId, games.get(0), games.get(games.size() - 1));
         if (results > 0)
             throw new IllegalArgumentException("เกมนี้มีการกรอกผลแล้ว — ใช้การสลับผู้เล่น (Swap) แทนการยกเลิกการจับคู่");
-        if (card.currentGame() == 1) {
-            // Game 1 preview re-derives pairs from table_seats, so drop the matches confirm created.
-            jdbc.update("DELETE FROM matches WHERE card_id = ? AND game_number = 1 AND snapshot_no IS NULL", cardId);
-        } else {
-            jdbc.update("UPDATE matches SET pairing_published_at = NULL WHERE card_id = ? AND game_number = ?", cardId, card.currentGame());
-        }
-        jdbc.update("UPDATE games SET status = 'PENDING' WHERE card_id = ? AND game_number = ?", cardId, card.currentGame());
-        jdbc.update("UPDATE tournament_cards SET runtime_stage = 'PAIRING_PREVIEW', version = version + 1 WHERE id = ?", cardId);
+
+        discardCurrentPairing(cardId, card.currentGame());
         publishPublic(cardId);
-        audit(cardId, actor, "UNPAIR_TO_PREVIEW", "result collection เกม " + card.currentGame(), "กลับสู่ pairing preview");
+        audit(cardId, actor, "UNPAIR_PAIRING", "result collection เกม " + card.currentGame(),
+            "ลบ pairing และกลับสู่ TABLE_PAIRING เกม " + card.currentGame());
         return get(cardId, true);
     }
 

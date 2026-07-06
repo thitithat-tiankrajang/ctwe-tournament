@@ -3,6 +3,7 @@
 import { KeyRound, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/ui/components/button";
+import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 
 interface PromptDialogProps {
   open: boolean;
@@ -39,11 +40,10 @@ export function PromptDialog({
 
   // Reset and focus the field every time the dialog opens.
   useEffect(() => {
-    if (open) {
-      setValue("");
-      const timer = window.setTimeout(() => inputRef.current?.focus(), 30);
-      return () => window.clearTimeout(timer);
-    }
+    setValue("");
+    if (!open) return;
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 30);
+    return () => window.clearTimeout(timer);
   }, [open]);
 
   useEffect(() => {
@@ -67,18 +67,31 @@ export function PromptDialog({
         </header>
         {description && <p>{description}</p>}
         <label className="form-label" htmlFor="prompt-dialog-input">{label}</label>
-        <input
-          ref={inputRef}
-          id="prompt-dialog-input"
-          className="input"
-          type={type}
-          value={value}
-          placeholder={placeholder}
-          autoComplete={type === "password" ? "current-password" : "off"}
-          disabled={busy}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } }}
-        />
+        {type === "password" ? (
+          <FreshSecretInput
+            ref={inputRef}
+            id="prompt-dialog-input"
+            className="input"
+            value={value}
+            placeholder={placeholder}
+            disabled={busy}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } }}
+          />
+        ) : (
+          <input
+            ref={inputRef}
+            id="prompt-dialog-input"
+            className="input"
+            type="text"
+            value={value}
+            placeholder={placeholder}
+            autoComplete="off"
+            disabled={busy}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } }}
+          />
+        )}
         {error && <div className="confirm-dialog__error" role="alert">{error}</div>}
         <footer>
           <Button variant="secondary" disabled={busy} onClick={onCancel}>ยกเลิก</Button>

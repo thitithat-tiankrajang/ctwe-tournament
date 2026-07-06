@@ -159,12 +159,12 @@ public class CardController {
         return changed(cardId, () -> service.undoPairing(cardId, authentication.getName()));
     }
 
-    @PostMapping("/{cardId}/pairings/unpair-to-preview")
-    public CardDtos.CardResponse unpairToPreview(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.PasswordRequest request,
-                                                 Authentication authentication) {
+    @PostMapping("/{cardId}/pairings/unpair")
+    public CardDtos.CardResponse unpairCurrentPairing(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.PasswordRequest request,
+                                                      Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(cardId, () -> service.unpairToPreview(cardId, authentication.getName()));
+        return changed(cardId, () -> service.unpairCurrentPairing(cardId, authentication.getName()));
     }
 
     /** Director batch-terminates players out of the running competition (password-confirmed). */

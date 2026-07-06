@@ -145,6 +145,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   useCardSync(isStaff ? id : undefined);
   usePublicSync(id, !isStaff);
   const onTournamentViewer = pathname.startsWith("/tour/") || pathname.startsWith("/t/");
+  // Read-only overviews have no primary mobile navigation underneath their
+  // Ranking/Pairing/Result bar, including tournament viewer routes without an `id` param.
+  const standaloneOverview = !operator && (Boolean(id) || onTournamentViewer);
   const notificationScope: PushNotificationScope | null = !isStaff && id && pathname === `/cards/${id}`
     ? {
         type: "CARD",
@@ -370,7 +373,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         )}
       </aside>
-      <div className={`app-main${id && !isStaff ? " app-main--public-card" : ""}`}>
+      <div className={`app-main${standaloneOverview ? " app-main--standalone-overview" : ""}`}>
         <div className="mobile-brand">
           {scopeLocked
             ? id && !isStaff

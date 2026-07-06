@@ -12,6 +12,7 @@ import { Button } from "@/ui/components/button";
 import { CardCreateForm } from "@/ui/components/card-create-form";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { PromptDialog } from "@/ui/components/prompt-dialog";
 
 interface ConfirmState { title: string; description: string; confirmLabel: string; danger?: boolean; run: () => Promise<unknown>; }
@@ -105,7 +106,7 @@ export default function DirectorConsolePage() {
           </div>
           <div className="form-field">
             <label className="form-label" htmlFor="s-pass">รหัสผ่าน (อย่างน้อย 8 ตัว)</label>
-            <input className="input" id="s-pass" type="password" value={sPass} onChange={(e) => setSPass(e.target.value)} />
+            <FreshSecretInput className="input" id="s-pass" value={sPass} onChange={(e) => setSPass(e.target.value)} />
           </div>
         </div>
         <div className="form-actions">

@@ -14,6 +14,7 @@ import { CardNotFound } from "@/ui/components/card-not-found";
 import { pairingRuleForGame } from "@/ui/components/game-flow";
 import { CustomCombobox } from "@/ui/components/institution-combobox";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
 
 export default function TablesPage() {
@@ -212,7 +213,7 @@ export default function TablesPage() {
               </div>
               <div className="form-field">
                 <label className="form-label" htmlFor="pairing-password">รหัสผ่านยืนยัน</label>
-                <input id="pairing-password" className="input" type="password" autoComplete="current-password" value={pairingPassword} onChange={(event) => setPairingPassword(event.target.value)} placeholder="รหัสผ่านบัญชีของคุณ" disabled={busy} />
+                <FreshSecretInput id="pairing-password" className="input" value={pairingPassword} onChange={(event) => setPairingPassword(event.target.value)} placeholder="รหัสผ่านบัญชีของคุณ" disabled={busy} />
               </div>
               <Button onClick={swap} disabled={busy || !players.has(firstId) || !players.has(secondId) || !pairingPassword}><RefreshCw size={16} />ยืนยันการสลับ</Button>
             </div>

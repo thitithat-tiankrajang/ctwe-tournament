@@ -88,7 +88,7 @@ interface TournamentState {
   setFinalWinner: (cardId: string, slot: number, winnerId: string) => Promise<void>;
   publishFinal: (cardId: string) => Promise<void>;
   undoPairing: (cardId: string, password: string) => Promise<void>;
-  unpairToPreview: (cardId: string, password: string) => Promise<void>;
+  unpairCurrentPairing: (cardId: string, password: string) => Promise<void>;
   terminatePlayers: (cardId: string, playerIds: string[], password: string) => Promise<void>;
   restorePlayers: (cardId: string, playerIds: string[], password: string, lossPoints: number, unpair: boolean) => Promise<void>;
   closeCard: (cardId: string) => Promise<void>;
@@ -559,8 +559,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async undoPairing(cardId, password) {
       await mutateCard(`/api/cards/${cardId}/pairings/undo`, cardId, { method: "POST", body: JSON.stringify({ password }) });
     },
-    async unpairToPreview(cardId, password) {
-      await mutateCard(`/api/cards/${cardId}/pairings/unpair-to-preview`, cardId, { method: "POST", body: JSON.stringify({ password }) });
+    async unpairCurrentPairing(cardId, password) {
+      await mutateCard(`/api/cards/${cardId}/pairings/unpair`, cardId, { method: "POST", body: JSON.stringify({ password }) });
     },
     async terminatePlayers(cardId, playerIds, password) {
       await mutateCard(`/api/cards/${cardId}/players/terminate`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password }) });

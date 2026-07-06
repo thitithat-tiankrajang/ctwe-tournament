@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowLeft, ChevronRight, LinkIcon, LockKeyhole, Trophy } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
 import type { TournamentCard } from "@/domain/tournament/types";
@@ -31,9 +31,11 @@ export function TournamentViewer({ token }: { token: string }) {
   const [tournament, setTournament] = useState<{ id: string; name: string } | null>(null);
   const [dead, setDead] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(cardFromHash);
+  const autoOpenedSingleCard = useRef(false);
 
   useEffect(() => {
     let active = true;
+    autoOpenedSingleCard.current = false;
     setDead(false);
     enterPublicTournament(token)
       .then((bundle) => { if (active) setTournament({ id: bundle.id, name: bundle.name }); })
@@ -60,7 +62,11 @@ export function TournamentViewer({ token }: { token: string }) {
 
   // A single-card tournament jumps straight into that card.
   useEffect(() => {
-    if (!selectedId && tournamentCards.length === 1) setSelectedId(tournamentCards[0].id);
+    if (selectedId || tournamentCards.length !== 1 || autoOpenedSingleCard.current) return;
+    autoOpenedSingleCard.current = true;
+    const cardId = tournamentCards[0].id;
+    setSelectedId(cardId);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#card=${cardId}`);
   }, [selectedId, tournamentCards]);
 
   if (dead) {
@@ -78,21 +84,24 @@ export function TournamentViewer({ token }: { token: string }) {
   if (!tournament) return <div className="panel panel-padding">กำลังเข้าสู่การแข่งขัน…</div>;
 
   if (selectedCard) {
+    const leaveCard = () => {
+      setSelectedId(null);
+      window.history.pushState(null, "", window.location.pathname + window.location.search);
+    };
     return (
       <>
-        {tournamentCards.length > 1 && (
-          <a
-            className="tour-back-link"
-            href={window.location.pathname + window.location.search}
-            onClick={(event) => {
-              event.preventDefault();
-              setSelectedId(null);
-              window.history.pushState(null, "", window.location.pathname + window.location.search);
-            }}
-          >
-            <ArrowLeft size={16} aria-hidden="true" /> รุ่นทั้งหมดของ {tournament.name}
-          </a>
-        )}
+        <button type="button" className={`tour-mobile-card-back${auth.authenticated ? " tour-mobile-card-back--authenticated" : ""}`} onClick={leaveCard} aria-label={`กลับไปเลือก Card ของ ${tournament.name}`}>
+          <ArrowLeft size={18} aria-hidden="true" />
+          <Trophy size={19} aria-hidden="true" />
+          <span>{tournament.name}</span>
+        </button>
+        <a
+          className="tour-back-link"
+          href={window.location.pathname + window.location.search}
+          onClick={(event) => { event.preventDefault(); leaveCard(); }}
+        >
+          <ArrowLeft size={16} aria-hidden="true" /> รุ่นทั้งหมดของ {tournament.name}
+        </a>
         <CardOverview cardId={selectedCard.id} />
       </>
     );

@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TournamentCardCacheEvictionTest {
     private static final Set<String> PUBLIC_MUTATIONS = Set.of(
         "updatePlayer", "removePlayer", "finishRegistration", "swapPlayers",
-        "confirmPairingPreview", "unpairToPreview", "submitResult", "publishResults", "publishFinalRound",
+        "confirmPairingPreview", "unpairCurrentPairing", "submitResult", "publishResults", "publishFinalRound",
         "undoPairing", "overrideResult", "applyPenalty", "revokePenalty", "close",
         "generateTestPlayers", "resetRuntime", "simulate"
     );

@@ -39,8 +39,8 @@ const widthsKey = (key: string) => `ctwe.gridWidths.v2.${key}`;
 const headAlignClass = (align?: GridColumnBase["align"]) =>
   align === "right" ? " egrid-th--right" : align === "center" ? " egrid-th--center" : " egrid-th--left";
 
-/** Resizable, screen-fitting, sessionStorage-persisted column widths shared by every grid. */
-export function useResizableColumns(columns: readonly { min: number; width: number; fitMin?: number; fitContent?: boolean }[], storageKey: string) {
+/** Screen-fitting column widths, optionally resizable and persisted for staff-facing grids. */
+export function useResizableColumns(columns: readonly { min: number; width: number; fitMin?: number; fitContent?: boolean }[], storageKey: string, resizable = true) {
   const minsRef = useRef(columns.map((column) => column.min)); minsRef.current = columns.map((column) => column.min);
   const fitMinsRef = useRef(columns.map((column) => column.fitMin ?? 1)); fitMinsRef.current = columns.map((column) => column.fitMin ?? 1);
   const fitContentRef = useRef(columns.map((column) => Boolean(column.fitContent))); fitContentRef.current = columns.map((column) => Boolean(column.fitContent));
@@ -52,7 +52,11 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
   const resizeRef = useRef<{ index: number; startX: number; startW: number } | null>(null);
   const colWidths = widths ?? defaultsRef.current;
 
-  const startResize = (index: number, clientX: number) => { resizedRef.current = true; resizeRef.current = { index, startX: clientX, startW: colWidths[index] }; };
+  const startResize = (index: number, clientX: number) => {
+    if (!resizable) return;
+    resizedRef.current = true;
+    resizeRef.current = { index, startX: clientX, startW: colWidths[index] };
+  };
   const measureContentMins = () => {
     const table = scrollRef.current?.querySelector("table");
     if (!table) return fitMinsRef.current;
@@ -97,7 +101,10 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
     };
     const floors = contentMins.map((value) => Math.max(1, Math.round(value)));
     const floorTotal = floors.reduce((sum, value) => sum + value, 0);
-    if (floorTotal >= target) return distribute(floors, target);
+    // A configured fit minimum is a real floor. If the viewport is narrower,
+    // keep those widths and let the grid scroll instead of squeezing controls
+    // outside the table's measurable scroll area.
+    if (floorTotal >= target) return floors;
     const extraWeights = source.map((value, index) => Math.max(1, value - floors[index]));
     const extra = distribute(extraWeights, target - floorTotal);
     const fitted = floors.map((floor, index) => floor + extra[index]);
@@ -118,13 +125,16 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
   // Restore saved widths, or pick a default that fits all columns into the visible width.
   useEffect(() => {
     let restored: number[] | null = null;
-    try {
-      const raw = sessionStorage.getItem(widthsKey(storageKey));
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length === count && parsed.every((value) => typeof value === "number" && value > 0)) restored = parsed;
-      }
-    } catch { /* ignore malformed storage */ }
+    if (resizable) {
+      try {
+        const raw = sessionStorage.getItem(widthsKey(storageKey));
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length === count && parsed.every((value) => typeof value === "number" && value > 0))
+            restored = parsed.map((value, index) => Math.max(value, minsRef.current[index]));
+        }
+      } catch { /* ignore malformed storage */ }
+    }
     const available = scrollRef.current?.clientWidth ?? 0;
     if (restored) {
       resizedRef.current = true;
@@ -133,7 +143,7 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
     }
     resizedRef.current = false;
     setWidths(available > 0 ? fitWidths(defaultsRef.current, available, measureContentMins()) : [...defaultsRef.current]);
-  }, [storageKey, count]);
+  }, [storageKey, count, resizable]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -145,13 +155,13 @@ export function useResizableColumns(columns: readonly { min: number; width: numb
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [storageKey, count]);
+  }, [storageKey, count, resizable]);
 
   // Persist only widths the user dragged — never the auto-fit defaults.
   useEffect(() => {
-    if (!widths || !resizedRef.current) return;
+    if (!resizable || !widths || !resizedRef.current) return;
     try { sessionStorage.setItem(widthsKey(storageKey), JSON.stringify(widths)); } catch { /* ignore */ }
-  }, [widths, storageKey]);
+  }, [widths, storageKey, resizable]);
 
   const totalWidth = colWidths.reduce((sum, value) => sum + value, 0);
   return { colWidths, totalWidth, scrollRef, startResize };
@@ -437,8 +447,8 @@ export function ColumnFilterDropdown({ label, values, selected, anchor, filterab
   );
 }
 
-/** Generic Excel-style grid: resizable columns, sessionStorage widths, multi-field filters, pagination. */
-export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, onRowClick, onFilterActiveChange }: {
+/** Generic Excel-style grid: responsive columns, optional resizing, and multi-field filters. */
+export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, onRowClick, onFilterActiveChange }: {
   columns: DataColumn<T>[];
   rows: T[];
   getRowKey: (row: T) => string;
@@ -452,10 +462,11 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
   pageSize?: number;
   unit?: string;
   inlineClear?: boolean;
+  resizableColumns?: boolean;
   onRowClick?: (row: T) => void;
   onFilterActiveChange?: (active: boolean) => void;
 }) {
-  const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(columns, storageKey);
+  const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(columns, storageKey, resizableColumns);
   const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(null);
   const [filters, setFilters] = useState<Record<string, string[]>>({});
   const [textFilters, setTextFilters] = useState<Record<string, string>>({});
@@ -615,7 +626,7 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
                       onClose={() => setOpenKey(null)}
                     />
                   )}
-                  <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />
+                  {resizableColumns && <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />}
                 </th>
               );
             })}</tr>

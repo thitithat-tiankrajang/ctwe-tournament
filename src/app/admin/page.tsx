@@ -12,6 +12,7 @@ import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { PromptDialog } from "@/ui/components/prompt-dialog";
 import { RealtimeSettingsPanel } from "@/ui/components/realtime-settings-panel";
 
@@ -198,7 +199,7 @@ export default function AdminConsolePage() {
           </div>
           <div className="form-field">
             <label className="form-label" htmlFor="d-pass">รหัสผ่าน (อย่างน้อย 8 ตัว)</label>
-            <input className="input" id="d-pass" type="password" value={dPass} onChange={(e) => setDPass(e.target.value)} />
+            <FreshSecretInput className="input" id="d-pass" value={dPass} onChange={(e) => setDPass(e.target.value)} />
           </div>
         </div>
         <div className="panel-padding" style={{ paddingTop: 0 }}>
