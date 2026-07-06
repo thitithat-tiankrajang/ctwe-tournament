@@ -70,7 +70,7 @@ export function TournamentViewer({ token }: { token: string }) {
           icon={<LockKeyhole size={25} />}
           title="ลิงก์นี้ใช้ไม่ได้"
           description="การแข่งขันนี้อาจยังไม่เปิดให้เข้าชม หรือถูกปิดไปแล้ว — โปรดติดต่อผู้จัดการแข่งขัน"
-          action={<Link href="/"><Button variant="secondary"><LinkIcon size={16} />ไปหน้ารวมการแข่งขัน</Button></Link>}
+          action={<Link prefetch={false} href="/"><Button variant="secondary"><LinkIcon size={16} />ไปหน้ารวมการแข่งขัน</Button></Link>}
         />
       </div>
     );

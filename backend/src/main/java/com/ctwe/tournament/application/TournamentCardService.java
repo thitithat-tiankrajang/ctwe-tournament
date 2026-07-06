@@ -506,10 +506,12 @@ public class TournamentCardService {
     /** Swap two players across the unconfirmed preview pairings of any game ≥ 2. */
     private void swapMatchPlayers(UUID cardId, int gameNumber, int first, int second, boolean confirmConflict) {
         var matches = jdbc.query("""
-            SELECT table_number, player_one, player_two, (result_type IS NOT NULL) has_result
+            SELECT table_number, player_one, player_two, player_one_gibsonized, player_two_gibsonized,
+                   (result_type IS NOT NULL) has_result
             FROM matches WHERE card_id = ? AND game_number = ? AND snapshot_no IS NULL
             """, (rs, row) -> new MatchSlot(rs.getInt("table_number"), nullableInt(rs, "player_one"),
-                nullableInt(rs, "player_two"), rs.getBoolean("has_result")), cardId, gameNumber);
+                nullableInt(rs, "player_two"), rs.getBoolean("player_one_gibsonized"),
+                rs.getBoolean("player_two_gibsonized"), rs.getBoolean("has_result")), cardId, gameNumber);
         MatchSlot firstMatch = null; MatchSlot secondMatch = null;
         boolean firstIsOne = false; boolean secondIsOne = false;
         for (MatchSlot match : matches) {
@@ -525,10 +527,14 @@ public class TournamentCardService {
         Integer secondOpponent = secondIsOne ? secondMatch.twoId() : secondMatch.oneId();
         if (!confirmConflict && (sameSchool(cardId, firstOpponent, second) || sameSchool(cardId, secondOpponent, first)))
             throw new IllegalArgumentException("SCHOOL_CONFLICT: การสลับนี้ทำให้ผู้เล่นโรงเรียนเดียวกันแข่งขันกัน กรุณายืนยันอีกครั้ง");
-        jdbc.update("UPDATE matches SET player_" + (firstIsOne ? "one" : "two") + " = ? WHERE card_id = ? AND game_number = ? AND table_number = ?",
-            second, cardId, gameNumber, firstMatch.tableNumber());
-        jdbc.update("UPDATE matches SET player_" + (secondIsOne ? "one" : "two") + " = ? WHERE card_id = ? AND game_number = ? AND table_number = ?",
-            first, cardId, gameNumber, secondMatch.tableNumber());
+        boolean firstGibsonized = firstIsOne ? firstMatch.oneGibsonized() : firstMatch.twoGibsonized();
+        boolean secondGibsonized = secondIsOne ? secondMatch.oneGibsonized() : secondMatch.twoGibsonized();
+        String firstSide = firstIsOne ? "one" : "two";
+        String secondSide = secondIsOne ? "one" : "two";
+        jdbc.update("UPDATE matches SET player_" + firstSide + " = ?, player_" + firstSide + "_gibsonized = ? WHERE card_id = ? AND game_number = ? AND table_number = ?",
+            second, secondGibsonized, cardId, gameNumber, firstMatch.tableNumber());
+        jdbc.update("UPDATE matches SET player_" + secondSide + " = ?, player_" + secondSide + "_gibsonized = ? WHERE card_id = ? AND game_number = ? AND table_number = ?",
+            first, firstGibsonized, cardId, gameNumber, secondMatch.tableNumber());
     }
 
     private boolean sameSchool(UUID cardId, Integer a, Integer b) {
@@ -724,6 +730,7 @@ public class TournamentCardService {
         if (includeWholeDestination) {
             return jdbc.query("""
                 SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
+                       m.player_one_gibsonized, m.player_two_gibsonized,
                        m.score_one, m.score_two, m.result_type, m.calculated_diff,
                        m.snapshot_no, m.pairing_published_at, s.confirmed_at
                 FROM matches m
@@ -737,6 +744,7 @@ public class TournamentCardService {
         }
         return jdbc.query("""
             SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
+                   m.player_one_gibsonized, m.player_two_gibsonized,
                    m.score_one, m.score_two, m.result_type, m.calculated_diff,
                    m.snapshot_no, m.pairing_published_at, s.confirmed_at
             FROM matches m
@@ -1428,15 +1436,20 @@ public class TournamentCardService {
             scores = ranked;
         }
         var context = new PairingStrategy.PairingContext(gameNumber, history);
-        var pairs = orderPairsForTables(cardId,
-            applyGibsonPairing(cardId, gameNumber, scores, context, appliedRule),
-            byePlayer == null ? null : String.valueOf(byePlayer));
+        GibsonPairingPlan plan = applyGibsonPairing(cardId, gameNumber, scores, context, appliedRule);
+        var pairs = moveGibsonPairsLast(orderPairsForTables(cardId,
+            plan.pairs(), byePlayer == null ? null : String.valueOf(byePlayer)),
+            plan.gibsonizedPlayerIds());
         int table = 1;
         for (var pair : pairs) {
             jdbc.update("""
-                INSERT INTO matches (card_id, game_number, table_number, player_one, player_two)
-                VALUES (?, ?, ?, ?, ?)
-                """, cardId, gameNumber, table++, Integer.parseInt(pair.playerOneId()), Integer.parseInt(pair.playerTwoId()));
+                INSERT INTO matches (
+                    card_id, game_number, table_number, player_one, player_two,
+                    player_one_gibsonized, player_two_gibsonized
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, cardId, gameNumber, table++, Integer.parseInt(pair.playerOneId()), Integer.parseInt(pair.playerTwoId()),
+                plan.gibsonizedPlayerIds().contains(pair.playerOneId()),
+                plan.gibsonizedPlayerIds().contains(pair.playerTwoId()));
         }
         if (byePlayer != null)
             jdbc.update("""
@@ -1465,11 +1478,11 @@ public class TournamentCardService {
      * cannot reorder the remaining contenders; the rest are paired by the normal strategy. Falls back to
      * the plain strategy when disabled, when nobody has clinched, or when there is no eliminated opponent.
      */
-    private List<PairingStrategy.Pair> applyGibsonPairing(UUID cardId, int gameNumber, List<PairingStrategy.PlayerScore> scores,
-                                                          PairingStrategy.PairingContext context, PairingRuleType appliedRule) {
+    private GibsonPairingPlan applyGibsonPairing(UUID cardId, int gameNumber, List<PairingStrategy.PlayerScore> scores,
+                                                 PairingStrategy.PairingContext context, PairingRuleType appliedRule) {
         PairingStrategy strategy = strategies.resolve(appliedRule);
         CardRow card = cardRow(cardId);
-        if (!card.gibsonEnabled()) return strategy.generate(scores, context);
+        if (!card.gibsonEnabled()) return new GibsonPairingPlan(strategy.generate(scores, context), Set.of());
 
         int qualifyCut = "CHAMPION_AND_THIRD".equals(card.finalType()) ? 4 : "CHAMPION".equals(card.finalType()) ? 2 : 1;
         int remainingGames = card.numberOfGames() - gameNumber + 1;
@@ -1478,7 +1491,8 @@ public class TournamentCardService {
         List<GibsonAnalysis.PlayerStanding> standings = scores.stream()
             .map(score -> new GibsonAnalysis.PlayerStanding(score.playerId(), score.winPoints(), score.diff())).toList();
         GibsonAnalysis.Result analysis = GibsonAnalysis.analyze(standings, remainingGames, maxDiffSum == null ? 0L : maxDiffSum, qualifyCut);
-        if (analysis.gibsonized().isEmpty() || analysis.eliminated().isEmpty()) return strategy.generate(scores, context);
+        if (analysis.gibsonized().isEmpty() || analysis.eliminated().isEmpty())
+            return new GibsonPairingPlan(strategy.generate(scores, context), Set.of());
 
         Comparator<PairingStrategy.PlayerScore> ranking = Comparator.comparingInt(PairingStrategy.PlayerScore::winPoints).reversed()
             .thenComparing(Comparator.comparingInt(PairingStrategy.PlayerScore::diff).reversed())
@@ -1489,6 +1503,7 @@ public class TournamentCardService {
         Collections.reverse(deadPool); // lowest-ranked out-of-contention player first
 
         Set<String> used = new HashSet<>();
+        Set<String> pairedGibsonized = new LinkedHashSet<>();
         List<PairingStrategy.Pair> gibsonPairs = new ArrayList<>();
         List<Map<String, Object>> gibsonLog = new ArrayList<>();
         for (PairingStrategy.PlayerScore leader : clinched) {
@@ -1496,10 +1511,13 @@ public class TournamentCardService {
             if (opponent == null) continue; // not enough out-of-contention players; leader stays in the normal pool
             used.add(leader.playerId());
             used.add(opponent.playerId());
-            gibsonPairs.add(new PairingStrategy.Pair(leader.playerId(), opponent.playerId()));
+            pairedGibsonized.add(leader.playerId());
+            // The clinched player belongs at the final seat of the Gibson pair. Physical-table
+            // ordering may flip pairs, so moveGibsonPairsLast normalises this again afterwards.
+            gibsonPairs.add(new PairingStrategy.Pair(opponent.playerId(), leader.playerId()));
             gibsonLog.add(Map.of("clinched", leader.playerId(), "vsEliminated", opponent.playerId()));
         }
-        if (gibsonPairs.isEmpty()) return strategy.generate(scores, context);
+        if (gibsonPairs.isEmpty()) return new GibsonPairingPlan(strategy.generate(scores, context), Set.of());
 
         List<PairingStrategy.PlayerScore> remaining = ranked.stream().filter(player -> !used.contains(player.playerId())).toList();
         List<PairingStrategy.Pair> rest = remaining.isEmpty() ? List.of() : strategy.generate(remaining, context);
@@ -1513,9 +1531,31 @@ public class TournamentCardService {
         log.put("proof", analysis.proof());
         audit(cardId, "system", "GIBSON_PAIRING", null, log);
 
-        List<PairingStrategy.Pair> all = new ArrayList<>(gibsonPairs);
-        all.addAll(rest);
-        return all;
+        List<PairingStrategy.Pair> all = new ArrayList<>(rest);
+        all.addAll(gibsonPairs);
+        return new GibsonPairingPlan(all, Set.copyOf(pairedGibsonized));
+    }
+
+    /** Stable-partition decided pairings, and place each clinched player in the final seat. */
+    static List<PairingStrategy.Pair> moveGibsonPairsLast(
+        List<PairingStrategy.Pair> pairs,
+        Set<String> gibsonizedPlayerIds
+    ) {
+        if (gibsonizedPlayerIds.isEmpty()) return pairs;
+        List<PairingStrategy.Pair> regular = new ArrayList<>();
+        List<PairingStrategy.Pair> gibson = new ArrayList<>();
+        for (PairingStrategy.Pair pair : pairs) {
+            String leader = gibsonizedPlayerIds.contains(pair.playerOneId()) ? pair.playerOneId()
+                : gibsonizedPlayerIds.contains(pair.playerTwoId()) ? pair.playerTwoId() : null;
+            if (leader == null) {
+                regular.add(pair);
+                continue;
+            }
+            String opponent = leader.equals(pair.playerOneId()) ? pair.playerTwoId() : pair.playerOneId();
+            gibson.add(new PairingStrategy.Pair(opponent, leader));
+        }
+        regular.addAll(gibson);
+        return regular;
     }
 
     /** Lowest-ranked out-of-contention player for a Gibson pairing, preferring one the leader hasn't met. */
@@ -1607,6 +1647,7 @@ public class TournamentCardService {
     private List<PairingRow> pairingRows(UUID cardId) {
         return jdbc.query("""
             SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
+                   m.player_one_gibsonized, m.player_two_gibsonized,
                    m.score_one, m.score_two, m.result_type, m.calculated_diff,
                    m.snapshot_no, m.pairing_published_at, s.confirmed_at
             FROM matches m
@@ -1618,6 +1659,7 @@ public class TournamentCardService {
     private PairingRow mapPairingRow(ResultSet rs, int row) throws SQLException {
         return new PairingRow(rs.getInt("game_number"), rs.getInt("table_number"),
             nullableInt(rs, "player_one"), nullableInt(rs, "player_two"), nullableInt(rs, "winner"),
+            rs.getBoolean("player_one_gibsonized"), rs.getBoolean("player_two_gibsonized"),
             nullableInt(rs, "score_one"), nullableInt(rs, "score_two"), rtName(rs.getString("result_type")),
             nullableInt(rs, "calculated_diff"), nullableInt(rs, "snapshot_no"),
             rs.getTimestamp("pairing_published_at"), rs.getTimestamp("confirmed_at"));
@@ -1631,6 +1673,7 @@ public class TournamentCardService {
             includeResult ? row.scoreTwo() : null,
             includeResult ? row.resultType() : null,
             includeResult ? row.calculatedDiff() : null,
+            row.playerOneGibsonized(), row.playerTwoGibsonized(),
             row.snapshotNo() != null || row.pairingPublishedAt() != null);
     }
 
@@ -1899,15 +1942,18 @@ public class TournamentCardService {
         }
     }
     private record Seat(int tableNo, int seatNo, int playerCode) {}
-    private record MatchSlot(int tableNumber, Integer oneId, Integer twoId, boolean hasResult) {}
+    private record MatchSlot(int tableNumber, Integer oneId, Integer twoId,
+                             boolean oneGibsonized, boolean twoGibsonized, boolean hasResult) {}
     private record MatchKey(int gameNumber, int tableNumber) {}
     private record MatchPlayers(Integer oneId, Integer twoId, Integer snapshotNo, int gameNumber, int maxDiff, int tableNumber,
                                 String resultType, Integer scoreOne, Integer scoreTwo, Integer calculatedDiff, Integer winner,
                                 Timestamp pairingPublishedAt) {}
     private record TableSeat(int tableNumber, int seatNumber, int playerCode, String school) {}
     private record PairingRow(int gameNumber, int tableNumber, Integer playerOne, Integer playerTwo, Integer winner,
+                              boolean playerOneGibsonized, boolean playerTwoGibsonized,
                               Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
                               Integer snapshotNo, Timestamp pairingPublishedAt, Timestamp confirmedAt) {}
+    private record GibsonPairingPlan(List<PairingStrategy.Pair> pairs, Set<String> gibsonizedPlayerIds) {}
     private record PairResultSource(int tableNumber, Integer oneId, Integer twoId, Integer winnerId, String resultType) {}
     private record PairResultSlots(Integer upper, Integer lower) {}
     private record PairResultDestination(Integer oneId, Integer twoId, boolean hasResult) {}

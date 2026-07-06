@@ -66,7 +66,7 @@ const cardLinks = (id: string, isStaff: boolean) => isStaff ? [
 function NavigationLink({ href, label, icon: Icon, active, workflow = false, collapsed = false, nested = false }: { href: string; label: string; icon: typeof ClipboardList; active: boolean; workflow?: boolean; collapsed?: boolean; nested?: boolean }) {
   const nudge = workflow && !active;
   return (
-    <Link className={`nav-link${active ? " nav-link--active" : ""}${nudge ? " nav-link--workflow" : ""}${nested ? " nav-link--nested" : ""}${collapsed ? " nav-link--icon" : ""}`} href={href} title={collapsed ? label : undefined} aria-current={active ? "page" : undefined}>
+    <Link prefetch={false} className={`nav-link${active ? " nav-link--active" : ""}${nudge ? " nav-link--workflow" : ""}${nested ? " nav-link--nested" : ""}${collapsed ? " nav-link--icon" : ""}`} href={href} title={collapsed ? label : undefined} aria-current={active ? "page" : undefined}>
       <Icon size={18} aria-hidden="true" />
       {!collapsed && <span className="nav-link__text">{label}</span>}
       {!collapsed && nudge && <span className="nav-link__flag">ทำต่อ</span>}
@@ -270,7 +270,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="brand__text" aria-hidden={collapsed}><strong>{activeTournament?.name ?? "Tournament Control"}</strong><small>ระบบจัดการแข่งขัน</small></span>
             </span>
           ) : (
-            <Link href="/" className="brand" aria-label="Tournament Control">
+            <Link prefetch={false} href="/" className="brand" aria-label="Tournament Control">
               <span className="brand__mark"><Trophy size={20} /></span>
               <span className="brand__text" aria-hidden={collapsed}><strong>Tournament Control</strong><small>ระบบจัดการแข่งขัน</small></span>
             </Link>
@@ -374,13 +374,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="mobile-brand">
           {scopeLocked
             ? id && !isStaff
-              ? <Link href="/cards" className="mobile-brand__title mobile-brand__back" aria-label={`กลับไปเลือกกลุ่มรุ่นของ ${activeTournament?.name ?? "รายการแข่งขัน"}`}>
+              ? <Link prefetch={false} href="/cards" className="mobile-brand__title mobile-brand__back" aria-label={`กลับไปเลือกกลุ่มรุ่นของ ${activeTournament?.name ?? "รายการแข่งขัน"}`}>
                   <ArrowLeft className="mobile-brand__back-icon" size={18} aria-hidden="true" />
                   <Trophy size={19} aria-hidden="true" />
                   <strong>{activeTournament?.name ?? "Tournament Control"}</strong>
                 </Link>
               : <span className="mobile-brand__title"><Trophy size={19} /><strong>{activeTournament?.name ?? "Tournament Control"}</strong></span>
-            : <Link href="/" className="mobile-brand__title" aria-label="ไปหน้ารวมการแข่งขัน"><Trophy size={19} /><strong>Tournament Control</strong></Link>}
+            : <Link prefetch={false} href="/" className="mobile-brand__title" aria-label="ไปหน้ารวมการแข่งขัน"><Trophy size={19} /><strong>Tournament Control</strong></Link>}
           <div className="mobile-brand__actions">
             {notificationScope && (
               <button

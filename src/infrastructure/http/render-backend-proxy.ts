@@ -32,9 +32,10 @@ export async function proxyToRender(request: Request): Promise<Response> {
     headers.delete("content-length");
     headers.delete("connection");
     headers.delete("transfer-encoding");
-    // Avoid forwarding a compressed origin stream with stale encoding/length metadata through
-    // another serverless runtime. Vercel and Workers may decode upstream bodies differently.
-    headers.set("accept-encoding", "identity");
+    // Let fetch negotiate upstream compression (gzip). Both workerd and Node decompress the body
+    // transparently before we read/pipe it, so the Render->edge transfer stays small while the
+    // code below only ever handles identity bytes. (The old identity override predates Workers.)
+    headers.delete("accept-encoding");
     headers.set("x-forwarded-host", incoming.host);
     headers.set("x-forwarded-proto", incoming.protocol.replace(":", ""));
 
@@ -62,6 +63,11 @@ export async function proxyToRender(request: Request): Promise<Response> {
     ]) {
       responseHeaders.delete(name);
     }
+    // The runtime already decompressed the upstream body, so its encoding/length metadata no
+    // longer describes what we forward; Cloudflare re-compresses at the edge per the client's
+    // own Accept-Encoding.
+    responseHeaders.delete("content-encoding");
+    responseHeaders.delete("content-length");
 
     const responseInit: ResponseInit = {
       status: response.status,
@@ -69,23 +75,15 @@ export async function proxyToRender(request: Request): Promise<Response> {
       headers: responseHeaders,
     };
 
-    if (responseHeaders.get("content-type")?.toLowerCase().includes("text/event-stream")) {
-      return new Response(response.body, responseInit);
-    }
-
-    // Fetch forbids bodies for these statuses, even when an ArrayBuffer has zero bytes.
+    // Fetch forbids bodies for these statuses, even empty ones.
     if (request.method === "HEAD" || response.status === 204 || response.status === 205 || response.status === 304) {
-      responseHeaders.delete("content-encoding");
-      responseHeaders.delete("content-length");
       return new Response(null, responseInit);
     }
 
-    // Buffer finite responses before crossing the serverless boundary. Passing Render's live
-    // ReadableStream through a Vercel route handler can yield a 200 response with a zero-byte body.
-    const body = await response.arrayBuffer();
-    responseHeaders.delete("content-encoding");
-    responseHeaders.delete("content-length");
-    return new Response(body, responseInit);
+    // Stream everything — SSE and finite bodies alike. The previous arrayBuffer() copy was a
+    // Vercel workaround; on Workers it buffered every staff card payload (hundreds of KB) in
+    // memory per request and was the proxy's single largest CPU + latency cost.
+    return new Response(response.body, responseInit);
   } catch (error) {
     console.error("Backend proxy request failed", error);
     return Response.json(

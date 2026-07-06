@@ -93,6 +93,15 @@ function recordedDiff(pairing: Pairing) {
   return pairing.resultType === "DRAW" ? 0 : pairing.calculatedDiff ?? 0;
 }
 
+function PlayerNameWithGibsonMark({ player, fallback, gibsonized }: {
+  player?: Player;
+  fallback: string;
+  gibsonized?: boolean;
+}) {
+  const name = player ? `${player.firstName} ${player.lastName}` : fallback;
+  return <span className="pairing-name-with-mark"><span>{name}</span>{gibsonized && <span className="gibson-mark">GIB</span>}</span>;
+}
+
 export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKey, onSubmit, onPenalty, onRevokePenalty, pairingEdit }: {
   gameNumber: number;
   slots: EntrySlot[];
@@ -421,13 +430,13 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
                 const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
                 const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
                 const penalty = pairing.calculatedDiff ?? 0;
-                return <tr key={pairing.id} className="egrid-row egrid-row--locked egrid-row--penalty">
+                return <tr key={pairing.id} className={`egrid-row egrid-row--locked egrid-row--penalty${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
                   <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                   <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
-                  <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : "บาย (ไม่มีคู่แข่ง)"}</td>
+                  <td className={`egrid-td cell-person-name${pairing.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback="บาย (ไม่มีคู่แข่ง)" gibsonized={pairing.playerOneGibsonized} /></td>
                   <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
                   <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
-                  <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : "บาย (ไม่มีคู่แข่ง)"}</td>
+                  <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback="บาย (ไม่มีคู่แข่ง)" gibsonized={pairing.playerTwoGibsonized} /></td>
                   <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
                   <td className="egrid-td egrid-td--center cell-score">-</td>
                   <td className="egrid-td egrid-td--center cell-score">-</td>
@@ -456,7 +465,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
                 const presentCell = (
                   <>
                     <td className="egrid-td cell-id">{present?.id ?? "—"}</td>
-                    <td className="egrid-td cell-person-name" title={`${present?.firstName ?? ""} ${present?.lastName ?? ""}`}>{present ? `${present.firstName} ${present.lastName}` : "—"}</td>
+                    <td className={`egrid-td cell-person-name${(side === "one" ? pairing.playerOneGibsonized : pairing.playerTwoGibsonized) ? " cell-gibsonized" : ""}`} title={`${present?.firstName ?? ""} ${present?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={present} fallback="—" gibsonized={side === "one" ? pairing.playerOneGibsonized : pairing.playerTwoGibsonized} /></td>
                     <td className="egrid-td cell-person-school" title={present?.school}>{present?.school ?? "—"}</td>
                   </>
                 );
@@ -473,7 +482,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
                     onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); await saveByeRow(pairing); }} /></td>
                 );
                 const byeScore = <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="บาย" /></td>;
-                return <tr key={pairing.id} className={`egrid-row egrid-row--bye${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}`}>
+                return <tr key={pairing.id} className={`egrid-row egrid-row--bye${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}`}>
                   <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                   {side === "one" ? presentCell : byeCell}
                   {side === "one" ? byeCell : presentCell}
@@ -499,13 +508,13 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
                 const p1 = pairing?.playerOneId ? players.get(pairing.playerOneId) : undefined;
                 const p2 = pairing?.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
                 const waitingText = pairing ? "รอคู่แข่งจากอีก row" : "รอผลจากเกมก่อนหน้า";
-                return <tr key={pairing?.id ?? `pending-${slot.tableNumber}`} className="egrid-row egrid-row--pending">
+                return <tr key={pairing?.id ?? `pending-${slot.tableNumber}`} className={`egrid-row egrid-row--pending${pairing?.playerOneGibsonized || pairing?.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
                   <td className="egrid-td egrid-td--center cell-pair">{slot.tableNumber}</td>
                   <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
-                  <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : waitingText}</td>
+                  <td className={`egrid-td cell-person-name${pairing?.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback={waitingText} gibsonized={pairing?.playerOneGibsonized} /></td>
                   <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
                   <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
-                  <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : waitingText}</td>
+                  <td className={`egrid-td cell-person-name${pairing?.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback={waitingText} gibsonized={pairing?.playerTwoGibsonized} /></td>
                   <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
                   <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
                   <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
@@ -523,13 +532,13 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
               const disabled = locked || saving || savingAll;
               const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
               const base = { one, two };
-              return <tr key={pairing.id} className={`egrid-row${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}${highlightId === pairing.id ? " egrid-row--flash" : ""}`}>
+              return <tr key={pairing.id} className={`egrid-row${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}${highlightId === pairing.id ? " egrid-row--flash" : ""}`}>
                 <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                 <td className="egrid-td cell-id">{p1?.id}</td>
-                <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1?.firstName} {p1?.lastName}</td>
+                <td className={`egrid-td cell-person-name${pairing.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback="—" gibsonized={pairing.playerOneGibsonized} /></td>
                 <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school}</td>
                 <td className="egrid-td cell-id">{p2?.id}</td>
-                <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2?.firstName} {p2?.lastName}</td>
+                <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback="—" gibsonized={pairing.playerTwoGibsonized} /></td>
                 <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school}</td>
                 <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => setDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); focusNext(event.currentTarget, "other"); } }} /></td>
                 <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => setDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await saveRow(pairing)) focusNext(origin, "next"); }} /></td>
@@ -648,13 +657,13 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
               const penalty = pairing.resultType === "PENALTY";
               const diff = recordedDiff(pairing);
               const absentText = recorded ? "บาย" : "รอคู่แข่ง";
-              return <tr key={pairing.id} className="egrid-row">
+              return <tr key={pairing.id} className={`egrid-row${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
                 <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                 <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
-                <td className="egrid-td cell-person-name" title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}>{p1 ? `${p1.firstName} ${p1.lastName}` : absentText}</td>
+                <td className={`egrid-td cell-person-name${pairing.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback={absentText} gibsonized={pairing.playerOneGibsonized} /></td>
                 <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
                 <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
-                <td className="egrid-td cell-person-name" title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}>{p2 ? `${p2.firstName} ${p2.lastName}` : absentText}</td>
+                <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback={absentText} gibsonized={pairing.playerTwoGibsonized} /></td>
                 <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
                 <td className="egrid-td egrid-td--center cell-score">{penalty ? "-" : pairing.scoreOne ?? "—"}</td>
                 <td className="egrid-td egrid-td--center cell-score">{penalty ? "-" : pairing.scoreTwo ?? "—"}</td>

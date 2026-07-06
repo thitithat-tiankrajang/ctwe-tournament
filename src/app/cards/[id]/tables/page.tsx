@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowRight, LockKeyhole, RefreshCw, Shuffle, Undo2 } from "lucide-react";
+import { ArrowRight, LockKeyhole, RefreshCw, Shuffle, Sparkles, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
@@ -37,7 +37,7 @@ export default function TablesPage() {
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
   // Pairing/tables is the director's work. Result-entry staff enter results on the games page;
   // admins and public viewers only watch the overview.
-  if (!canManageTournament(auth)) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้อำนวยการเท่านั้น" description="การจับคู่และโต๊ะแข่งขันเป็นงานของผู้อำนวยการ เจ้าหน้าที่กรอกผลทำงานที่หน้าผลการแข่งขัน" action={<Link href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
+  if (!canManageTournament(auth)) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้อำนวยการเท่านั้น" description="การจับคู่และโต๊ะแข่งขันเป็นงานของผู้อำนวยการ เจ้าหน้าที่กรอกผลทำงานที่หน้าผลการแข่งขัน" action={<Link prefetch={false} href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
   if (!card) return <CardNotFound />;
 
   const players = new Map(card.players.map((player) => [player.id, player]));
@@ -62,6 +62,12 @@ export default function TablesPage() {
         .map((pair, index) => ({ id: `g1-${index + 1}`, gameNumber: 1, tableNumber: index + 1, playerOneId: pair.one, playerTwoId: pair.two }))
     : [];
   const previewPairings = manualGameOne ? gameOnePairs : currentPairings;
+  const gibsonPairings = previewPairings.filter((pairing) =>
+    pairing.playerOneGibsonized || pairing.playerTwoGibsonized);
+  const gibsonPlayerIds = [...new Set(gibsonPairings.flatMap((pairing) => [
+    pairing.playerOneGibsonized ? pairing.playerOneId : null,
+    pairing.playerTwoGibsonized ? pairing.playerTwoId : null,
+  ]).filter((playerId): playerId is string => Boolean(playerId)))];
   const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const latestResultGame = Math.max(0, ...publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
   const latestResultSnapshot = publishedSnapshots.find((snapshot) => snapshot.gameNumbers.includes(latestResultGame));
@@ -144,10 +150,22 @@ export default function TablesPage() {
     finally { setBusy(false); }
   };
   const canUndo = canManageTournament(auth) && preview;
+  const scrollToFirstGibsonPair = () => {
+    const first = gibsonPairings[0];
+    if (!first) return;
+    const row = document.getElementById(`gibson-pair-${id}-${first.id}`);
+    row?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (row) {
+      row.classList.remove("egrid-row--gibson-focus");
+      void row.offsetWidth;
+      row.classList.add("egrid-row--gibson-focus");
+      window.setTimeout(() => row.classList.remove("egrid-row--gibson-focus"), 1600);
+    }
+  };
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing <ArrowRight size={16} /></Button> : <Link href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
+      <PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing <ArrowRight size={16} /></Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
 
       {!pairingActive ? (
         browseGames.length === 0 ? (
@@ -172,6 +190,16 @@ export default function TablesPage() {
 
       {preview && (
         <>
+          {gibsonPairings.length > 0 && (
+            <button type="button" className="notice notice--warning gibson-notice" onClick={scrollToFirstGibsonPair}>
+              <Sparkles size={19} />
+              <p>
+                <strong>มีผู้เล่น Gibsonized {gibsonPlayerIds.length} คนใน Pairing นี้</strong>
+                <span>{gibsonPlayerIds.join(", ")} ถูกจัดไว้ในคู่ท้ายสุดและทำเครื่องหมายสีเหลือง · กดเพื่อไปยังคู่ดังกล่าว</span>
+              </p>
+              <ArrowRight size={17} />
+            </button>
+          )}
           <Panel title="สลับ/ปรับคู่ผู้เล่น" description="เลือกผู้เล่นสองคนเพื่อสลับตำแหน่งกัน · ปรับได้ทุกเกมก่อนยืนยัน ระบบจะเตือนหากทำให้โรงเรียนเดียวกันแข่งกัน">
             <div className="panel-padding swap-controls">
               <div className="form-field">
@@ -190,8 +218,8 @@ export default function TablesPage() {
             </div>
           </Panel>
 
-          <Panel title={`Pairing preview · ${previewPairings.length} คู่`} description="คู่แข่งขันของเกมนี้ก่อนยืนยัน · เลขที่นั่งนับจากบนลงล่าง (คู่ 1 = ที่นั่ง 1,2)">
-            <PairingGrid pairings={previewPairings} players={players} storageKey={`${id}:tables:preview`} />
+          <Panel title={`Pairing preview · ${previewPairings.length} คู่`} description="คู่แข่งขันของเกมนี้ก่อนยืนยัน · เลขที่นั่งนับจากบนลงล่าง (คู่ 1 = ที่นั่ง 1,2) · ผู้เล่น Gibsonized แสดงด้วยสีเหลือง">
+            <PairingGrid pairings={previewPairings} players={players} storageKey={`${id}:tables:preview`} rowIdPrefix={`gibson-pair-${id}`} />
           </Panel>
         </>
       )}

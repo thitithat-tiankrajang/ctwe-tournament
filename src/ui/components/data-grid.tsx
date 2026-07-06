@@ -438,10 +438,11 @@ export function ColumnFilterDropdown({ label, values, selected, anchor, filterab
 }
 
 /** Generic Excel-style grid: resizable columns, sessionStorage widths, multi-field filters, pagination. */
-export function DataGrid<T>({ columns, rows, getRowKey, storageKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, onRowClick, onFilterActiveChange }: {
+export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, onRowClick, onFilterActiveChange }: {
   columns: DataColumn<T>[];
   rows: T[];
   getRowKey: (row: T) => string;
+  getRowElementId?: (row: T) => string | undefined;
   storageKey: string;
   resetKey?: string;
   filterResetKey?: number;
@@ -529,16 +530,16 @@ export function DataGrid<T>({ columns, rows, getRowKey, storageKey, filterResetK
 
   return (
     <div className="entry-grid-wrap">
-      {anyActive && (
+      <div className={`entry-grid-meta-shell${anyActive ? " entry-grid-meta-shell--open" : ""}`} aria-hidden={!anyActive}>
         <div className="entry-grid-meta">
           <span className="entry-grid-meta__tags">
             {sort && <span className="grid-chip">เรียง: {labelText(colByKey.get(sort.key)?.label)} {sort.dir === "asc" ? "↑" : "↓"}</span>}
             {activeFilterKeys.map((key) => <span key={key} className="grid-chip">กรอง: {labelText(colByKey.get(key)?.label)} ({filters[key].length})</span>)}
             {activeTextKeys.map((key) => <span key={`text-${key}`} className="grid-chip">{labelText(colByKey.get(key)?.label)}: {textFilters[key]}</span>)}
           </span>
-          {inlineClear && <Button variant="secondary" size="sm" onClick={() => { setSort(null); setFilters({}); setTextFilters({}); setEditingKey(null); }}><X size={14} />ล้างทั้งหมด</Button>}
+          {inlineClear && <Button className="entry-grid-meta__clear" variant="secondary" size="sm" tabIndex={anyActive ? 0 : -1} onClick={() => { setSort(null); setFilters({}); setTextFilters({}); setEditingKey(null); }}><X size={14} />ล้างทั้งหมด</Button>}
         </div>
-      )}
+      </div>
       <div className="entry-grid-scroll" ref={scrollRef}>
         <table className={`entry-grid${tableClassName ? ` ${tableClassName}` : ""}`} style={{ width: totalWidth }}>
           <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
@@ -622,11 +623,14 @@ export function DataGrid<T>({ columns, rows, getRowKey, storageKey, filterResetK
           <tbody>
             {visibleRows.length === 0
               ? <tr><td className="egrid-empty" colSpan={columns.length}><strong>{emptyText}</strong></td></tr>
-              : visibleRows.map((row) => (
-                <tr key={getRowKey(row)} className={`egrid-row${onRowClick ? " egrid-row--clickable" : ""}${rowClassName?.(row) ? ` ${rowClassName(row)}` : ""}`} onClick={onRowClick ? () => onRowClick(row) : undefined}>
-                  {columns.map((column) => <td key={column.key} className={`egrid-td${cellClass(column, row)}`}>{column.render(row)}</td>)}
-                </tr>
-              ))}
+              : visibleRows.map((row) => {
+                const extraClass = rowClassName?.(row);
+                return (
+                  <tr id={getRowElementId?.(row)} key={getRowKey(row)} className={`egrid-row${onRowClick ? " egrid-row--clickable" : ""}${extraClass ? ` ${extraClass}` : ""}`} onClick={onRowClick ? () => onRowClick(row) : undefined}>
+                    {columns.map((column) => <td key={column.key} className={`egrid-td${cellClass(column, row)}`}>{column.render(row)}</td>)}
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </div>

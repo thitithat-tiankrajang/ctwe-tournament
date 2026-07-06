@@ -111,9 +111,9 @@ class CardControllerCacheRoutingTest {
             "staff", "n/a", List.of(new SimpleGrantedAuthority("ROLE_STAFF")));
         var request = new CardDtos.ResultRequest(100, 70, false);
         var publishedSource = new CardDtos.PairingResponse(
-            "g1-t1", 1, 1, "P001", "P002", "P001", 100, 70, "WIN", 30, true);
+            "g1-t1", 1, 1, "P001", "P002", "P001", 100, 70, "WIN", 30, false, false, true);
         var privateDestination = new CardDtos.PairingResponse(
-            "g2-t1", 2, 1, "P001", null, null, null, null, null, null, false);
+            "g2-t1", 2, 1, "P001", null, null, null, null, null, null, false, false, false);
         var patch = new CardDtos.ResultPatch(8, List.of(publishedSource, privateDestination));
         when(cards.submitResult(cardId, "g1-t1", request, "staff")).thenReturn(patch);
         when(publicCards.version(cardId)).thenReturn(5L);

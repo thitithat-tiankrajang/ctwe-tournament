@@ -3,6 +3,17 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  experimental: {
+    // Every page is a client shell whose data lives in the zustand store + SSE, so a cached RSC
+    // payload can never be stale in any user-visible way. The Next 15 default (dynamic: 0)
+    // refetches ?_rsc= on EVERY navigation to a dynamic route — for the staff console that was
+    // one Worker invocation + one full SSR per sidebar hop. Five minutes of router cache makes
+    // repeat navigation free.
+    staleTimes: {
+      dynamic: 300,
+      static: 300,
+    },
+  },
   // Keep the development compiler away from production build artifacts.
   // Running `next build` while `next dev` is active must not corrupt its chunks.
   distDir: process.env.NEXT_DIST_DIR ?? (process.env.NODE_ENV === "development" ? ".next-dev" : ".next"),
@@ -22,6 +33,23 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "no-store" },
           { key: "X-Accel-Buffering", value: "no" },
         ],
+      },
+      // Viewer page documents are identical data-free client shells (all data arrives via the
+      // public API + SSE), so the browser may reuse them briefly instead of re-invoking the
+      // Worker on every visit/refresh. Kept short: after a deploy a stale shell could reference
+      // replaced chunk files, and five minutes bounds that exposure.
+      {
+        source: "/tour/:token",
+        headers: [{ key: "Cache-Control", value: "public, max-age=300, stale-while-revalidate=600" }],
+      },
+      {
+        source: "/t/:token",
+        headers: [{ key: "Cache-Control", value: "public, max-age=300, stale-while-revalidate=600" }],
+      },
+      // The PWA manifest changes only on deploys; the prerendered default is max-age=0.
+      {
+        source: "/manifest.webmanifest",
+        headers: [{ key: "Cache-Control", value: "public, max-age=86400" }],
       },
       {
         source: "/:path*",

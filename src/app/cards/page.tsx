@@ -79,15 +79,15 @@ export default function CardsPage() {
         actions={activeTournament && (admin || director) ? (
           <div className="page-actions">
             <Button variant="secondary" onClick={exitTournament}><DoorOpen size={16} />ออกจากรายการแข่งขัน</Button>
-            {director && <Link href={createHref}><Button><Plus size={17} />สร้างการ์ด</Button></Link>}
+            {director && <Link prefetch={false} href={createHref}><Button><Plus size={17} />สร้างการ์ด</Button></Link>}
           </div>
         ) : undefined}
       />
       {error && <div className="notice notice--warning"><p><strong>เชื่อมต่อฐานข้อมูลไม่สำเร็จ</strong><span>{error}</span></p></div>}
       {loading ? <div className="panel panel-padding">กำลังโหลดข้อมูลจากฐานข้อมูล…</div> : needsTournament ? (
-        <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เปิดการแข่งขันผ่านลิงก์ของรายการนั้น หรือจัดการได้จากคอนโซลผู้ดูแล" action={<Link href="/admin"><Button><Trophy size={16} />ไปคอนโซลผู้ดูแล</Button></Link>} />
+        <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เปิดการแข่งขันผ่านลิงก์ของรายการนั้น หรือจัดการได้จากคอนโซลผู้ดูแล" action={<Link prefetch={false} href="/admin"><Button><Trophy size={16} />ไปคอนโซลผู้ดูแล</Button></Link>} />
       ) : visibleCards.length === 0 ? (
-        <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้" description={activeTournament ? (director ? "สร้างรุ่นการแข่งขันแรกของรายการนี้ได้เลย" : "ยังไม่มีรุ่นการแข่งขันในรายการนี้") : "ยังไม่มีการแข่งขันที่เผยแพร่"} action={activeTournament && director ? <Link href={createHref}><Button>สร้างการ์ด</Button></Link> : undefined} />
+        <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้" description={activeTournament ? (director ? "สร้างรุ่นการแข่งขันแรกของรายการนี้ได้เลย" : "ยังไม่มีรุ่นการแข่งขันในรายการนี้") : "ยังไม่มีการแข่งขันที่เผยแพร่"} action={activeTournament && director ? <Link prefetch={false} href={createHref}><Button>สร้างการ์ด</Button></Link> : undefined} />
       ) : (
         <div className="card-groups">
           {[...groupedCards.entries()].map(([name, group]) => (
@@ -96,7 +96,7 @@ export default function CardsPage() {
               <div className="card-group__rows">
                 {group.map((card) => (
                   <article className="card-select-row" key={card.id}>
-                    <Link href={cardHref(card)} className="card-select-row__link">
+                    <Link prefetch={false} href={cardHref(card)} className="card-select-row__link">
                       <span className="card-select-row__name">{card.name}</span>
                       <span className="card-select-row__division">{card.division}</span>
                       <ChevronRight size={19} aria-hidden />

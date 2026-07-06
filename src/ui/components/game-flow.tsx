@@ -48,7 +48,7 @@ export function GameFlow({
             <small>{game.status === "COMPLETED" ? <><Check size={11} /> ผลเผยแพร่แล้ว</> : snapshot?.confirmedAt ? <><LockKeyhole size={11} /> ผลเผยแพร่แล้ว</> : snapshot ? <><LockKeyhole size={11} /> Pairing เผยแพร่แล้ว</> : game.status}</small>
           </>
         );
-        if (linkTo && available) return <Link key={game.id} className={className} href={`/cards/${card.id}/${linkTo}?game=${game.number}`}>{content}</Link>;
+        if (linkTo && available) return <Link prefetch={false} key={game.id} className={className} href={`/cards/${card.id}/${linkTo}?game=${game.number}`}>{content}</Link>;
         return <button key={game.id} type="button" className={className} disabled={!available || !onSelect} onClick={() => onSelect?.(game.number)}>{content}</button>;
       })}
     </div>

@@ -66,7 +66,7 @@ class CardEventPublisherTest {
         publisher.subscribe(cardId, () -> 4);
         var changed = List.of(new CardDtos.PairingResponse(
             UUID.randomUUID().toString(), 2, 7, "P0001", "P0002",
-            "P0001", 100, 70, "WIN", 30, true));
+            "P0001", 100, 70, "WIN", 30, false, false, true));
 
         publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed));
 
@@ -92,7 +92,7 @@ class CardEventPublisherTest {
         publisher.subscribePublic(cardId, () -> 4);
         var changed = List.of(new CardDtos.PairingResponse(
             UUID.randomUUID().toString(), 1, 1, "P0001", "P0002",
-            "P0001", 100, 70, "WIN", 30, true));
+            "P0001", 100, 70, "WIN", 30, false, false, true));
 
         publisher.publish(card(cardId, 5));
         publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed));

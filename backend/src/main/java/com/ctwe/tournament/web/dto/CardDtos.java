@@ -94,6 +94,7 @@ public final class CardDtos {
     public record TableResponse(String id, int number, List<String> playerIds) {}
     public record PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
                                   String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
+                                  boolean playerOneGibsonized, boolean playerTwoGibsonized,
                                   boolean pairingPublished) {}
     public record SnapshotResponse(String id, List<Integer> gameNumbers, List<PairingResponse> pairings, String confirmedAt) {}
     /** Lightweight result-save response: changed source/destination rows only, plus the card version. */

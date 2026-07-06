@@ -52,7 +52,7 @@ export default function PlayersPage() {
 
   if (loading) return <div className="panel panel-padding loading-state"><LoaderCircle className="loading-spinner" size={18} />กำลังตรวจสอบสิทธิ์…</div>;
   const isStaff = hasStaffAccess(auth);
-  if (!isStaff) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="บุคคลทั่วไปดูผลที่ประกาศแล้วได้จากหน้าภาพรวมของการ์ด" action={<Link href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
+  if (!isStaff) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="บุคคลทั่วไปดูผลที่ประกาศแล้วได้จากหน้าภาพรวมของการ์ด" action={<Link prefetch={false} href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
   if (!card) return <CardNotFound />;
 
   const registrationOpen = card.runtimeStage === "PLAYER_REGISTRATION";
@@ -181,7 +181,7 @@ export default function PlayersPage() {
         actions={canManage
           ? registrationOpen
             ? <Button variant="success" disabled={busy || card.players.length < 2} onClick={finish}>Finish registration <ArrowRight size={16} /></Button>
-            : <Link href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link>
+            : <Link prefetch={false} href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link>
           : undefined}
       />
 

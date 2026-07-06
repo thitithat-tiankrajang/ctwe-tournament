@@ -74,6 +74,8 @@ export interface Pairing {
   scoreTwo?: number;
   resultType?: "WIN" | "DRAW" | "PENALTY";
   calculatedDiff?: number;
+  playerOneGibsonized?: boolean;
+  playerTwoGibsonized?: boolean;
   pairingPublished?: boolean;
 }
 

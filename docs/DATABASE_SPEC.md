@@ -141,6 +141,8 @@ erDiagram
         smallint table_no PK
         smallint player_one FK "code ผู้เล่น; NULL = ยังไม่มีคู่ (pair-result ปลายทาง)"
         smallint player_two FK "NULL = bye"
+        boolean player_one_gibsonized "ผู้เล่นฝั่ง 1 ถูก Gibsonized ใน pairing นี้"
+        boolean player_two_gibsonized "ผู้เล่นฝั่ง 2 ถูก Gibsonized ใน pairing นี้"
         smallint snapshot_no FK "NULL = ยังไม่ publish"
         timestamptz pairing_published_at "เวลาที่ viewer เห็น pairing"
         smallint score_one "NULL = ยังไม่กรอกผล"
@@ -233,6 +235,7 @@ erDiagram
 |---|---|---|---|
 | `card_id, game_no, table_no` | UUID+2×SMALLINT PK | คู่ที่โต๊ะ X เกม Y | composite PK ธรรมชาติ — ตัด `id`, `game_id` UUID ทิ้ง (เกมอ้างด้วยเลขเกมตรงๆ) และ PK นี้ทำหน้าที่ index ของ query หลัก (`WHERE card_id = ? AND game_no = ?`) ในตัว |
 | `player_one, player_two` | SMALLINT | code ผู้เล่นสองฝั่ง | `player_two NULL` = bye; `player_one NULL` = ช่องปลายทาง pair-result ที่ยังรอผู้ชนะ |
+| `player_one_gibsonized, player_two_gibsonized` | BOOLEAN | ระบุผู้เล่นที่ถูก Gibsonized ตอนสร้าง pairing | marker อยู่กับผู้เล่นเมื่อ director สลับคู่ และคงอยู่หลัง review/publish เพื่อให้หน้า pairing และกรอกผลแสดงสีเหลือง |
 | `snapshot_no` | SMALLINT | publish แล้วอยู่ใน snapshot ไหน | NULL = ยังไม่ publish |
 | `pairing_published_at` | TIMESTAMPTZ | เวลาที่ viewer เริ่มเห็น pairing | ตั้งครั้งเดียวตอนยืนยัน pairing |
 | `score_one, score_two` | SMALLINT | คะแนนดิบสองฝั่ง | NULL = ยังไม่กรอก (แทนการมี/ไม่มีแถวใน match_results เดิม) |

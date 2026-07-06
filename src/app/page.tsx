@@ -111,7 +111,7 @@ export default function Home() {
           <div className="panel-padding" style={{ display: "grid", gap: 16, maxWidth: 460 }}>
             <div className="notice notice--info"><ShieldCheck size={18} /><p><strong>จำเป็นต้องเข้าสู่ระบบ</strong><span>ข้อมูลการแข่งขันเปิดให้เฉพาะผู้ที่เข้าสู่ระบบเท่านั้น</span></p></div>
             <div className="form-actions" style={{ paddingLeft: 0 }}>
-              <Link href="/staff-login"><Button><LogIn size={16} />เข้าสู่ระบบ</Button></Link>
+              <Link prefetch={false} href="/staff-login"><Button><LogIn size={16} />เข้าสู่ระบบ</Button></Link>
             </div>
           </div>
         </Panel>
@@ -130,7 +130,7 @@ export default function Home() {
         actions={
           <div className="page-actions">
             <Badge tone={admin ? "warning" : "success"}>{admin ? "ADMIN" : "DIRECTOR"}</Badge>
-            {admin && <Link href="/admin"><Button variant="secondary"><ShieldCheck size={16} />คอนโซลผู้ดูแล</Button></Link>}
+            {admin && <Link prefetch={false} href="/admin"><Button variant="secondary"><ShieldCheck size={16} />คอนโซลผู้ดูแล</Button></Link>}
           </div>
         }
       />

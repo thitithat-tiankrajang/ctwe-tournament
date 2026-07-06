@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ClipboardCheck, FilterX, LockKeyhole, Trophy, X } from "lucide-react";
+import { ArrowRight, ClipboardCheck, LockKeyhole, Trophy, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
@@ -36,20 +36,16 @@ function workflowHref(cardId: string, stage: RuntimeStage) {
   return `/cards/${cardId}`;
 }
 
-function ViewPanelActions({ onClear }: { onClear: () => void }) {
-  return <Button variant="secondary" size="sm" onClick={onClear}><FilterX size={14} />ล้างตัวกรอง</Button>;
-}
-
 /** Seat number for a player in a pairing (seat 1 = couple n → seats 2n-1 / 2n). */
 const seatOf = (tableNumber: number, side: 1 | 2) => (tableNumber - 1) * 2 + side;
 const athleteName = (player?: Player) => player ? `${player.firstName} ${player.lastName}`.trim() : "รอคู่แข่ง";
 
 /** Two-line athlete cell: name (black) over school (dark grey), shared by pairing + result viewers. */
-function AthleteCell({ player }: { player?: Player }) {
+function AthleteCell({ player, gibsonized = false }: { player?: Player; gibsonized?: boolean }) {
   const name = athleteName(player);
   return (
     <div className="cell-athlete">
-      <span className="cell-athlete__name" title={name}>{name}</span>
+      <span className="cell-athlete__name" title={name}><span>{name}</span>{gibsonized && <span className="gibson-mark">GIB</span>}</span>
       <span className="cell-athlete__school" title={player?.school}>{player?.school ?? "—"}</span>
     </div>
   );
@@ -59,11 +55,10 @@ function isRecorded(pairing: Pairing) {
   return pairing.scoreOne != null && pairing.scoreTwo != null && Boolean(pairing.resultType);
 }
 
-function RankingTable({ players, selectedId, onPlayerClick, onFilterActiveChange }: {
+function RankingTable({ players, selectedId, onPlayerClick }: {
   players: ReturnType<typeof rankingAfterGame>;
   selectedId?: string | null;
   onPlayerClick?: (player: Player) => void;
-  onFilterActiveChange?: (active: boolean) => void;
 }) {
   const rows = players.map((player, index) => ({ player, rank: index + 1 }));
   const columns: DataColumn<{ player: Player; rank: number }>[] = [
@@ -74,24 +69,24 @@ function RankingTable({ players, selectedId, onPlayerClick, onFilterActiveChange
     { key: "wp", label: "คะแนนสะสม", min: 76, width: 90, align: "center", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
     { key: "diff", label: "ผลต่างสะสม", min: 82, width: 96, align: "center", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
   ];
-  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" unit="คน" emptyText="ไม่พบผู้เล่นตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
+  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" unit="คน" emptyText="ไม่พบผู้เล่นตามตัวกรอง" onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
 }
 
-function PairingGrid({ pairings, players, onFilterActiveChange }: { pairings: Pairing[]; players: Map<string, Player>; onFilterActiveChange?: (active: boolean) => void }) {
+function PairingGrid({ pairings, players }: { pairings: Pairing[]; players: Map<string, Player> }) {
   const playerOf = (playerId: string | null) => playerId ? players.get(playerId) : undefined;
   const columns: DataColumn<Pairing>[] = [
     { key: "seat1", label: "#", min: 38, width: 50, align: "center", cellClassName: "cell-seat", value: (pairing) => seatOf(pairing.tableNumber, 1), filterable: false, render: (pairing) => seatOf(pairing.tableNumber, 1) },
     { key: "id1", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—" },
-    { key: "name1", label: "นักกีฬา", min: 150, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerOneId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerOneId)} /> },
+    { key: "name1", label: "นักกีฬา", min: 150, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerOneId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerOneId)} gibsonized={pairing.playerOneGibsonized} /> },
     { key: "vs", label: "", min: 42, width: 56, align: "center", cellClassName: "cell-vs", render: () => "พบ" },
     { key: "seat2", label: "#", min: 38, width: 50, align: "center", cellClassName: "cell-seat", value: (pairing) => seatOf(pairing.tableNumber, 2), filterable: false, render: (pairing) => seatOf(pairing.tableNumber, 2) },
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
-    { key: "name2", label: "นักกีฬา", min: 150, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} /> },
+    { key: "name2", label: "นักกีฬา", min: 150, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} gibsonized={pairing.playerTwoGibsonized} /> },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} />;
+  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
-function ResultTable({ pairings, players, storageKey, onFilterActiveChange }: { pairings: Pairing[]; players: Map<string, Player>; storageKey: string; onFilterActiveChange?: (active: boolean) => void }) {
+function ResultTable({ pairings, players, storageKey }: { pairings: Pairing[]; players: Map<string, Player>; storageKey: string }) {
   const playerOf = (playerId: string | null) => playerId ? players.get(playerId) : undefined;
   const scoreText = (pairing: Pairing) => pairing.resultType === "PENALTY" ? "ลงดาบ" : isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
   const longestScore = pairings.reduce((longest, pairing) => Math.max(longest, scoreText(pairing).length), "คะแนน".length);
@@ -105,15 +100,15 @@ function ResultTable({ pairings, players, storageKey, onFilterActiveChange }: { 
   const columns: DataColumn<Pairing>[] = [
     { key: "seat1", label: "#", min: 36, width: 48, align: "center", cellClassName: "cell-seat", value: (pairing) => seatOf(pairing.tableNumber, 1), filterable: false, render: (pairing) => seatOf(pairing.tableNumber, 1) },
     { key: "id1", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—" },
-    { key: "name1", label: "นักกีฬา", min: 140, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerOneId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerOneId)} /> },
+    { key: "name1", label: "นักกีฬา", min: 140, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerOneId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerOneId)} gibsonized={pairing.playerOneGibsonized} /> },
     { key: "vs", label: "", min: 40, width: 52, align: "center", cellClassName: "cell-vs", render: () => "พบ" },
     { key: "seat2", label: "#", min: 36, width: 48, align: "center", cellClassName: "cell-seat", value: (pairing) => seatOf(pairing.tableNumber, 2), filterable: false, render: (pairing) => seatOf(pairing.tableNumber, 2) },
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
-    { key: "name2", label: "นักกีฬา", min: 140, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} /> },
+    { key: "name2", label: "นักกีฬา", min: 140, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} gibsonized={pairing.playerTwoGibsonized} /> },
     { key: "score", label: "คะแนน", min: 36, width: 68, fitContent: true, align: "center", cellClassName: "cell-score", value: (pairing) => scoreText(pairing), filterable: false, render: (pairing) => scoreText(pairing) },
     { key: "diff", label: "ผลต่าง", min: 56, width: 68, align: "center", cellClassName: (pairing) => `cell-diff cell-diff--${pairing.resultType === "PENALTY" ? "penalty" : "win"}`, value: (pairing) => diffOf(pairing) ?? -1, filterable: false, render: (pairing) => diffText(pairing) },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" inlineClear={false} onFilterActiveChange={onFilterActiveChange} />;
+  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
 function defaultOverviewState(card: TournamentCard | undefined): { key: string; view: OverviewView } | null {
@@ -143,8 +138,6 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const card = selectCard(cards, id);
   const [historyGame, setHistoryGame] = useState<number | null>(null);
   const [views, setViews] = useState<Set<OverviewView>>(new Set<OverviewView>());
-  const [filterResetKeys, setFilterResetKeys] = useState<Record<OverviewView, number>>({ ranking: 0, pairing: 0, result: 0 });
-  const [filteredViews, setFilteredViews] = useState<Record<OverviewView, boolean>>({ ranking: false, pairing: false, result: false });
   const [selectedRankingPlayerId, setSelectedRankingPlayerId] = useState<string | null>(null);
   const [historyPlayerId, setHistoryPlayerId] = useState<string | null>(null);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
@@ -200,10 +193,6 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
       window.setTimeout(() => viewRefs.current[view]?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     }
   };
-  const resetFilters = (view: OverviewView) =>
-    setFilterResetKeys((current) => ({ ...current, [view]: current[view] + 1 }));
-  const setViewFilterActive = (view: OverviewView, active: boolean) =>
-    setFilteredViews((current) => current[view] === active ? current : { ...current, [view]: active });
   const selectRankingPlayer = (player: Player) => {
     if (selectedRankingPlayerId === player.id) {
       setHistoryPlayerId(player.id);
@@ -263,14 +252,14 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
       )}
 
       {canManage && !final && (
-        <div className="notice notice--info workflow-notice"><ClipboardCheck size={20} /><p><strong>ขั้นตอนปัจจุบัน: {stageLabels[card.runtimeStage]}</strong><span>เกม {card.currentGame} จาก {card.games.length} · ทำงานต่อในหน้าที่ระบบกำหนด</span></p><Link href={workflowHref(id, card.runtimeStage)}><Button size="sm">ทำงานต่อ <ArrowRight size={15} /></Button></Link></div>
+        <div className="notice notice--info workflow-notice"><ClipboardCheck size={20} /><p><strong>ขั้นตอนปัจจุบัน: {stageLabels[card.runtimeStage]}</strong><span>เกม {card.currentGame} จาก {card.games.length} · ทำงานต่อในหน้าที่ระบบกำหนด</span></p><Link prefetch={false} href={workflowHref(id, card.runtimeStage)}><Button size="sm">ทำงานต่อ <ArrowRight size={15} /></Button></Link></div>
       )}
 
       {visibleSnapshots.length === 0 ? (
         card.players.length > 0 ? <>
-          <Panel className="overview-data-panel" title="Ranking เริ่มต้น" actions={filteredViews.ranking ? <ViewPanelActions onClear={() => resetFilters("ranking")} /> : undefined}>
+          <Panel className="overview-data-panel" title="Ranking เริ่มต้น">
             <div className="overview-ranking-table">
-              <RankingTable key={filterResetKeys.ranking} players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} onFilterActiveChange={(active) => setViewFilterActive("ranking", active)} />
+              <RankingTable players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} />
             </div>
           </Panel>
           <Panel><EmptyState icon={<Trophy size={26} />} title="ยังไม่มี Pairing ที่เผยแพร่" description="เมื่อเจ้าหน้าที่ยืนยัน Pairing เกมแรก ตารางคู่แข่งขันจะปรากฏที่นี่ทันที" /></Panel>
@@ -281,9 +270,9 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
 
           {views.has("ranking") && (
             <div ref={(element) => { viewRefs.current.ranking = element; }} className="overview-view-section">
-              <Panel className="overview-data-panel" title={selectedResultsPublished ? `Ranking หลังจบเกม ${selectedGame}` : `Ranking ก่อนจบเกม ${selectedGame}`} actions={filteredViews.ranking ? <ViewPanelActions onClear={() => resetFilters("ranking")} /> : undefined}>
+              <Panel className="overview-data-panel" title={selectedResultsPublished ? `Ranking หลังจบเกม ${selectedGame}` : `Ranking ก่อนจบเกม ${selectedGame}`}>
                 <div className="overview-ranking-table">
-                  <RankingTable key={filterResetKeys.ranking} players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} onFilterActiveChange={(active) => setViewFilterActive("ranking", active)} />
+                  <RankingTable players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} />
                 </div>
               </Panel>
             </div>
@@ -291,17 +280,17 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
 
           {views.has("pairing") && (
             <div ref={(element) => { viewRefs.current.pairing = element; }} className="overview-view-section">
-              <Panel className="overview-data-panel" title={`Pairing เกม ${selectedGame}`} actions={filteredViews.pairing ? <ViewPanelActions onClear={() => resetFilters("pairing")} /> : undefined}>
-                <PairingGrid key={filterResetKeys.pairing} pairings={selectedPairings} players={players} onFilterActiveChange={(active) => setViewFilterActive("pairing", active)} />
+              <Panel className="overview-data-panel" title={`Pairing เกม ${selectedGame}`}>
+                <PairingGrid pairings={selectedPairings} players={players} />
               </Panel>
             </div>
           )}
 
           {views.has("result") && (
             <div ref={(element) => { viewRefs.current.result = element; }} className="overview-view-section">
-              <Panel className="overview-data-panel" title={`ผลการแข่งขันเกม ${selectedGame}`} actions={filteredViews.result ? <ViewPanelActions onClear={() => resetFilters("result")} /> : undefined}>
+              <Panel className="overview-data-panel" title={`ผลการแข่งขันเกม ${selectedGame}`}>
                 {selectedResultsVisible
-                  ? <ResultTable key={filterResetKeys.result} pairings={selectedPairings} players={players} storageKey={`${id}:overview:results`} onFilterActiveChange={(active) => setViewFilterActive("result", active)} />
+                  ? <ResultTable pairings={selectedPairings} players={players} storageKey={`${id}:overview:results`} />
                   : <EmptyState icon={<LockKeyhole size={25} />} title="Pairing เผยแพร่แล้ว · รอผลคู่แรก" description="เมื่อเจ้าหน้าที่บันทึกคะแนน ผลการแข่งขันจะปรากฏที่นี่แบบ Realtime" />}
               </Panel>
             </div>

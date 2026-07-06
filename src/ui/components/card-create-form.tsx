@@ -167,7 +167,7 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
           ))}
         </div>
         <div className="form-actions">
-          {cancelHref && <Link href={cancelHref}><Button type="button" variant="secondary">ยกเลิก</Button></Link>}
+          {cancelHref && <Link prefetch={false} href={cancelHref}><Button type="button" variant="secondary">ยกเลิก</Button></Link>}
           <Button type="submit" disabled={isSubmitting || (!fixedTournament && !tournamentId) || rules.some((rule) => !rule) || gameMaxDiffs.some((value) => !Number.isInteger(value) || value < 1 || value > 1000000)}><Save size={16} />บันทึกการ์ด</Button>
         </div>
       </Panel>

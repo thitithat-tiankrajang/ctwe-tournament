@@ -24,11 +24,11 @@ export default function CreateCardPage() {
 
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
   if (!canManageTournament(auth)) {
-    return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้อำนวยการเท่านั้น" description="เฉพาะผู้อำนวยการเท่านั้นที่สร้างการ์ดการแข่งขันได้" action={<Link href="/"><Button><Trophy size={16} />กลับหน้าหลัก</Button></Link>} /></div>;
+    return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้อำนวยการเท่านั้น" description="เฉพาะผู้อำนวยการเท่านั้นที่สร้างการ์ดการแข่งขันได้" action={<Link prefetch={false} href="/"><Button><Trophy size={16} />กลับหน้าหลัก</Button></Link>} /></div>;
   }
   if (directorOnly) return <div className="panel panel-padding">กำลังพาไปหน้าจัดการเจ้าหน้าที่…</div>;
   if (!activeTournament) {
-    return <div className="panel"><EmptyState icon={<Trophy size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เข้าสู่รายการแข่งขัน (tournament) ก่อนจึงจะสร้างรุ่นการแข่งขันได้" action={<Link href="/admin"><Button>ไปคอนโซลผู้ดูแล</Button></Link>} /></div>;
+    return <div className="panel"><EmptyState icon={<Trophy size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เข้าสู่รายการแข่งขัน (tournament) ก่อนจึงจะสร้างรุ่นการแข่งขันได้" action={<Link prefetch={false} href="/admin"><Button>ไปคอนโซลผู้ดูแล</Button></Link>} /></div>;
   }
 
   return (
