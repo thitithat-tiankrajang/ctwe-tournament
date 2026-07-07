@@ -64,7 +64,8 @@ public final class CardDtos {
         @NotBlank String firstPlayerId,
         @NotBlank String secondPlayerId,
         @NotBlank String password,
-        boolean confirmSchoolConflict
+        boolean confirmSchoolConflict,
+        @Min(1) Integer gameNumber
     ) {}
 
     /** Director re-auth for pairing manipulation (undo / unpair). */

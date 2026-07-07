@@ -15,6 +15,7 @@ import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
 import { PlayerHistoryTable } from "@/ui/components/player-history-table";
 import { SelectMenu } from "@/ui/components/select-menu";
+import { OverviewRecordFilter, type OverviewRecordFilterValue } from "@/ui/components/overview-record-filter";
 
 type OverviewView = "ranking" | "pairing" | "result";
 
@@ -55,13 +56,14 @@ function isRecorded(pairing: Pairing) {
   return pairing.scoreOne != null && pairing.scoreTwo != null && Boolean(pairing.resultType);
 }
 
-function RankingTable({ players, selectedId, onPlayerClick, resizableColumns }: {
+function RankingTable({ players, rankingPositions, selectedId, onPlayerClick, resizableColumns }: {
   players: ReturnType<typeof rankingAfterGame>;
+  rankingPositions?: Map<string, number>;
   selectedId?: string | null;
   onPlayerClick?: (player: Player) => void;
   resizableColumns: boolean;
 }) {
-  const rows = players.map((player, index) => ({ player, rank: index + 1 }));
+  const rows = players.map((player, index) => ({ player, rank: rankingPositions?.get(player.id) ?? index + 1 }));
   const columns: DataColumn<{ player: Player; rank: number }>[] = [
     { key: "rank", label: "อันดับ", min: 48, width: 58, align: "center", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
     { key: "id", label: "รหัส", min: 50, width: 60, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
@@ -143,8 +145,13 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const [selectedRankingPlayerId, setSelectedRankingPlayerId] = useState<string | null>(null);
   const [historyPlayerId, setHistoryPlayerId] = useState<string | null>(null);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
+  const [recordFilter, setRecordFilter] = useState<OverviewRecordFilterValue>({ mode: "player", playerIds: [], schools: [] });
   const viewRefs = useRef<Record<OverviewView, HTMLDivElement | null>>({ ranking: null, pairing: null, result: null });
   const defaultState = defaultOverviewState(card);
+
+  useEffect(() => {
+    setRecordFilter({ mode: "player", playerIds: [], schools: [] });
+  }, [id]);
 
   useEffect(() => {
     if (defaultState) setViews(new Set<OverviewView>([defaultState.view]));
@@ -175,10 +182,25 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const selectedPairings = selectedSnapshot?.pairings.filter((pairing) => (pairing.gameNumber ?? selectedGame) === selectedGame) ?? [];
   const rankingCard = { ...card, snapshots: publishedSnapshots };
   const historicalRanking = selectedGame > 0 ? rankingAfterGame(rankingCard, selectedGame) : [...card.players].sort((a, b) => a.id.localeCompare(b.id));
+  const rankingPositions = new Map(historicalRanking.map((player, index) => [player.id, index + 1]));
+  const players = new Map(card.players.map((player) => [player.id, player]));
+  const activeRecordValues = recordFilter.mode === "player" ? recordFilter.playerIds : recordFilter.schools;
+  const recordFilterActive = activeRecordValues.length > 0;
+  const matchesRecordFilter = (playerId: string | null) => {
+    if (!recordFilterActive || !playerId) return !recordFilterActive;
+    return recordFilter.mode === "player"
+      ? recordFilter.playerIds.includes(playerId)
+      : recordFilter.schools.includes(players.get(playerId)?.school ?? "");
+  };
+  const visibleRanking = recordFilterActive
+    ? historicalRanking.filter((player) => matchesRecordFilter(player.id))
+    : historicalRanking;
+  const visiblePairings = recordFilterActive
+    ? selectedPairings.filter((pairing) => matchesRecordFilter(pairing.playerOneId) || matchesRecordFilter(pairing.playerTwoId))
+    : selectedPairings;
   const selectedResultsPublished = Boolean(selectedSnapshot?.confirmedAt);
   const selectedHasResults = selectedPairings.some((pairing) => pairing.scoreOne !== null || pairing.scoreTwo !== null);
   const selectedResultsVisible = selectedResultsPublished || selectedHasResults;
-  const players = new Map(card.players.map((player) => [player.id, player]));
   const historyPlayer = historyPlayerId ? players.get(historyPlayerId) : undefined;
   const historyCard = { ...rankingCard, snapshots: publishedSnapshots.filter((snapshot) => Math.max(...snapshot.gameNumbers) <= selectedGame) };
   const final = card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED";
@@ -215,21 +237,24 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
           <div className="overview-header-actions">
             {visibleSnapshots.length > 0 && (
               <div className="overview-header-controls">
-                <div className="overview-game-menu-wrap">
-                  <SelectMenu
-                    ariaLabel="เลือกเกม"
-                    className="overview-game-menu"
-                    value={String(selectedGame)}
-                    options={gameOptions.map((game) => ({ value: String(game), label: `เกม ${game}` }))}
-                    onChange={(value) => setHistoryGame(Number(value))}
-                    onOpenChange={setGameMenuOpen}
-                  />
-                  <span
-                    className={`overview-game-published${gameMenuOpen ? " overview-game-published--hidden" : ""}`}
-                    aria-hidden={gameMenuOpen}
-                  >
-                    {publishedGames.size} จาก {card.games.length} เกมเผยแพร่ผลแล้ว
-                  </span>
+                <div className="overview-game-filter-row">
+                  <OverviewRecordFilter players={card.players} value={recordFilter} onChange={setRecordFilter} />
+                  <div className="overview-game-menu-wrap">
+                    <SelectMenu
+                      ariaLabel="เลือกเกม"
+                      className="overview-game-menu"
+                      value={String(selectedGame)}
+                      options={gameOptions.map((game) => ({ value: String(game), label: `เกม ${game}` }))}
+                      onChange={(value) => setHistoryGame(Number(value))}
+                      onOpenChange={setGameMenuOpen}
+                    />
+                    <span
+                      className={`overview-game-published${gameMenuOpen ? " overview-game-published--hidden" : ""}`}
+                      aria-hidden={gameMenuOpen}
+                    >
+                      {publishedGames.size} จาก {card.games.length} เกมเผยแพร่ผลแล้ว
+                    </span>
+                  </div>
                 </div>
                 <div className="segmented overview-view-picker" role="group" aria-label="เลือกมุมมอง">
                   {(["ranking", "pairing", "result"] as const).map((view) => (
@@ -261,7 +286,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
         card.players.length > 0 ? <>
           <Panel className="overview-data-panel" title="Ranking เริ่มต้น">
             <div className="overview-ranking-table">
-              <RankingTable players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
+              <RankingTable players={visibleRanking} rankingPositions={rankingPositions} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
             </div>
           </Panel>
           <Panel><EmptyState icon={<Trophy size={26} />} title="ยังไม่มี Pairing ที่เผยแพร่" description="เมื่อเจ้าหน้าที่ยืนยัน Pairing เกมแรก ตารางคู่แข่งขันจะปรากฏที่นี่ทันที" /></Panel>
@@ -274,7 +299,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
             <div ref={(element) => { viewRefs.current.ranking = element; }} className="overview-view-section">
               <Panel className="overview-data-panel" title={selectedResultsPublished ? `Ranking หลังจบเกม ${selectedGame}` : `Ranking ก่อนจบเกม ${selectedGame}`}>
                 <div className="overview-ranking-table">
-                  <RankingTable players={historicalRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
+                  <RankingTable players={visibleRanking} rankingPositions={rankingPositions} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
                 </div>
               </Panel>
             </div>
@@ -283,7 +308,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
           {views.has("pairing") && (
             <div ref={(element) => { viewRefs.current.pairing = element; }} className="overview-view-section">
               <Panel className="overview-data-panel" title={`Pairing เกม ${selectedGame}`}>
-                <PairingGrid pairings={selectedPairings} players={players} resizableColumns={resizableColumns} />
+                <PairingGrid pairings={visiblePairings} players={players} resizableColumns={resizableColumns} />
               </Panel>
             </div>
           )}
@@ -292,7 +317,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
             <div ref={(element) => { viewRefs.current.result = element; }} className="overview-view-section">
               <Panel className="overview-data-panel" title={`ผลการแข่งขันเกม ${selectedGame}`}>
                 {selectedResultsVisible
-                  ? <ResultTable pairings={selectedPairings} players={players} storageKey={`${id}:overview:results`} resizableColumns={resizableColumns} />
+                  ? <ResultTable pairings={visiblePairings} players={players} storageKey={`${id}:overview:results`} resizableColumns={resizableColumns} />
                   : <EmptyState icon={<LockKeyhole size={25} />} title="Pairing เผยแพร่แล้ว · รอผลคู่แรก" description="เมื่อเจ้าหน้าที่บันทึกคะแนน ผลการแข่งขันจะปรากฏที่นี่แบบ Realtime" />}
               </Panel>
             </div>

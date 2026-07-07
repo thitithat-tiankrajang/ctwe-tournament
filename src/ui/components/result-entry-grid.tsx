@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Pencil, Save, SaveAll, Shuffle, Undo2, X } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Megaphone, Pencil, Save, SaveAll, Shuffle, Undo2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { normalizePlayerCode } from "@/domain/tournament/player-code";
@@ -19,6 +19,17 @@ export interface EntrySlot {
   pairing?: Pairing;
   /** A finalized one-player pairing: the lone player must win. Distinct from a still-pending row. */
   isBye?: boolean;
+}
+
+interface PairingEditConfig {
+  onSwap: (a: string, b: string, password: string) => Promise<boolean>;
+  swapDisabled?: boolean;
+  swapTitle?: string;
+  onUnpair?: () => Promise<void>;
+  onPublish?: () => Promise<void>;
+  publishDisabled?: boolean;
+  publishLabel?: string;
+  publishTitle?: string;
 }
 
 type RowStatus = "pending" | "empty" | "dirty" | "saved";
@@ -116,7 +127,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   /** Director-only withdrawal. A penalized row cannot otherwise be edited. */
   onRevokePenalty?: (pairing: Pairing) => void;
   /** Director-only pairing edit during result collection. Swaps require password re-authentication. */
-  pairingEdit?: { onSwap: (a: string, b: string, password: string) => Promise<boolean>; onUnpair: () => Promise<void> };
+  pairingEdit?: PairingEditConfig;
 }) {
   const controls = useColumnControls();
   const [status, setStatus] = useState<"all" | RowStatus>("all");
@@ -313,7 +324,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   };
 
   const doSwap = async () => {
-    if (!pairingEdit || !swapA.trim() || !swapB.trim() || !swapPassword) return;
+    if (!pairingEdit || pairingEdit.swapDisabled || !swapA.trim() || !swapB.trim() || !swapPassword) return;
     setSwapping(true);
     try {
       if (await pairingEdit.onSwap(normalizePlayerCode(swapA), normalizePlayerCode(swapB), swapPassword)) {
@@ -385,8 +396,17 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
           <select id={`f-status-${gameNumber}`} className="select" value={status} onChange={(event) => setStatus(event.target.value as "all" | RowStatus)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           <Button variant="secondary" size="sm" disabled={!filtersActive} onClick={() => { controls.clearAll(); setStatus("all"); }}><X size={14} />ล้างตัวกรอง</Button>
           <Button size="sm" variant="success" disabled={savingAll || filteredSavable.length === 0} onClick={() => void saveAll()}>{savingAll ? <LoaderCircle className="loading-spinner" size={14} /> : <SaveAll size={14} />}บันทึกทั้งหมด ({filteredSavable.length})</Button>
-          {pairingEdit && <Button size="sm" variant="secondary" onClick={() => setSwapOpen((open) => !open)} title="สลับผู้เล่นในคู่ที่ยังไม่กรอกผล (เฉพาะผู้อำนวยการ)"><Shuffle size={14} />สลับผู้เล่น</Button>}
-          {pairingEdit && savedCount === 0 && <Button size="sm" variant="secondary" onClick={() => void pairingEdit.onUnpair()} title="ลบ pairing ปัจจุบันและกลับไปสถานะรอกด Pairing ใหม่ (เฉพาะผู้อำนวยการ)"><Undo2 size={14} />Unpairing</Button>}
+          {pairingEdit && (
+            <Button size="sm" variant="secondary" disabled={pairingEdit.swapDisabled} onClick={() => setSwapOpen((open) => !open)} title={pairingEdit.swapTitle ?? "สลับผู้เล่นในคู่ที่ยังไม่กรอกผล (เฉพาะผู้อำนวยการ)"}>
+              <Shuffle size={14} />สลับผู้เล่น
+            </Button>
+          )}
+          {pairingEdit?.onPublish && (
+            <Button size="sm" variant="secondary" disabled={pairingEdit.publishDisabled} onClick={() => void pairingEdit.onPublish?.()} title={pairingEdit.publishTitle ?? "เผยแพร่ pairing นี้ไปยังหน้าภาพรวม"}>
+              <Megaphone size={14} />{pairingEdit.publishLabel ?? "Publish Pairing"}
+            </Button>
+          )}
+          {pairingEdit?.onUnpair && savedCount === 0 && <Button size="sm" variant="secondary" onClick={() => void pairingEdit.onUnpair?.()} title="ลบ pairing ปัจจุบันและกลับไปสถานะรอกด Pairing ใหม่ (เฉพาะผู้อำนวยการ)"><Undo2 size={14} />Unpairing</Button>}
         </div>
       </div>
       {pairingEdit && swapOpen && (
@@ -396,7 +416,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
           <span className="entry-keyin__vs">↔</span>
           <input className="entry-keyin__id" inputMode="numeric" placeholder="รหัส B เช่น 16" value={swapB} aria-label="รหัสผู้เล่น B ที่จะสลับ" onChange={(event) => setSwapB(event.target.value.toUpperCase())} />
           <FreshSecretInput className="entry-swap__password" wrapperClassName="entry-swap__password-field" placeholder="รหัสผ่านผู้อำนวยการ" value={swapPassword} aria-label="รหัสผ่านผู้อำนวยการเพื่อยืนยันการสลับคู่" onChange={(event) => setSwapPassword(event.target.value)} />
-          <Button size="sm" variant="success" disabled={swapping || !swapA.trim() || !swapB.trim() || !swapPassword} onClick={() => void doSwap()}>{swapping ? <LoaderCircle className="loading-spinner" size={14} /> : <Shuffle size={14} />}ยืนยันการสลับ</Button>
+          <Button size="sm" variant="success" disabled={swapping || pairingEdit.swapDisabled || !swapA.trim() || !swapB.trim() || !swapPassword} onClick={() => void doSwap()}>{swapping ? <LoaderCircle className="loading-spinner" size={14} /> : <Shuffle size={14} />}ยืนยันการสลับ</Button>
           <Button size="sm" variant="ghost" aria-label="ปิด" onClick={() => { setSwapOpen(false); setSwapPassword(""); }}><X size={14} /></Button>
         </div>
       )}

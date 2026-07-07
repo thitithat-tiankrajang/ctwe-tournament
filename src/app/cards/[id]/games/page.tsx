@@ -194,6 +194,10 @@ export default function GamesPage() {
   const sourcePairings = pairResultBlock ? pairingsForGame(activeGames[0]) : [];
   const sourceComplete = sourcePairings.length > 0 && sourcePairings.every(isRecorded);
   const destinationPairings = pairResultBlock ? pairingsForGame(activeGames[1]) : [];
+  const hasAnyPlayer = (pairing?: Pairing) => Boolean(pairing?.playerOneId || pairing?.playerTwoId);
+  const destinationPairingComplete = pairResultBlock && sourceComplete
+    && destinationPairings.length === sourcePairings.length
+    && destinationPairings.every(hasAnyPlayer);
   const destinationPairingPublished = destinationPairings.length > 0
     && destinationPairings.every((pairing) => pairing.pairingPublished);
   const maxDiffForGame = (gameNumber: number) => card.games.find((game) => game.number === gameNumber)?.maxDiff ?? 350;
@@ -215,6 +219,11 @@ export default function GamesPage() {
   const saveResult = (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => submitResult(id, pairing.id, scoreOne, scoreTwo, editExisting);
   const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เปิดหน้า review ไม่สำเร็จ", "เปิด Review ไม่สำเร็จ", true); } finally { setBusy(false); } };
   const publishDestinationPairing = async () => {
+    if (destinationPairingPublished) return;
+    if (!destinationPairingComplete) {
+      await appDialog.alert(`Pairing เกม ${activeGames[1]} ยังสร้างไม่ครบ ต้องกรอกผล Game ${activeGames[0]} ให้ครบก่อน`, "ยัง Publish Pairing ไม่ได้", true);
+      return;
+    }
     if (!await appDialog.confirm(`Publish Pairing เกม ${activeGames[1]} ให้ Viewer เห็นตอนนี้?`, {
       title: "เผยแพร่ Pairing",
       confirmLabel: "Publish Pairing",
@@ -234,19 +243,19 @@ export default function GamesPage() {
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ", "Publish ผลไม่สำเร็จ", true); } finally { setBusy(false); }
   };
   // Director edit-pairing during result collection. The API verifies the password again as well.
-  const onSwapPairing = async (a: string, b: string, password: string): Promise<boolean> => {
+  const onSwapPairing = async (gameNumber: number, a: string, b: string, password: string): Promise<boolean> => {
     if (!await verifyPassword(password)) {
       await appDialog.alert("รหัสผ่านไม่ถูกต้อง", "ยืนยันตัวตนไม่สำเร็จ", true);
       return false;
     }
-    try { await swapPlayers(id, a, b, password, false); return true; }
+    try { await swapPlayers(id, a, b, password, false, gameNumber); return true; }
     catch (error) {
       const message = error instanceof Error ? error.message : "สลับผู้เล่นไม่สำเร็จ";
       if (message.includes("SCHOOL_CONFLICT") && await appDialog.confirm(message.replace("SCHOOL_CONFLICT: ", ""), {
         title: "พบผู้เล่นสถาบันเดียวกัน",
         confirmLabel: "ยืนยันการสลับ",
       })) {
-        try { await swapPlayers(id, a, b, password, true); return true; }
+        try { await swapPlayers(id, a, b, password, true, gameNumber); return true; }
         catch (retry) { await appDialog.alert(retry instanceof Error ? retry.message : "สลับผู้เล่นไม่สำเร็จ", "สลับผู้เล่นไม่สำเร็จ", true); return false; }
       }
       if (!message.includes("SCHOOL_CONFLICT")) await appDialog.alert(message, "สลับผู้เล่นไม่สำเร็จ", true);
@@ -322,8 +331,9 @@ export default function GamesPage() {
         description={reviewing ? "ตรวจคะแนน ผลชนะ/เสมอ และ diff ก่อน Publish" : pairResultBlock ? "กรอก Game ต้นทางก่อน ระบบจะสร้างคู่ผู้ชนะและคู่ผู้แพ้ใน Game ถัดไปให้กรอกต่อในหน้าเดียวกัน" : "พิมพ์คะแนนในตารางแล้วกด Enter หรือปุ่มบันทึกในแถวนั้น"}
         actions={canManageTournament(auth) && (resultCollection
           ? <div className="page-actions">
-              {pairResultBlock && sourceComplete && !destinationPairingPublished && (
-                <Button variant="secondary" disabled={busy} onClick={() => void publishDestinationPairing()}>
+              {pairResultBlock && !destinationPairingPublished && (
+                <Button variant="secondary" disabled={busy || !destinationPairingComplete} onClick={() => void publishDestinationPairing()}
+                  title={destinationPairingComplete ? `เผยแพร่ Pairing เกม ${activeGames[1]} ไปยังหน้าภาพรวม` : `ต้องให้ Pairing เกม ${activeGames[1]} สร้างครบก่อน`}>
                   <Megaphone size={16} />Publish Pairing เกม {activeGames[1]}
                 </Button>
               )}
@@ -373,9 +383,30 @@ export default function GamesPage() {
             ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => { const dest = gamePairings.find((d) => d.tableNumber === source.tableNumber); return { tableNumber: source.tableNumber, pairing: dest, isBye: oneOnly(dest) && destinationSourceComplete }; })
             : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing, isBye: oneOnly(pairing) }));
           const completed = gamePairings.filter(isRecorded).length;
+          const destinationHasPlayers = isDestination && gamePairings.some(hasAnyPlayer);
+          const publishTitle = !sourceComplete
+            ? `ต้องกรอกผล Game ${activeGames[0]} ให้ครบก่อน`
+            : !destinationPairingComplete
+              ? `Pairing Game ${gameNumber} ยังสร้างไม่ครบ`
+              : `เผยแพร่ Pairing Game ${gameNumber} ไปยังหน้าภาพรวม`;
+          const pairingEdit = isDirector
+            ? isDestination
+              ? {
+                  onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password),
+                  swapDisabled: !destinationHasPlayers,
+                  swapTitle: destinationHasPlayers ? "สลับผู้เล่นใน Pairing เกมปลายทางที่ยังไม่กรอกผล" : "ยังไม่มีผู้เล่นใน Pairing เกมปลายทางให้สลับ",
+                  onPublish: destinationPairingPublished ? undefined : publishDestinationPairing,
+                  publishDisabled: busy || !destinationPairingComplete,
+                  publishLabel: `Publish Pairing เกม ${gameNumber}`,
+                  publishTitle,
+                }
+              : gameNumber === card.currentGame
+                ? { onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password), onUnpair: onUnpairing }
+                : undefined
+            : undefined;
           if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`Game ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยัน pairing เกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
           return <Panel key={gameNumber} title={`กรอกผล Game ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === slots.length ? "success" : "warning"}>{completed}/{slots.length} คู่</Badge>}>
-            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} pairingEdit={isDirector && gameNumber === card.currentGame ? { onSwap: onSwapPairing, onUnpair: onUnpairing } : undefined} />
+            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} pairingEdit={pairingEdit} />
           </Panel>;
         })}
       </> : (

@@ -93,7 +93,7 @@ class CardControllerCacheRoutingTest {
         UUID cardId = UUID.randomUUID();
         var authentication = new UsernamePasswordAuthenticationToken(
             "director", "n/a", List.of(new SimpleGrantedAuthority("ROLE_DIRECTOR")));
-        var request = new CardDtos.SwapRequest("P001", "P002", "director-password", false);
+        var request = new CardDtos.SwapRequest("P001", "P002", "director-password", false, null);
         CardDtos.CardResponse response = card(cardId);
         when(cards.swapPlayers(cardId, request, "director")).thenReturn(response);
 

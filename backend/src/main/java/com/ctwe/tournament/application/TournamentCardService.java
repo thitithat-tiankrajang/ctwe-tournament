@@ -478,16 +478,23 @@ public class TournamentCardService {
             throw new IllegalArgumentException("การ์ดนี้ประกาศผลหรือปิดแล้ว ไม่สามารถแก้คู่ได้");
         if (card.runtimeStage() != RuntimeStage.PAIRING_PREVIEW && card.runtimeStage() != RuntimeStage.RESULT_COLLECTION)
             throw new IllegalArgumentException("แก้คู่ได้เฉพาะช่วงตรวจ pairing จนถึงกรอกผล");
+        int targetGame = request.gameNumber() == null ? card.currentGame() : request.gameNumber();
+        if (targetGame < 1 || targetGame > card.numberOfGames())
+            throw new IllegalArgumentException("เกมที่ต้องการสลับไม่ถูกต้อง");
+        if (card.runtimeStage() == RuntimeStage.PAIRING_PREVIEW && targetGame != card.currentGame())
+            throw new IllegalArgumentException("ช่วงตรวจ pairing แก้ได้เฉพาะเกมปัจจุบัน");
+        if (card.runtimeStage() == RuntimeStage.RESULT_COLLECTION && !activeResultGames(card).contains(targetGame))
+            throw new IllegalArgumentException("สลับคู่ได้เฉพาะเกมใน Result block ปัจจุบัน " + activeResultGames(card));
         int first = playerCode(cardId, request.firstPlayerId());
         int second = playerCode(cardId, request.secondPlayerId());
         if (first == second) throw new IllegalArgumentException("เลือกผู้เล่นสองคนที่ต่างกัน");
         // Game 1 before confirmation lives in table_seats; once matches exist, swap those.
-        if (card.currentGame() == 1 && card.runtimeStage() == RuntimeStage.PAIRING_PREVIEW)
+        if (targetGame == 1 && card.currentGame() == 1 && card.runtimeStage() == RuntimeStage.PAIRING_PREVIEW)
             swapSeats(cardId, first, second, request.confirmSchoolConflict());
-        else swapMatchPlayers(cardId, card.currentGame(), first, second, request.confirmSchoolConflict());
+        else swapMatchPlayers(cardId, targetGame, first, second, request.confirmSchoolConflict());
         touch(cardId);
         if (card.runtimeStage() == RuntimeStage.RESULT_COLLECTION) publishPublic(cardId);
-        audit(cardId, actor, "SWAP_PLAYERS", request.firstPlayerId(), request.secondPlayerId() + " · เกม " + card.currentGame());
+        audit(cardId, actor, "SWAP_PLAYERS", request.firstPlayerId(), request.secondPlayerId() + " · เกม " + targetGame);
         return get(cardId, true);
     }
 

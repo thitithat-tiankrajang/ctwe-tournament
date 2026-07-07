@@ -72,7 +72,7 @@ interface TournamentState {
   finishRegistration: (cardId: string) => Promise<void>;
   generateMockPlayers: (cardId: string, count: number) => Promise<void>;
   generatePairings: (cardId: string) => Promise<void>;
-  swapPlayers: (cardId: string, firstId: string, secondId: string, password: string, confirmSchoolConflict?: boolean) => Promise<void>;
+  swapPlayers: (cardId: string, firstId: string, secondId: string, password: string, confirmSchoolConflict?: boolean, gameNumber?: number) => Promise<void>;
   confirmPairingPreview: (cardId: string) => Promise<void>;
   publishNextPairing: (cardId: string) => Promise<void>;
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
@@ -488,10 +488,16 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async generatePairings(cardId) {
       await mutateCard(`/api/cards/${cardId}/pairings/preview`, cardId, { method: "POST" });
     },
-    async swapPlayers(cardId, firstId, secondId, password, confirmSchoolConflict = false) {
+    async swapPlayers(cardId, firstId, secondId, password, confirmSchoolConflict = false, gameNumber) {
       await mutateCard(`/api/cards/${cardId}/tables/swap`, cardId, {
         method: "POST",
-        body: JSON.stringify({ firstPlayerId: firstId, secondPlayerId: secondId, password, confirmSchoolConflict }),
+        body: JSON.stringify({
+          firstPlayerId: firstId,
+          secondPlayerId: secondId,
+          password,
+          confirmSchoolConflict,
+          ...(gameNumber ? { gameNumber } : {}),
+        }),
       });
     },
     async confirmPairingPreview(cardId) {
