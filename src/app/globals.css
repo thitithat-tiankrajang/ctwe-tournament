@@ -195,6 +195,7 @@ h1 { font-size: clamp(20px, 1.35vw + 15px, 34px); letter-spacing: -.025em; line-
 h2 { font-size: 18px; line-height: 1.35; margin-bottom: 4px; }
 h3 { font-size: 15px; margin-bottom: 4px; }
 .page-subtitle { color: var(--blue-dark); font-size: clamp(12px, .4vw + 11px, 16px); font-weight: 700; letter-spacing: .01em; margin: 0 0 4px; }
+.page-title-inline-subtitle { color: var(--blue-dark); font-size: clamp(12px, .4vw + 11px, 16px); font-weight: 700; letter-spacing: .01em; }
 .page-description { color: var(--muted); font-size: clamp(11.5px, .3vw + 10.5px, 15px); line-height: 1.45; margin: 0; max-width: 72ch; }
 .page-actions, .panel__actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .page-actions { justify-content: flex-end; }
@@ -210,6 +211,7 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 }
 .overview-page-header { align-items: flex-start; }
 .overview-page-header .page-subtitle { font-size: clamp(15px, .65vw + 12px, 21px); }
+.overview-page-header .page-title-inline-subtitle { font-size: clamp(15px, .65vw + 12px, 21px); }
 
 .button {
   align-items: center;
