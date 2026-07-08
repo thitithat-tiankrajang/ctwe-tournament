@@ -26,6 +26,57 @@ class PairingStrategiesTest {
     }
 
     @Test
+    void rankingUsesHeadToHeadBeforeScoreForAndRawDiffWhenWinPointsAreTied() {
+        var players = List.of(
+            score("1", 4, 0, 10, -100),
+            score("2", 4, 0, 999, 999),
+            score("3", 2, 0, 50, 50),
+            score("4", 2, 0, 40, 40)
+        );
+        var context = new PairingStrategy.PairingContext(2, List.of(), Map.of(
+            "1", Map.of("2", 2),
+            "2", Map.of("1", 0)
+        ));
+
+        assertThat(new KingOfTheHillStrategy().generate(players, context)).containsExactly(
+            pair("1", "2"), pair("3", "4")
+        );
+    }
+
+    @Test
+    void rankingFallsBackToScoreForRawDiffThenNumericPlayerCode() {
+        var players = List.of(
+            score("10", 4, 0, 20, 100),
+            score("2", 4, 0, 20, 100),
+            score("3", 4, 0, 25, -10),
+            score("4", 4, 0, 20, 200)
+        );
+
+        assertThat(new KingOfTheHillStrategy().generate(players, CONTEXT)).containsExactly(
+            pair("3", "4"), pair("2", "10")
+        );
+    }
+
+    @Test
+    void rankingHandlesCircularHeadToHeadByUsingTheNextTieBreakers() {
+        var players = List.of(
+            score("1", 4, 0, 10, 10),
+            score("2", 4, 0, 20, 20),
+            score("3", 4, 0, 30, 30),
+            score("4", 4, 0, 0, 0)
+        );
+        var context = new PairingStrategy.PairingContext(2, List.of(), Map.of(
+            "1", Map.of("2", 2, "3", 0),
+            "2", Map.of("1", 0, "3", 2),
+            "3", Map.of("1", 2, "2", 0)
+        ));
+
+        assertThat(new KingOfTheHillStrategy().generate(players, context)).containsExactly(
+            pair("3", "2"), pair("1", "4")
+        );
+    }
+
+    @Test
     void swissPairsTopHalfAgainstBottomHalfInsideEachScoreGroup() {
         var players = List.of(
             score("D", 4, 10), score("B", 4, 30), score("H", 2, 10), score("F", 2, 30),
@@ -117,6 +168,10 @@ class PairingStrategiesTest {
 
     private static PairingStrategy.PlayerScore score(String id, int winPoints, int diff) {
         return new PairingStrategy.PlayerScore(id, "school", winPoints, diff);
+    }
+
+    private static PairingStrategy.PlayerScore score(String id, int winPoints, int diff, long scoreFor, long rawDiff) {
+        return new PairingStrategy.PlayerScore(id, "school", winPoints, diff, scoreFor, rawDiff);
     }
 
     private static PairingStrategy.PlayerScore score(String id, String school) {

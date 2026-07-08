@@ -4,21 +4,16 @@ import com.ctwe.tournament.domain.model.PairingRuleType;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 @Component
 public class SwissStrategy implements PairingStrategy {
-    private static final Comparator<PlayerScore> RANKING = Comparator.comparingInt(PlayerScore::winPoints).reversed()
-        .thenComparing(Comparator.comparingInt(PlayerScore::diff).reversed())
-        .thenComparing(PlayerScore::playerId);
-
     public PairingRuleType type() { return PairingRuleType.SWISS; }
 
     public List<Pair> generate(List<PlayerScore> players, PairingContext context) {
-        var ranked = players.stream().sorted(RANKING).toList();
+        var ranked = PairingStrategy.ranked(players, context);
         Map<Integer, List<PlayerScore>> byScore = new LinkedHashMap<>();
         ranked.forEach(player -> byScore.computeIfAbsent(player.winPoints(), ignored -> new ArrayList<>()).add(player));
         var groups = new ArrayList<>(byScore.values());

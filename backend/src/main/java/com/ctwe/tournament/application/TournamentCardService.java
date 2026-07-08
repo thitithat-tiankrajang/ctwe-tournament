@@ -1248,15 +1248,24 @@ public class TournamentCardService {
         if (already != null && already > 0) return false;
 
         var rows = jdbc.query("""
-            SELECT player_one, player_two, winner, result_type, calculated_diff
+            SELECT player_one, player_two, winner, result_type, score_one, score_two, calculated_diff
             FROM matches WHERE card_id = ? AND game_number = ? AND table_number >= ?
-            """, (rs, row) -> new ScoreRow(nullableInt(rs, "player_one"), nullableInt(rs, "player_two"),
-                nullableInt(rs, "winner"), rtName(rs.getString("result_type")), rs.getInt("calculated_diff")),
+            """, (rs, row) -> new MatchScoreRow(nullableInt(rs, "player_one"), nullableInt(rs, "player_two"),
+                nullableInt(rs, "winner"), rtName(rs.getString("result_type")),
+                rs.getInt("score_one"), rs.getInt("score_two"), rs.getInt("calculated_diff")),
             cardId, sourceGame, firstDeferred);
-        Map<Integer, int[]> score = new LinkedHashMap<>(); // playerCode -> [winPoints, diff]
-        for (ScoreRow row : rows) {
-            if (row.one() != null) score.computeIfAbsent(row.one(), key -> new int[2]);
-            if (row.two() != null) score.computeIfAbsent(row.two(), key -> new int[2]);
+        Map<Integer, long[]> score = new LinkedHashMap<>(); // playerCode -> [winPoints, cappedDiff, scoreFor, rawDiff]
+        for (MatchScoreRow row : rows) {
+            if (row.one() != null) score.computeIfAbsent(row.one(), key -> new long[4]);
+            if (row.two() != null) score.computeIfAbsent(row.two(), key -> new long[4]);
+            if (row.one() != null) {
+                score.get(row.one())[2] += row.scoreOne();
+                score.get(row.one())[3] += "PENALTY".equals(row.resultType()) ? -row.calculatedDiff() : row.scoreOne() - row.scoreTwo();
+            }
+            if (row.two() != null) {
+                score.get(row.two())[2] += row.scoreTwo();
+                score.get(row.two())[3] += "PENALTY".equals(row.resultType()) ? -row.calculatedDiff() : row.scoreTwo() - row.scoreOne();
+            }
             if ("DRAW".equals(row.resultType())) {
                 if (row.one() != null) score.get(row.one())[0] += 1;
                 if (row.two() != null) score.get(row.two())[0] += 1;
@@ -1271,15 +1280,14 @@ public class TournamentCardService {
             }
         }
 
-        Comparator<PairingStrategy.PlayerScore> ranking = Comparator.comparingInt(PairingStrategy.PlayerScore::winPoints).reversed()
-            .thenComparing(Comparator.comparingInt(PairingStrategy.PlayerScore::diff).reversed())
-            .thenComparing(PairingStrategy.PlayerScore::playerId);
-        List<PairingStrategy.PlayerScore> ranked = new ArrayList<>(score.entrySet().stream()
-            .map(entry -> new PairingStrategy.PlayerScore(String.valueOf(entry.getKey()), "", entry.getValue()[0], entry.getValue()[1]))
-            .sorted(ranking).toList());
+        var context = new PairingStrategy.PairingContext(destGame, loadPreviousMatches(cardId), loadHeadToHeadPoints(cardId));
+        List<PairingStrategy.PlayerScore> ranked = new ArrayList<>(PairingStrategy.ranked(score.entrySet().stream()
+            .map(entry -> new PairingStrategy.PlayerScore(String.valueOf(entry.getKey()), "", (int) entry.getValue()[0],
+                (int) entry.getValue()[1], entry.getValue()[2], entry.getValue()[3]))
+            .toList(), context));
         PairingStrategy.PlayerScore byePlayer = ranked.size() % 2 != 0 ? ranked.remove(ranked.size() - 1) : null;
         List<PairingStrategy.Pair> pairs = ranked.isEmpty() ? List.of()
-            : strategies.resolve(PairingRuleType.SWISS).generate(ranked, new PairingStrategy.PairingContext(destGame, List.of()));
+            : strategies.resolve(PairingRuleType.SWISS).generate(ranked, context);
         pairs = orderPairsForTables(cardId, pairs, byePlayer == null ? null : byePlayer.playerId());
         int tableNumber = topTables + 1;
         for (PairingStrategy.Pair pair : pairs) {
@@ -1417,8 +1425,7 @@ public class TournamentCardService {
         if (count("SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = ?", cardId, gameNumber) > 0)
             throw new IllegalArgumentException("มี pairing ของเกมนี้อยู่แล้ว");
         var scores = loadScores(cardId);
-        var history = jdbc.query("SELECT player_one, player_two FROM matches WHERE card_id = ? AND player_one IS NOT NULL AND player_two IS NOT NULL",
-            (rs, row) -> new PairingStrategy.Pair(String.valueOf(rs.getInt("player_one")), String.valueOf(rs.getInt("player_two"))), cardId);
+        var context = new PairingStrategy.PairingContext(gameNumber, loadPreviousMatches(cardId), loadHeadToHeadPoints(cardId));
         PairingRuleType appliedRule = ruleForGame(cardId, gameNumber);
         if (appliedRule == PairingRuleType.PAIR_RESULT)
             throw new IllegalArgumentException("เกมแบบแพ้เจอแพ้/ชนะเจอชนะต้องถูกสร้างจากผลของเกมก่อนหน้าโดยอัตโนมัติ");
@@ -1428,17 +1435,11 @@ public class TournamentCardService {
         if (scores.size() % 2 != 0) {
             List<PairingStrategy.PlayerScore> ranked = new ArrayList<>(scores);
             if (appliedRule == PairingRuleType.RANDOM) Collections.shuffle(ranked, secureRandom);
-            else {
-                Comparator<PairingStrategy.PlayerScore> ranking = Comparator.comparingInt(PairingStrategy.PlayerScore::winPoints).reversed()
-                    .thenComparing(Comparator.comparingInt(PairingStrategy.PlayerScore::diff).reversed())
-                    .thenComparing(PairingStrategy.PlayerScore::playerId);
-                ranked.sort(ranking);
-            }
+            else ranked = new ArrayList<>(PairingStrategy.ranked(ranked, context));
             PairingStrategy.PlayerScore bye = ranked.remove(ranked.size() - 1);
             byePlayer = Integer.valueOf(bye.playerId());
             scores = ranked;
         }
-        var context = new PairingStrategy.PairingContext(gameNumber, history);
         GibsonPairingPlan plan = applyGibsonPairing(cardId, gameNumber, scores, context, appliedRule);
         var pairs = moveGibsonPairsLast(orderPairsForTables(cardId,
             plan.pairs(), byePlayer == null ? null : String.valueOf(byePlayer)),
@@ -1497,10 +1498,7 @@ public class TournamentCardService {
         if (analysis.gibsonized().isEmpty() || analysis.eliminated().isEmpty())
             return new GibsonPairingPlan(strategy.generate(scores, context), Set.of());
 
-        Comparator<PairingStrategy.PlayerScore> ranking = Comparator.comparingInt(PairingStrategy.PlayerScore::winPoints).reversed()
-            .thenComparing(Comparator.comparingInt(PairingStrategy.PlayerScore::diff).reversed())
-            .thenComparing(PairingStrategy.PlayerScore::playerId);
-        List<PairingStrategy.PlayerScore> ranked = scores.stream().sorted(ranking).toList();
+        List<PairingStrategy.PlayerScore> ranked = PairingStrategy.ranked(scores, context);
         List<PairingStrategy.PlayerScore> clinched = ranked.stream().filter(player -> analysis.gibsonized().contains(player.playerId())).toList();
         List<PairingStrategy.PlayerScore> deadPool = new ArrayList<>(ranked.stream().filter(player -> analysis.eliminated().contains(player.playerId())).toList());
         Collections.reverse(deadPool); // lowest-ranked out-of-contention player first
@@ -1682,13 +1680,71 @@ public class TournamentCardService {
 
     private List<PairingStrategy.PlayerScore> loadScores(UUID cardId) {
         return jdbc.query("""
-            SELECT p.code, p.school, COALESCE(s.win_points, 0) win_points, COALESCE(s.diff, 0) diff
+            SELECT p.code, p.school, COALESCE(s.win_points, 0) win_points, COALESCE(s.diff, 0) diff,
+                   COALESCE(SUM(CASE
+                     WHEN m.player_one = p.code THEN COALESCE(m.score_one, 0)
+                     WHEN m.player_two = p.code THEN COALESCE(m.score_two, 0)
+                     ELSE 0
+                   END), 0) score_for,
+                   COALESCE(SUM(CASE
+                     WHEN m.result_type = 'P' AND (m.player_one = p.code OR m.player_two = p.code)
+                       THEN -COALESCE(m.calculated_diff, 0)
+                     WHEN m.player_one = p.code THEN COALESCE(m.score_one, 0) - COALESCE(m.score_two, 0)
+                     WHEN m.player_two = p.code THEN COALESCE(m.score_two, 0) - COALESCE(m.score_one, 0)
+                     ELSE 0
+                   END), 0) - COALESCE(p.carry_diff, 0) raw_diff
             FROM players p LEFT JOIN standings s ON s.card_id = p.card_id AND s.player_code = p.code
+            LEFT JOIN matches m ON m.card_id = p.card_id AND m.result_type IS NOT NULL
+              AND (m.player_one = p.code OR m.player_two = p.code)
             WHERE p.card_id = ? AND p.terminated_at IS NULL
               AND p.rejoin_game <= (SELECT current_game FROM tournament_cards WHERE id = p.card_id)
+            GROUP BY p.code, p.school, p.carry_diff, s.win_points, s.diff
             ORDER BY p.code
             """, (rs, row) -> new PairingStrategy.PlayerScore(String.valueOf(rs.getInt("code")), rs.getString("school"),
-                rs.getInt("win_points"), rs.getInt("diff")), cardId);
+                rs.getInt("win_points"), rs.getInt("diff"), rs.getLong("score_for"), rs.getLong("raw_diff")), cardId);
+    }
+
+    private List<PairingStrategy.Pair> loadPreviousMatches(UUID cardId) {
+        return jdbc.query("""
+            SELECT player_one, player_two
+            FROM matches
+            WHERE card_id = ? AND player_one IS NOT NULL AND player_two IS NOT NULL
+            """, (rs, row) -> new PairingStrategy.Pair(String.valueOf(rs.getInt("player_one")), String.valueOf(rs.getInt("player_two"))), cardId);
+    }
+
+    private Map<String, Map<String, Integer>> loadHeadToHeadPoints(UUID cardId) {
+        Map<String, Map<String, Integer>> result = new LinkedHashMap<>();
+        var rows = jdbc.query("""
+            SELECT player_one, player_two, winner, result_type
+            FROM matches
+            WHERE card_id = ? AND result_type IS NOT NULL
+              AND player_one IS NOT NULL AND player_two IS NOT NULL
+            """, (rs, row) -> new HeadToHeadRow(rs.getInt("player_one"), rs.getInt("player_two"),
+                nullableInt(rs, "winner"), rtName(rs.getString("result_type"))), cardId);
+        for (HeadToHeadRow row : rows) {
+            String one = String.valueOf(row.one());
+            String two = String.valueOf(row.two());
+            if ("DRAW".equals(row.resultType())) {
+                addHeadToHeadPoints(result, one, two, 1);
+                addHeadToHeadPoints(result, two, one, 1);
+            } else if ("WIN".equals(row.resultType()) && row.winner() != null) {
+                String winner = String.valueOf(row.winner());
+                String loser = row.winner().equals(row.one()) ? two : one;
+                addHeadToHeadPoints(result, winner, loser, 2);
+                addHeadToHeadPoints(result, loser, winner, 0);
+            } else {
+                // A director penalty has no winner: both sides remain tied on H2H and fall through
+                // to score-for / raw-diff / code tie-breakers.
+                addHeadToHeadPoints(result, one, two, 0);
+                addHeadToHeadPoints(result, two, one, 0);
+            }
+        }
+        return result;
+    }
+
+    private void addHeadToHeadPoints(Map<String, Map<String, Integer>> result, String player, String opponent, int points) {
+        result.computeIfAbsent(player, ignored -> new LinkedHashMap<>())
+            .merge(opponent, points, Integer::sum);
     }
 
     private void recalculateStandings(UUID cardId) {
@@ -1961,5 +2017,7 @@ public class TournamentCardService {
     private record PairResultSlots(Integer upper, Integer lower) {}
     private record PairResultDestination(Integer oneId, Integer twoId, boolean hasResult) {}
     private record ScoreRow(Integer one, Integer two, Integer winner, String resultType, int calculatedDiff) {}
+    private record MatchScoreRow(Integer one, Integer two, Integer winner, String resultType, int scoreOne, int scoreTwo, int calculatedDiff) {}
+    private record HeadToHeadRow(int one, int two, Integer winner, String resultType) {}
     private record AutoMatch(int gameNumber, int tableNumber, boolean onePresent, boolean twoPresent) {}
 }

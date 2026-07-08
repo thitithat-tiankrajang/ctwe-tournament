@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { FileClock, FileDown, Gamepad2, ListOrdered, LoaderCircle, LockKeyhole, Swords } from "lucide-react";
+import { FileClock, Gamepad2, ListOrdered, LoaderCircle, LockKeyhole, Swords } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { toast } from "@/application/ui/toast";
@@ -10,6 +10,7 @@ import type { AuditEntry } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { SelectMenu } from "@/ui/components/select-menu";
 import { SearchableTable } from "@/ui/components/table-search";
 
 function compactDateTime(value: string) {
@@ -24,12 +25,14 @@ export default function AuditPage() {
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
   const loadAudit = useTournamentStore((state) => state.loadAudit);
+  const activeTournament = useTournamentStore((state) => state.activeTournament);
   const card = selectCard(cards, id);
   // Directors read their own audit; admins watch every tournament's audit. Staff/viewers cannot.
   const canView = isAdmin(auth) || canManageTournament(auth);
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loadingAudit, setLoadingAudit] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [selectedGame, setSelectedGame] = useState<number | null>(null);
 
   // Games with a published (confirmed) snapshot — the only ones a document can be built for.
   // Computed inline so the heavy PDF module (jsPDF + embedded Thai font) stays out of this page's
@@ -39,6 +42,8 @@ export default function AuditPage() {
     const games = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt)).flatMap((snapshot) => snapshot.gameNumbers);
     return [...new Set(games)].sort((a, b) => a - b);
   }, [card]);
+  // The picker defaults to (and never points past) an available game.
+  const effectiveGame = selectedGame && publishedGameList.includes(selectedGame) ? selectedGame : publishedGameList[publishedGameList.length - 1] ?? null;
 
   // Audit is fetched on demand (no longer bundled in the card payload) so saves/polls stay cheap.
   useEffect(() => {
@@ -52,15 +57,17 @@ export default function AuditPage() {
     return () => { active = false; };
   }, [id, canView, loadAudit]);
 
-  const downloadPdf = async (kind: PdfKind, gameNumber: number) => {
-    if (!card) return;
-    setDownloading(`${kind}:${gameNumber}`);
+  const downloadPdf = async (kind: PdfKind) => {
+    if (!card || effectiveGame === null) return;
+    setDownloading(kind);
     try {
+      // Only tag the header with the tournament name when we actually know it belongs to this card.
+      const meta = activeTournament?.id === card.tournamentId ? { tournamentName: activeTournament.name } : {};
       // Lazy import: PDF engine + Thai font load only now, then browser-cache for later clicks.
       const pdf = await import("@/ui/pdf/tournament-pdfs");
-      if (kind === "pairing") pdf.downloadPairingPdf(card, gameNumber);
-      else if (kind === "ranking") pdf.downloadRankingPdf(card, gameNumber);
-      else pdf.downloadResultPdf(card, gameNumber);
+      if (kind === "pairing") pdf.downloadPairingPdf(card, effectiveGame, meta);
+      else if (kind === "ranking") pdf.downloadRankingPdf(card, effectiveGame, meta);
+      else pdf.downloadResultPdf(card, effectiveGame, meta);
     } catch {
       toast.error("สร้างไฟล์ PDF ไม่สำเร็จ กรุณาลองอีกครั้ง");
     } finally {
@@ -72,7 +79,7 @@ export default function AuditPage() {
   if (!canView) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="Audit log มีข้อมูลการปฏิบัติงานภายในและไม่เปิดเผยต่อบุคคลทั่วไป" /></div>;
   if (!card) return <CardNotFound />;
 
-  const kinds: { kind: PdfKind; label: string; icon: typeof FileDown }[] = [
+  const kinds: { kind: PdfKind; label: string; icon: typeof Swords }[] = [
     { kind: "pairing", label: "Pairing", icon: Swords },
     { kind: "ranking", label: "Ranking", icon: ListOrdered },
     { kind: "result", label: "Result", icon: Gamepad2 },
@@ -86,33 +93,35 @@ export default function AuditPage() {
         title="ดาวน์โหลดเอกสาร PDF"
         description="สร้างและบันทึกลงเครื่องทันที · ไม่บันทึกลงระบบ · เลือกได้เฉพาะเกมที่เผยแพร่ผลแล้ว"
       >
-        {publishedGameList.length === 0 ? (
+        {publishedGameList.length === 0 || effectiveGame === null ? (
           <div className="panel-padding pdf-empty">ยังไม่มีเกมที่เผยแพร่ผล — เมื่อ Publish ผลเกมใดแล้ว จะดาวน์โหลด Pairing / Ranking / Result ของเกมนั้นได้ที่นี่</div>
         ) : (
-          <div className="pdf-download-list">
-            {publishedGameList.map((gameNumber) => (
-              <div key={gameNumber} className="pdf-download-row">
-                <span className="pdf-download-row__game">เกม {gameNumber}</span>
-                <div className="pdf-download-row__actions">
-                  {kinds.map(({ kind, label, icon: Icon }) => {
-                    const busy = downloading === `${kind}:${gameNumber}`;
-                    return (
-                      <Button
-                        key={kind}
-                        size="sm"
-                        variant="secondary"
-                        disabled={Boolean(downloading)}
-                        onClick={() => void downloadPdf(kind, gameNumber)}
-                        title={`ดาวน์โหลด ${label} เกม ${gameNumber} เป็น PDF`}
-                      >
-                        {busy ? <LoaderCircle className="loading-spinner" size={15} /> : <Icon size={15} />}
-                        {label}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+          <div className="pdf-download-row">
+            <div className="pdf-download-row__pick">
+              <span className="pdf-download-row__label">เลือกเกม</span>
+              <SelectMenu
+                ariaLabel="เลือกเกมสำหรับสร้าง PDF"
+                className="pdf-game-menu"
+                value={String(effectiveGame)}
+                options={publishedGameList.map((game) => ({ value: String(game), label: `เกม ${game}` }))}
+                onChange={(value) => setSelectedGame(Number(value))}
+              />
+            </div>
+            <div className="pdf-download-row__actions">
+              {kinds.map(({ kind, label, icon: Icon }) => (
+                <Button
+                  key={kind}
+                  size="sm"
+                  variant="secondary"
+                  disabled={Boolean(downloading)}
+                  onClick={() => void downloadPdf(kind)}
+                  title={`ดาวน์โหลด ${label} เกม ${effectiveGame} เป็น PDF`}
+                >
+                  {downloading === kind ? <LoaderCircle className="loading-spinner" size={15} /> : <Icon size={15} />}
+                  {label}
+                </Button>
+              ))}
+            </div>
           </div>
         )}
       </Panel>

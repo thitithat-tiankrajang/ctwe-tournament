@@ -230,8 +230,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     <>
       <PageHeader
         className="overview-page-header"
-        title={card.name}
-        subtitle={card.division}
+        title={[card.name, card.division].filter(Boolean).join(" ")}
         description={final ? "ประกาศผลการแข่งขันอย่างเป็นทางการ" : undefined}
         actions={(visibleSnapshots.length > 0 || canClose) ? (
           <div className="overview-header-actions">
