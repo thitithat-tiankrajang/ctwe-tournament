@@ -28,6 +28,14 @@ const SEAT_BG: RGB = [225, 236, 255];
 type RGB = [number, number, number];
 type Align = "left" | "right" | "center";
 interface Column { header: string; x: number; width: number; align?: Align }
+interface ThaiCluster {
+  prefix: string;
+  base: string;
+  suffix: string;
+  upper: string[];
+  tone: string[];
+  lower: string[];
+}
 
 /** Optional context for the header band (the tournament this card belongs to). */
 export interface PdfMeta { tournamentName?: string }
@@ -36,6 +44,10 @@ const MARGIN = 40;
 const GRAPHEME_SEGMENTER = typeof Intl !== "undefined" && "Segmenter" in Intl
   ? new Intl.Segmenter("th", { granularity: "grapheme" })
   : null;
+const THAI_LEADING_VOWELS = new Set(["เ", "แ", "โ", "ใ", "ไ"]);
+const THAI_UPPER_MARKS = new Set(["ั", "ิ", "ี", "ึ", "ื", "็", "ํ"]);
+const THAI_TONE_MARKS = new Set(["่", "้", "๊", "๋", "์"]);
+const THAI_LOWER_MARKS = new Set(["ุ", "ู", "ฺ"]);
 
 interface Doc {
   pdf: jsPDF;
@@ -62,6 +74,17 @@ function text(doc: Doc, value: string, x: number, y: number, opts: { size?: numb
   doc.pdf.text(maxWidth ? clip(doc, value, size, bold, maxWidth) : value, x, y, { align });
 }
 
+function textThai(doc: Doc, value: string, x: number, y: number, opts: { size?: number; bold?: boolean; color?: RGB; align?: Align; maxWidth?: number } = {}) {
+  const { size = 11, bold = false, color = INK, align = "left", maxWidth } = opts;
+  doc.pdf.setFont(FONT, bold ? "bold" : "normal");
+  doc.pdf.setFontSize(size);
+  doc.pdf.setTextColor(color[0], color[1], color[2]);
+  const clusters = maxWidth ? clipThaiClusters(doc, value, size, bold, maxWidth) : thaiClusters(value);
+  const width = measureThaiClusters(doc, clusters, size, bold);
+  let cursor = align === "right" ? x - width : align === "center" ? x - width / 2 : x;
+  for (const cluster of clusters) cursor += drawThaiCluster(doc, cluster, cursor, y, size, bold);
+}
+
 function measure(doc: Doc, value: string, size: number, bold: boolean): number {
   doc.pdf.setFont(FONT, bold ? "bold" : "normal");
   doc.pdf.setFontSize(size);
@@ -84,6 +107,99 @@ function clip(doc: Doc, value: string, size: number, bold: boolean, maxWidth: nu
     if (measure(doc, parts.slice(0, mid).join("") + "…", size, bold) <= maxWidth) low = mid; else high = mid - 1;
   }
   return parts.slice(0, low).join("") + "…";
+}
+
+function emptyCluster(prefix = "", base = ""): ThaiCluster {
+  return { prefix, base, suffix: "", upper: [], tone: [], lower: [] };
+}
+
+function thaiClusters(value: string): ThaiCluster[] {
+  const clusters: ThaiCluster[] = [];
+  let pendingPrefix = "";
+  const current = () => clusters[clusters.length - 1];
+  const pushStandalone = (textValue: string) => clusters.push(emptyCluster("", textValue));
+
+  for (const char of value) {
+    if (THAI_LEADING_VOWELS.has(char)) {
+      pendingPrefix += char;
+      continue;
+    }
+
+    const target = current();
+    if (char === "ำ") {
+      if (target && target.base) {
+        target.upper.push("ํ");
+        target.suffix += "า";
+      } else {
+        pushStandalone((pendingPrefix ? pendingPrefix : "") + char);
+        pendingPrefix = "";
+      }
+      continue;
+    }
+    if (THAI_UPPER_MARKS.has(char) && target?.base) {
+      target.upper.push(char);
+      continue;
+    }
+    if (THAI_TONE_MARKS.has(char) && target?.base) {
+      target.tone.push(char);
+      continue;
+    }
+    if (THAI_LOWER_MARKS.has(char) && target?.base) {
+      target.lower.push(char);
+      continue;
+    }
+
+    clusters.push(emptyCluster(pendingPrefix, char));
+    pendingPrefix = "";
+  }
+  if (pendingPrefix) pushStandalone(pendingPrefix);
+  return clusters;
+}
+
+function clusterAdvance(doc: Doc, cluster: ThaiCluster, size: number, bold: boolean): number {
+  return measure(doc, cluster.prefix + cluster.base + cluster.suffix, size, bold);
+}
+
+function measureThaiClusters(doc: Doc, clusters: ThaiCluster[], size: number, bold: boolean): number {
+  return clusters.reduce((total, cluster) => total + clusterAdvance(doc, cluster, size, bold), 0);
+}
+
+function clipThaiClusters(doc: Doc, value: string, size: number, bold: boolean, maxWidth: number): ThaiCluster[] {
+  const clusters = thaiClusters(value);
+  if (measureThaiClusters(doc, clusters, size, bold) <= maxWidth) return clusters;
+  const ellipsis = emptyCluster("", "…");
+  const clipped: ThaiCluster[] = [];
+  for (const cluster of clusters) {
+    const next = [...clipped, cluster, ellipsis];
+    if (measureThaiClusters(doc, next, size, bold) > maxWidth) break;
+    clipped.push(cluster);
+  }
+  if (measureThaiClusters(doc, [ellipsis], size, bold) > maxWidth) return [];
+  return [...clipped, ellipsis];
+}
+
+function drawThaiCluster(doc: Doc, cluster: ThaiCluster, x: number, y: number, size: number, bold: boolean): number {
+  const prefixW = measure(doc, cluster.prefix, size, bold);
+  const baseW = measure(doc, cluster.base, size, bold);
+  if (cluster.prefix) doc.pdf.text(cluster.prefix, x, y);
+  if (cluster.base) doc.pdf.text(cluster.base, x + prefixW, y);
+  if (cluster.suffix) doc.pdf.text(cluster.suffix, x + prefixW + baseW, y);
+
+  const markCenter = x + prefixW + baseW * 0.5;
+  cluster.lower.forEach((mark, index) => {
+    const markW = measure(doc, mark, size, bold);
+    doc.pdf.text(mark, markCenter - markW / 2, y + 1.2 + index * 2);
+  });
+  cluster.upper.forEach((mark, index) => {
+    const markW = measure(doc, mark, size, bold);
+    doc.pdf.text(mark, markCenter - markW / 2, y - 0.6 - index * 3.2);
+  });
+  cluster.tone.forEach((mark, index) => {
+    const markW = measure(doc, mark, size, bold);
+    const stackedOffset = cluster.upper.length > 0 ? 5.4 : 0.8;
+    doc.pdf.text(mark, markCenter - markW / 2, y - stackedOffset - index * 3.2);
+  });
+  return clusterAdvance(doc, cluster, size, bold);
 }
 
 function fillBand(doc: Doc, y: number, height: number, color: RGB) {
@@ -232,8 +348,8 @@ export function buildRankingPdf(card: TournamentCard, gameNumber: number, meta: 
     const baseline = top + 19;
     const player = players.get(entry.id);
     text(doc, String(index + 1), columns[0].x + columns[0].width / 2, baseline, { size: RANK_TEXT_SIZE, bold: true, align: "center" });
-    text(doc, codeName(entry.id, player), columns[1].x, baseline, { size: RANK_TEXT_SIZE, maxWidth: columns[1].width });
-    text(doc, player?.school ?? "", columns[2].x, baseline, { size: RANK_TEXT_SIZE, color: MUTED, maxWidth: columns[2].width });
+    textThai(doc, codeName(entry.id, player), columns[1].x, baseline, { size: RANK_TEXT_SIZE, maxWidth: columns[1].width });
+    textThai(doc, player?.school ?? "", columns[2].x, baseline, { size: RANK_TEXT_SIZE, color: MUTED, maxWidth: columns[2].width });
     text(doc, String(entry.winPoints), columns[3].x + columns[3].width, baseline, { size: RANK_TEXT_SIZE, bold: true, align: "right" });
     text(doc, signed(entry.diff), columns[4].x + columns[4].width, baseline, { size: RANK_TEXT_SIZE, align: "right", color: MUTED });
     doc.y += RANK_ROW_H;
