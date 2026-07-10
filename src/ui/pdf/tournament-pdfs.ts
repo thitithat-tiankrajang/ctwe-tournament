@@ -192,7 +192,9 @@ function isRecorded(pairing: Pairing): boolean {
 
 // ---- Ranking --------------------------------------------------------------------------------
 
-const RANK_ROW_H = 22;
+const RANK_HEADER_H = 24;
+const RANK_ROW_H = 28;
+const RANK_TEXT_SIZE = 9.4;
 
 export function downloadRankingPdf(card: TournamentCard, gameNumber: number, meta: PdfMeta = {}): void {
   buildRankingPdf(card, gameNumber, meta).save(filename(card, `อันดับ เกม ${gameNumber}`));
@@ -221,19 +223,19 @@ export function buildRankingPdf(card: TournamentCard, gameNumber: number, meta: 
     { header: "คะแนนสะสม", x: right - wpW - diffW - gap, width: wpW, align: "right" },
     { header: "ผลต่างสะสม", x: right - diffW, width: diffW, align: "right" },
   ];
-  drawColumnHeader(doc, columns, RANK_ROW_H);
+  drawColumnHeader(doc, columns, RANK_HEADER_H);
 
   ranked.forEach((entry, index) => {
-    ensureRoom(doc, RANK_ROW_H, () => drawColumnHeader(doc, columns, RANK_ROW_H));
+    ensureRoom(doc, RANK_ROW_H, () => drawColumnHeader(doc, columns, RANK_HEADER_H));
     const top = doc.y;
     if (index % 2 === 1) fillBand(doc, top, RANK_ROW_H, ZEBRA);
-    const baseline = top + 15;
+    const baseline = top + 19;
     const player = players.get(entry.id);
-    text(doc, String(index + 1), columns[0].x + columns[0].width / 2, baseline, { size: 10, bold: true, align: "center" });
-    text(doc, codeName(entry.id, player), columns[1].x, baseline, { size: 10, maxWidth: columns[1].width });
-    text(doc, player?.school ?? "", columns[2].x, baseline, { size: 10, color: MUTED, maxWidth: columns[2].width });
-    text(doc, String(entry.winPoints), columns[3].x + columns[3].width, baseline, { size: 10, bold: true, align: "right" });
-    text(doc, signed(entry.diff), columns[4].x + columns[4].width, baseline, { size: 10, align: "right", color: MUTED });
+    text(doc, String(index + 1), columns[0].x + columns[0].width / 2, baseline, { size: RANK_TEXT_SIZE, bold: true, align: "center" });
+    text(doc, codeName(entry.id, player), columns[1].x, baseline, { size: RANK_TEXT_SIZE, maxWidth: columns[1].width });
+    text(doc, player?.school ?? "", columns[2].x, baseline, { size: RANK_TEXT_SIZE, color: MUTED, maxWidth: columns[2].width });
+    text(doc, String(entry.winPoints), columns[3].x + columns[3].width, baseline, { size: RANK_TEXT_SIZE, bold: true, align: "right" });
+    text(doc, signed(entry.diff), columns[4].x + columns[4].width, baseline, { size: RANK_TEXT_SIZE, align: "right", color: MUTED });
     doc.y += RANK_ROW_H;
   });
 
