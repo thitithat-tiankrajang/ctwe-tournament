@@ -92,17 +92,17 @@ class PublicCardReadCacheTest {
     }
 
     @Test
-    void removesBackOfficeOnlyFieldsAndUnpublishedFinalRound() {
+    void removesBackOfficeOnlyFieldsAndShowsCollectingFinalRound() {
         UUID cardId = UUID.randomUUID();
         var finalRound = new CardDtos.FinalRoundResponse(List.of(
-            new CardDtos.FinalSlotResponse(0, "P0001", "P0002", List.of(), null)));
+            new CardDtos.FinalSlotResponse(0, "P0001", "P0002", List.of(), null, null, null, null)));
         CardDtos.CardResponse source = new CardDtos.CardResponse(
             cardId, UUID.randomUUID(), "Final", "Open", CardStatus.RUNNING,
             RuntimeStage.FINAL_COLLECTION, 8, 42,
             List.of(), List.of(new CardDtos.RuleResponse(1, 2,
                 com.ctwe.tournament.domain.model.PairingRuleType.SWISS)),
             List.of(), List.of(), List.of(), List.of(), "CHAMPION", 3,
-            finalRound, false, Instant.EPOCH);
+            finalRound, false, Instant.EPOCH, "A");
         when(cards.get(cardId, false)).thenReturn(source);
         when(jdbc.queryForList("SELECT public_version FROM tournament_cards WHERE id = ?", Long.class, cardId))
             .thenReturn(List.of(9L));
@@ -113,8 +113,8 @@ class PublicCardReadCacheTest {
         assertThat(result.rules()).isEmpty();
         assertThat(result.tables()).isEmpty();
         assertThat(result.audit()).isEmpty();
-        assertThat(result.finalRound()).isNull();
-        assertThat(result.runtimeStage()).isEqualTo(RuntimeStage.TABLE_PAIRING);
+        assertThat(result.finalRound()).isEqualTo(finalRound);
+        assertThat(result.runtimeStage()).isEqualTo(RuntimeStage.FINAL_COLLECTION);
     }
 
     @Test
@@ -178,7 +178,7 @@ class PublicCardReadCacheTest {
             id, UUID.randomUUID(), "Card", "Division", CardStatus.DRAFT,
             RuntimeStage.PLAYER_REGISTRATION, 1, 0,
             List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-            "NONE", 0, null, false, Instant.EPOCH);
+            "NONE", 0, null, false, Instant.EPOCH, "A");
     }
 
     @Configuration(proxyBeanMethods = false)

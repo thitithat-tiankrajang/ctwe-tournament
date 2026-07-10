@@ -247,7 +247,7 @@ class CardControllerCacheRoutingTest {
             source.id(), source.tournamentId(), source.name(), source.division(), source.status(),
             stage, currentGame, source.version(), source.games(), source.rules(), source.players(),
             source.tables(), snapshots, source.audit(), source.finalType(), source.finalGames(),
-            source.finalRound(), source.gibsonEnabled(), source.createdAt());
+            source.finalRound(), source.gibsonEnabled(), source.createdAt(), source.codePrefix());
     }
 
     private static CardDtos.CardResponse card(UUID id) {
@@ -255,6 +255,6 @@ class CardControllerCacheRoutingTest {
             id, UUID.randomUUID(), "Card", "Division", CardStatus.DRAFT,
             RuntimeStage.PLAYER_REGISTRATION, 1, 0,
             List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-            "NONE", 0, null, false, Instant.EPOCH);
+            "NONE", 0, null, false, Instant.EPOCH, "A");
     }
 }

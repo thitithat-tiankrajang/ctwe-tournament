@@ -7,7 +7,8 @@ import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { rankingAfterGame } from "@/domain/tournament/history";
-import type { Pairing, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
+import type { FinalSlot, Pairing, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
+import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { DataGrid, type DataColumn } from "@/ui/components/data-grid";
@@ -114,6 +115,51 @@ function ResultTable({ pairings, players, storageKey, resizableColumns }: { pair
   return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
+function FinalHistoryDialog({ slot, players, onClose }: { slot: FinalSlot; players: Map<string, Player>; onClose: () => void }) {
+  const name = (id: string) => {
+    const player = players.get(id);
+    return player ? `${player.id} · ${player.firstName} ${player.lastName}` : id;
+  };
+  const school = (id: string) => players.get(id)?.school ?? "—";
+  const winnerName = slot.winnerId ? name(slot.winnerId) : "ยังไม่สรุป";
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="history-table-dialog final-history-dialog" role="dialog" aria-modal="true" aria-labelledby="final-history-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header>
+          <div><span>ประวัติรอบชิง</span><h2 id="final-history-title">{slot.slot === 0 ? "คู่ชิงอันดับ 1 - 2" : "คู่ชิงอันดับ 3 - 4"}</h2></div>
+          <button type="button" className="confirm-dialog__close" aria-label="ปิดประวัติรอบชิง" onClick={onClose}><X size={18} /></button>
+        </header>
+        <div className="final-history-matchup">
+          <strong>{name(slot.playerOneId)}</strong><span>พบ</span><strong>{name(slot.playerTwoId)}</strong>
+          <small>{school(slot.playerOneId)} · {school(slot.playerTwoId)}</small>
+        </div>
+        <table className="data-table final-history-table">
+          <thead><tr><th>เกม</th><th className="numeric">คะแนน</th><th>ผู้ชนะเกม</th><th className="numeric">diff</th></tr></thead>
+          <tbody>
+            {slot.games.map((game) => (
+              <tr key={game.gameIndex}>
+                <td>เกม {game.gameIndex}</td>
+                <td className="numeric">{game.scoreOne == null || game.scoreTwo == null ? "—" : `${game.scoreOne} - ${game.scoreTwo}`}</td>
+                <td>{game.winnerId ? name(game.winnerId) : game.scoreOne != null && game.scoreTwo != null ? "เสมอ" : "—"}</td>
+                <td className="numeric">{game.diff ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="final-history-summary">
+          <CrownBadge />
+          <strong>{winnerName}</strong>
+          <span>ชนะ {slot.winnerWins ?? "—"} เกม · แพ้ {slot.winnerLosses ?? "—"} เกม · Total diff {slot.totalDiff == null ? "—" : `${slot.totalDiff > 0 ? "+" : ""}${slot.totalDiff}`}</span>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CrownBadge() {
+  return <span className="final-history-crown">★</span>;
+}
+
 function defaultOverviewState(card: TournamentCard | undefined): { key: string; view: OverviewView } | null {
   if (!card) return null;
   const visibleSnapshots = card.snapshots.filter((snapshot) =>
@@ -140,10 +186,11 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const auth = useTournamentStore((state) => state.auth);
   const resizableColumns = hasStaffAccess(auth);
   const card = selectCard(cards, id);
-  const [historyGame, setHistoryGame] = useState<number | null>(null);
+  const [historyGame, setHistoryGame] = useState<number | "final" | null>(null);
   const [views, setViews] = useState<Set<OverviewView>>(new Set<OverviewView>());
   const [selectedRankingPlayerId, setSelectedRankingPlayerId] = useState<string | null>(null);
   const [historyPlayerId, setHistoryPlayerId] = useState<string | null>(null);
+  const [finalHistorySlot, setFinalHistorySlot] = useState<FinalSlot | null>(null);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [recordFilter, setRecordFilter] = useState<OverviewRecordFilterValue>({ mode: "player", playerIds: [], schools: [] });
   const viewRefs = useRef<Record<OverviewView, HTMLDivElement | null>>({ ranking: null, pairing: null, result: null });
@@ -175,9 +222,12 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const publishedSnapshots = visibleSnapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const publishedGames = new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
   const visibleGames = new Set(visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
+  const hasFinalRound = card.finalType !== "NONE" && Boolean(card.finalRound);
+  const finalActive = hasFinalRound && (card.runtimeStage === "FINAL_COLLECTION" || card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED");
   const latestVisibleGame = Math.max(0, ...visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
   const currentVisibleGame = latestVisibleGame > 0 ? latestVisibleGame : card.currentGame;
-  const selectedGame = historyGame && visibleGames.has(historyGame) ? historyGame : currentVisibleGame;
+  const selectedFinal = hasFinalRound && (historyGame === "final" || (historyGame == null && finalActive));
+  const selectedGame = typeof historyGame === "number" && visibleGames.has(historyGame) ? historyGame : currentVisibleGame;
   const selectedSnapshot = visibleSnapshots.find((snapshot) => snapshot.gameNumbers.includes(selectedGame));
   const selectedPairings = selectedSnapshot?.pairings.filter((pairing) => (pairing.gameNumber ?? selectedGame) === selectedGame) ?? [];
   const rankingCard = { ...card, snapshots: publishedSnapshots };
@@ -205,7 +255,9 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const historyCard = { ...rankingCard, snapshots: publishedSnapshots.filter((snapshot) => Math.max(...snapshot.gameNumbers) <= selectedGame) };
   const final = card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED";
   const canClose = card.status === "FINISHED" && canManage;
-  const gameOptions = [...visibleGames].sort((a, b) => a - b);
+  const gameOptions = [...visibleGames].sort((a, b) => a - b)
+    .map((game) => ({ value: String(game), label: `เกม ${game}` }))
+    .concat(hasFinalRound ? [{ value: "final", label: "รอบชิง" }] : []);
   const toggleView = (view: OverviewView) => {
     const opening = !views.has(view);
     setViews((prev) => {
@@ -229,22 +281,21 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   return (
     <>
       <PageHeader
-        className="overview-page-header"
+        className={`overview-page-header${final ? " overview-page-header--complete" : ""}`}
         title={<>{card.name}{card.division && <span className="page-title-inline-subtitle"> {card.division}</span>}</>}
-        description={final ? "ประกาศผลการแข่งขันอย่างเป็นทางการ" : undefined}
-        actions={(visibleSnapshots.length > 0 || canClose) ? (
+        actions={(visibleSnapshots.length > 0 || canClose || final) ? (
           <div className="overview-header-actions">
             {visibleSnapshots.length > 0 && (
               <div className="overview-header-controls">
                 <div className="overview-game-filter-row">
-                  <OverviewRecordFilter players={card.players} value={recordFilter} onChange={setRecordFilter} />
+                  {!selectedFinal && <OverviewRecordFilter players={card.players} value={recordFilter} onChange={setRecordFilter} />}
                   <div className="overview-game-menu-wrap">
                     <SelectMenu
                       ariaLabel="เลือกเกม"
                       className="overview-game-menu"
-                      value={String(selectedGame)}
-                      options={gameOptions.map((game) => ({ value: String(game), label: `เกม ${game}` }))}
-                      onChange={(value) => setHistoryGame(Number(value))}
+                      value={selectedFinal ? "final" : String(selectedGame)}
+                      options={gameOptions}
+                      onChange={(value) => setHistoryGame(value === "final" ? "final" : Number(value))}
                       onOpenChange={setGameMenuOpen}
                     />
                     <span
@@ -255,13 +306,14 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
                     </span>
                   </div>
                 </div>
-                <div className="segmented overview-view-picker" role="group" aria-label="เลือกมุมมอง">
+                {!selectedFinal && <div className="segmented overview-view-picker" role="group" aria-label="เลือกมุมมอง">
                   {(["ranking", "pairing", "result"] as const).map((view) => (
                     <button key={view} type="button" className={`segment${views.has(view) ? " segment--on" : ""}`} aria-pressed={views.has(view)} onClick={() => toggleView(view)}>{view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result"}</button>
                   ))}
-                </div>
+                </div>}
               </div>
             )}
+            {final && <Badge tone="warning">complete</Badge>}
             {canClose && <Button variant="danger" onClick={async () => {
               if (await appDialog.confirm("การ์ดที่ปิดแล้วจะไม่สามารถแก้ไขได้อีก", { title: "ปิดการ์ดถาวรหรือไม่?", confirmLabel: "ปิดการ์ด", danger: true })) await closeCard(id);
             }}><LockKeyhole size={16} />ปิดการ์ด</Button>}
@@ -269,19 +321,13 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
         ) : undefined}
       />
 
-      {final && (
-        <section className="final-trophy"><Trophy size={52} /><div><span>FINAL RESULT</span><h2>ประกาศผลการแข่งขันแล้ว</h2><p>ผลทุกเกมผ่านการ Review และ Publish ครบถ้วน</p></div></section>
-      )}
-
-      {card.finalType !== "NONE" && card.finalRound && (
-        <div style={{ marginBottom: 4 }}><FinalRoundBoard card={card} readOnly /></div>
-      )}
+      {selectedFinal && card.finalRound && <FinalRoundBoard card={card} readOnly onSlotHistory={setFinalHistorySlot} />}
 
       {canManage && !final && (
         <div className="notice notice--info workflow-notice"><ClipboardCheck size={20} /><p><strong>ขั้นตอนปัจจุบัน: {stageLabels[card.runtimeStage]}</strong><span>เกม {card.currentGame} จาก {card.games.length} · ทำงานต่อในหน้าที่ระบบกำหนด</span></p><Link prefetch={false} href={workflowHref(id, card.runtimeStage)}><Button size="sm">ทำงานต่อ <ArrowRight size={15} /></Button></Link></div>
       )}
 
-      {visibleSnapshots.length === 0 ? (
+      {!selectedFinal && (visibleSnapshots.length === 0 ? (
         card.players.length > 0 ? <>
           <Panel className="overview-data-panel" title="Ranking เริ่มต้น">
             <div className="overview-ranking-table">
@@ -330,7 +376,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
             ))}
           </nav>
         </>
-      )}
+      ))}
 
       {historyPlayer && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={() => setHistoryPlayerId(null)}>
@@ -344,6 +390,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
           </section>
         </div>
       )}
+      {finalHistorySlot && <FinalHistoryDialog slot={finalHistorySlot} players={players} onClose={() => setFinalHistorySlot(null)} />}
     </>
   );
 }

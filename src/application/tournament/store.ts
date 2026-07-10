@@ -84,8 +84,8 @@ interface TournamentState {
   reopenResults: (cardId: string) => Promise<void>;
   publishResults: (cardId: string) => Promise<void>;
   startFinal: (cardId: string) => Promise<void>;
-  submitFinalResult: (cardId: string, slot: number, gameIndex: number, scoreOne: number, scoreTwo: number) => Promise<void>;
-  setFinalWinner: (cardId: string, slot: number, winnerId: string) => Promise<void>;
+  submitFinalResult: (cardId: string, slot: number, gameIndex: number, scoreOne: number, scoreTwo: number, password?: string) => Promise<void>;
+  setFinalWinner: (cardId: string, slot: number, winnerId: string, winnerWins: number, winnerLosses: number, totalDiff: number, password?: string) => Promise<void>;
   publishFinal: (cardId: string) => Promise<void>;
   undoPairing: (cardId: string, password: string) => Promise<void>;
   unpairCurrentPairing: (cardId: string, password: string) => Promise<void>;
@@ -309,9 +309,13 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 
   const applyResultPatch = (cardId: string, version: number, changedPairings: Pairing[]) => {
     let patched = false;
-    set((state) => ({
-      cards: state.cards.map((card) => {
+    let mutated = false;
+    set((state) => {
+      const cards = state.cards.map((card) => {
         if (card.id !== cardId) return card;
+        // Already at/after this version — the common case for the writer's own SSE echo, which
+        // arrives right after the PUT response already applied the patch. Return the SAME card so
+        // the array below is reference-equal and zustand skips a needless second grid re-render.
         if (card.version >= version) {
           patched = true;
           return card;
@@ -319,6 +323,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         const index = card.snapshots.findIndex((snapshot) => !snapshot.confirmedAt);
         if (index < 0) return card;
         patched = true;
+        mutated = true;
         const changes = new Map(changedPairings.map((pairing) => [pairing.id, pairing]));
         const existingIds = new Set(card.snapshots[index].pairings.map((pairing) => pairing.id));
         const merged = card.snapshots[index].pairings
@@ -328,9 +333,10 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         const snapshots = card.snapshots.map((snapshot, i) =>
           i === index ? { ...snapshot, pairings: merged } : snapshot);
         return { ...card, snapshots, version };
-      }),
-      error: null,
-    }));
+      });
+      // No card actually changed: keep the identical state reference so no subscriber re-renders.
+      return mutated ? { cards, error: null } : state;
+    });
     return patched;
   };
 
@@ -553,11 +559,11 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async startFinal(cardId) {
       await mutateCard(`/api/cards/${cardId}/final/start`, cardId, { method: "POST" });
     },
-    async submitFinalResult(cardId, slot, gameIndex, scoreOne, scoreTwo) {
-      await mutateCard(`/api/cards/${cardId}/final/${slot}/games/${gameIndex}`, cardId, { method: "PUT", body: JSON.stringify({ scoreOne, scoreTwo }) });
+    async submitFinalResult(cardId, slot, gameIndex, scoreOne, scoreTwo, password) {
+      await mutateCard(`/api/cards/${cardId}/final/${slot}/games/${gameIndex}`, cardId, { method: "PUT", body: JSON.stringify({ scoreOne, scoreTwo, ...(password ? { password } : {}) }) });
     },
-    async setFinalWinner(cardId, slot, winnerId) {
-      await mutateCard(`/api/cards/${cardId}/final/${slot}/winner`, cardId, { method: "PUT", body: JSON.stringify({ winnerId }) });
+    async setFinalWinner(cardId, slot, winnerId, winnerWins, winnerLosses, totalDiff, password) {
+      await mutateCard(`/api/cards/${cardId}/final/${slot}/winner`, cardId, { method: "PUT", body: JSON.stringify({ winnerId, winnerWins, winnerLosses, totalDiff, ...(password ? { password } : {}) }) });
     },
     async publishFinal(cardId) {
       await mutateCard(`/api/cards/${cardId}/final/publish`, cardId, { method: "POST" });

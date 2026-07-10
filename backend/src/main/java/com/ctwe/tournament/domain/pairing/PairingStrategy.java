@@ -64,7 +64,8 @@ public interface PairingStrategy {
 
     private static Long numericPlayerCode(String playerId) {
         if (playerId == null || playerId.isBlank()) return null;
-        String value = playerId.startsWith("P") || playerId.startsWith("p") ? playerId.substring(1) : playerId;
+        // Strip any leading letter prefix (the per-card code prefix: A, B, …, AA; or legacy P).
+        String value = playerId.replaceFirst("^[A-Za-z]+", "");
         if (value.isBlank()) return null;
         for (int index = 0; index < value.length(); index++)
             if (!Character.isDigit(value.charAt(index))) return null;

@@ -16,6 +16,7 @@ export interface FinalGameResult {
   scoreOne: number | null;
   scoreTwo: number | null;
   winnerId: string | null;
+  diff: number | null;
 }
 /** One play-off bracket slot: slot 0 decides 1st/2nd, slot 1 decides 3rd/4th. */
 export interface FinalSlot {
@@ -24,6 +25,9 @@ export interface FinalSlot {
   playerTwoId: string;
   games: FinalGameResult[];
   winnerId: string | null;
+  winnerWins: number | null;
+  winnerLosses: number | null;
+  totalDiff: number | null;
 }
 export interface FinalRound {
   slots: FinalSlot[];
@@ -152,6 +156,8 @@ export interface TournamentCard {
   finalRound: FinalRound | null;
   gibsonEnabled: boolean;
   createdAt: string;
+  /** Per-card player-code letter prefix (A, B, …), unique within the tournament. "P" for legacy data. */
+  codePrefix?: string;
   /** Present on the compact anonymous catalog representation. */
   playerCount?: number;
   gameCount?: number;

@@ -37,6 +37,8 @@ public class PublicCardReadCache {
                    CASE
                      WHEN c.status IN ('FINISHED', 'CLOSED') OR c.runtime_stage = 'FINAL_PUBLISHED'
                        THEN 'FINAL_PUBLISHED'
+                     WHEN c.runtime_stage = 'FINAL_COLLECTION'
+                       THEN 'FINAL_COLLECTION'
                      WHEN c.runtime_stage = 'PLAYER_REGISTRATION' THEN 'PLAYER_REGISTRATION'
                      WHEN EXISTS (
                        SELECT 1 FROM matches m
@@ -75,10 +77,14 @@ public class PublicCardReadCache {
         boolean finalPublished = source.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.FINAL_PUBLISHED
             || source.status() == com.ctwe.tournament.domain.model.CardStatus.FINISHED
             || source.status() == com.ctwe.tournament.domain.model.CardStatus.CLOSED;
+        boolean finalVisible = finalPublished
+            || source.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.FINAL_COLLECTION;
         boolean collectingPublishedPairing = source.snapshots().stream()
             .anyMatch(snapshot -> snapshot.confirmedAt() == null || snapshot.confirmedAt().isBlank());
         com.ctwe.tournament.domain.model.RuntimeStage publicStage = finalPublished
             ? com.ctwe.tournament.domain.model.RuntimeStage.FINAL_PUBLISHED
+            : finalVisible
+                ? com.ctwe.tournament.domain.model.RuntimeStage.FINAL_COLLECTION
             : source.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.PLAYER_REGISTRATION
                 ? com.ctwe.tournament.domain.model.RuntimeStage.PLAYER_REGISTRATION
                 : collectingPublishedPairing
@@ -88,7 +94,7 @@ public class PublicCardReadCache {
             source.id(), source.tournamentId(), source.name(), source.division(), source.status(), publicStage,
             source.currentGame(), publicVersion, source.games(), List.of(), source.players(), List.of(),
             source.snapshots(), List.of(), source.finalType(), source.finalGames(),
-            finalPublished ? source.finalRound() : null, source.gibsonEnabled(), source.createdAt()
+            finalVisible ? source.finalRound() : null, source.gibsonEnabled(), source.createdAt(), source.codePrefix()
         );
     }
 

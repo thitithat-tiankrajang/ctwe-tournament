@@ -65,18 +65,20 @@ public class TournamentCardService {
         CardRow card;
         try {
             card = jdbc.queryForObject("""
-                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version, final_type, final_games, gibson_enabled
+                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version, final_type, final_games, gibson_enabled, code_prefix
                 FROM tournament_cards WHERE id = ?
                 """, (rs, row) -> new CardRow(
                 rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
                 rs.getInt("number_of_games"), CardStatus.valueOf(rs.getString("status")),
                 RuntimeStage.valueOf(rs.getString("runtime_stage")), rs.getInt("current_game"),
                 rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
-                rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled")), cardId);
+                rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled"),
+                rs.getString("code_prefix")), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
         UUID tournamentId = jdbc.queryForObject("SELECT tournament_id FROM tournament_cards WHERE id = ?", UUID.class, cardId);
+        String prefix = card.codePrefix() == null ? "P" : card.codePrefix();
 
         var games = jdbc.query("SELECT game_number, status, max_diff FROM games WHERE card_id = ? ORDER BY game_number",
             (rs, row) -> new CardDtos.GameResponse(String.valueOf(rs.getInt("game_number")), rs.getInt("game_number"),
@@ -91,19 +93,19 @@ public class TournamentCardService {
                    COALESCE(s.win_points, 0) win_points, COALESCE(s.diff, 0) diff
             FROM players p LEFT JOIN standings s ON s.card_id = p.card_id AND s.player_code = p.code
             WHERE p.card_id = ? ORDER BY p.code
-            """, (rs, row) -> new CardDtos.PlayerResponse(pcode(rs.getInt("code")), rs.getString("first_name"),
+            """, (rs, row) -> new CardDtos.PlayerResponse(pcode(prefix, rs.getInt("code")), rs.getString("first_name"),
                 rs.getString("last_name"), rs.getString("school"), card.division(),
                 rs.getInt("wins"), rs.getInt("draws"), rs.getInt("losses"), rs.getInt("win_points"), rs.getInt("diff"),
                 rs.getBoolean("terminated")), cardId);
-        var tables = staffView ? loadTables(cardId) : List.<CardDtos.TableResponse>of();
-        var snapshots = loadSnapshots(cardId, staffView);
+        var tables = staffView ? loadTables(cardId, prefix) : List.<CardDtos.TableResponse>of();
+        var snapshots = loadSnapshots(cardId, staffView, prefix);
         // Audit is intentionally NOT loaded in the card payload — it is the largest part and only the
         // audit page needs it. It is served on demand via GET /{cardId}/audit instead.
         var audit = List.<CardDtos.AuditResponse>of();
-        var finalRound = "NONE".equals(card.finalType()) ? null : loadFinalRound(cardId);
+        var finalRound = "NONE".equals(card.finalType()) ? null : loadFinalRound(cardId, prefix);
         return new CardDtos.CardResponse(card.id(), tournamentId, card.name(), card.division(), card.status(), card.runtimeStage(),
             card.currentGame(), card.version(), games, rules, players, tables, snapshots, audit,
-            card.finalType(), card.finalGames(), finalRound, card.gibsonEnabled(), card.createdAt());
+            card.finalType(), card.finalGames(), finalRound, card.gibsonEnabled(), card.createdAt(), prefix);
     }
 
     /** On-demand audit log for the audit page (kept out of the card payload to keep the hot path cheap). */
@@ -128,13 +130,16 @@ public class TournamentCardService {
         }
     }
 
-    /** Assemble the final-round bracket (null until the director starts it). Player ids are P-codes. */
-    private CardDtos.FinalRoundResponse loadFinalRound(UUID cardId) {
-        record Slot(int slot, String one, String two, String winner) {}
+    /** Assemble the final-round bracket (null until the director starts it). Player ids use the card prefix. */
+    private CardDtos.FinalRoundResponse loadFinalRound(UUID cardId, String codePrefix) {
+        record Slot(int slot, String one, String two, String winner, Integer winnerWins, Integer winnerLosses, Integer totalDiff) {}
         List<Slot> pairings = jdbc.query("""
-            SELECT slot, player_one, player_two, winner FROM final_pairings WHERE card_id = ? ORDER BY slot
-            """, (rs, row) -> new Slot(rs.getInt("slot"), pcode(rs.getInt("player_one")), pcode(rs.getInt("player_two")),
-                pcode(nullableInt(rs, "winner"))), cardId);
+            SELECT slot, player_one, player_two, winner, winner_wins, winner_losses, total_diff
+            FROM final_pairings WHERE card_id = ? ORDER BY slot
+            """, (rs, row) -> new Slot(rs.getInt("slot"), pcode(codePrefix, rs.getInt("player_one")),
+                pcode(codePrefix, rs.getInt("player_two")), pcode(codePrefix, nullableInt(rs, "winner")),
+                nullableInt(rs, "winner_wins"), nullableInt(rs, "winner_losses"),
+                nullableInt(rs, "total_diff")), cardId);
         if (pairings.isEmpty()) return null;
         List<CardDtos.FinalSlotResponse> slots = new ArrayList<>();
         for (Slot pairing : pairings) {
@@ -144,9 +149,11 @@ public class TournamentCardService {
                     Integer scoreTwo = nullableInt(rs, "score_two");
                     String gameWinner = (scoreOne == null || scoreTwo == null || scoreOne.intValue() == scoreTwo.intValue())
                         ? null : (scoreOne > scoreTwo ? pairing.one() : pairing.two());
-                    return new CardDtos.FinalGameResponse(rs.getInt("game_index"), scoreOne, scoreTwo, gameWinner);
+                    Integer diff = scoreOne == null || scoreTwo == null ? null : Math.abs(scoreOne - scoreTwo);
+                    return new CardDtos.FinalGameResponse(rs.getInt("game_index"), scoreOne, scoreTwo, gameWinner, diff);
                 }, cardId, pairing.slot());
-            slots.add(new CardDtos.FinalSlotResponse(pairing.slot(), pairing.one(), pairing.two(), games, pairing.winner()));
+            slots.add(new CardDtos.FinalSlotResponse(pairing.slot(), pairing.one(), pairing.two(), games, pairing.winner(),
+                pairing.winnerWins(), pairing.winnerLosses(), pairing.totalDiff()));
         }
         return new CardDtos.FinalRoundResponse(slots);
     }
@@ -170,10 +177,11 @@ public class TournamentCardService {
         if (!"NONE".equals(finalType) && finalGames < 1)
             throw new IllegalArgumentException("รอบชิงต้องมีอย่างน้อย 1 เกม");
         UUID cardId = UUID.randomUUID();
+        String codePrefix = nextCardPrefix(request.tournamentId());
         jdbc.update("""
-            INSERT INTO tournament_cards (id, tournament_id, name, division, number_of_games, status, runtime_stage, current_game, final_type, final_games, gibson_enabled)
-            VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PLAYER_REGISTRATION', 1, ?, ?, ?)
-            """, cardId, request.tournamentId(), request.name().trim(), request.division().trim(), request.numberOfGames(), finalType, finalGames, request.gibsonEnabled());
+            INSERT INTO tournament_cards (id, tournament_id, name, division, number_of_games, status, runtime_stage, current_game, final_type, final_games, gibson_enabled, code_prefix)
+            VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PLAYER_REGISTRATION', 1, ?, ?, ?, ?)
+            """, cardId, request.tournamentId(), request.name().trim(), request.division().trim(), request.numberOfGames(), finalType, finalGames, request.gibsonEnabled(), codePrefix);
         for (int game = 1; game <= request.numberOfGames(); game++) {
             jdbc.update("INSERT INTO games (card_id, game_number, status, max_diff) VALUES (?, ?, 'PENDING', ?)",
                 cardId, game, request.gameMaxDiffs().get(game - 1));
@@ -730,6 +738,7 @@ public class TournamentCardService {
         UUID cardId, MatchKey source, int destinationGame, int destinationGroupStart,
         boolean includeWholeDestination
     ) {
+        String codePrefix = cardPrefix(cardId);
         if (includeWholeDestination) {
             return jdbc.query("""
                 SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
@@ -743,7 +752,7 @@ public class TournamentCardService {
                 ORDER BY m.game_number, m.table_number
                 """, this::mapPairingRow,
                 cardId, source.gameNumber(), source.tableNumber(), destinationGame)
-                .stream().map(row -> toPairingResponse(row, true)).toList();
+                .stream().map(row -> toPairingResponse(row, true, codePrefix)).toList();
         }
         return jdbc.query("""
             SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
@@ -757,7 +766,7 @@ public class TournamentCardService {
             ORDER BY m.game_number, m.table_number
             """, this::mapPairingRow,
             cardId, source.gameNumber(), source.tableNumber(), destinationGame, destinationGroupStart, destinationGroupStart + 1)
-            .stream().map(row -> toPairingResponse(row, true)).toList();
+            .stream().map(row -> toPairingResponse(row, true, codePrefix)).toList();
     }
 
     @Transactional
@@ -843,6 +852,7 @@ public class TournamentCardService {
 
     /** Director starts the final: lock seeds (top 2 / top 4 from standings) into the bracket. */
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse startFinalRound(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.FINAL_SEEDING);
         int slotCount = "CHAMPION_AND_THIRD".equals(card.finalType()) ? 2 : 1;
@@ -865,33 +875,43 @@ public class TournamentCardService {
                     cardId, slot, game);
         }
         jdbc.update("UPDATE tournament_cards SET runtime_stage = 'FINAL_COLLECTION', version = version + 1 WHERE id = ?", cardId);
+        publishPublic(cardId);
         audit(cardId, actor, "START_FINAL", null, "seeds=" + needed);
         return get(cardId, true);
     }
 
     /** Record one final game's scores (no max diff; per-game winner is derived from the scores). */
     @Transactional
+    @EvictPublicCard
     public CardDtos.CardResponse submitFinalResult(UUID cardId, int slot, int gameIndex, int scoreOne, int scoreTwo, String actor) {
-        requireStage(cardId, RuntimeStage.FINAL_COLLECTION);
+        requireFinalEditable(cardId);
         int updated = jdbc.update("UPDATE final_game_results SET score_one = ?, score_two = ? WHERE card_id = ? AND slot = ? AND game_index = ?",
             scoreOne, scoreTwo, cardId, slot, gameIndex);
         if (updated == 0) throw new IllegalArgumentException("ไม่พบช่องผลรอบชิงนี้");
         touch(cardId);
+        publishPublic(cardId);
         audit(cardId, actor, "FINAL_RESULT", null, "slot " + slot + " game " + gameIndex + " = " + scoreOne + ":" + scoreTwo);
         return get(cardId, true);
     }
 
     /** Manual conclusion: the director/staff picks the winner of a final pairing (criteria vary). */
     @Transactional
-    public CardDtos.CardResponse setFinalWinner(UUID cardId, int slot, String winnerExternalId, String actor) {
-        requireStage(cardId, RuntimeStage.FINAL_COLLECTION);
+    @EvictPublicCard
+    public CardDtos.CardResponse setFinalWinner(UUID cardId, int slot, String winnerExternalId,
+                                                int winnerWins, int winnerLosses, int totalDiff, String actor) {
+        requireFinalEditable(cardId);
         int winnerCode = playerCode(cardId, winnerExternalId);
         int updated = jdbc.update("""
-            UPDATE final_pairings SET winner = ? WHERE card_id = ? AND slot = ? AND (player_one = ? OR player_two = ?)
-            """, winnerCode, cardId, slot, winnerCode, winnerCode);
+            UPDATE final_pairings
+            SET winner = ?, winner_wins = ?, winner_losses = ?, total_diff = ?
+            WHERE card_id = ? AND slot = ? AND (player_one = ? OR player_two = ?)
+            """, winnerCode, winnerWins, winnerLosses, totalDiff, cardId, slot, winnerCode, winnerCode);
         if (updated == 0) throw new IllegalArgumentException("ผู้ชนะต้องเป็นหนึ่งในผู้เข้าชิงของคู่นี้");
         touch(cardId);
-        audit(cardId, actor, "FINAL_WINNER", null, "slot " + slot + " winner " + winnerExternalId);
+        publishPublic(cardId);
+        audit(cardId, actor, "FINAL_WINNER", null, Map.of(
+            "slot", slot, "winner", winnerExternalId, "winnerWins", winnerWins,
+            "winnerLosses", winnerLosses, "totalDiff", totalDiff));
         return get(cardId, true);
     }
 
@@ -900,8 +920,11 @@ public class TournamentCardService {
     @EvictPublicCard
     public CardDtos.CardResponse publishFinalRound(UUID cardId, String actor) {
         requireStage(cardId, RuntimeStage.FINAL_COLLECTION);
-        if (count("SELECT COUNT(*) FROM final_pairings WHERE card_id = ? AND winner IS NULL", cardId) > 0)
-            throw new IllegalArgumentException("ต้องสรุปผู้ชนะให้ครบทุกคู่ก่อนเผยแพร่");
+        if (count("""
+            SELECT COUNT(*) FROM final_pairings
+            WHERE card_id = ? AND (winner IS NULL OR winner_wins IS NULL OR winner_losses IS NULL OR total_diff IS NULL)
+            """, cardId) > 0)
+            throw new IllegalArgumentException("ต้องสรุปผู้ชนะ จำนวนเกมชนะ/แพ้ และ Total Diff ให้ครบทุกคู่ก่อนเผยแพร่");
         jdbc.update("UPDATE tournament_cards SET status = 'FINISHED', runtime_stage = 'FINAL_PUBLISHED', version = version + 1 WHERE id = ?", cardId);
         publishPublic(cardId);
         audit(cardId, actor, "PUBLISH_FINAL", null, "final published");
@@ -1615,7 +1638,7 @@ public class TournamentCardService {
         });
     }
 
-    private List<CardDtos.TableResponse> loadTables(UUID cardId) {
+    private List<CardDtos.TableResponse> loadTables(UUID cardId, String codePrefix) {
         var rows = jdbc.query("""
             SELECT table_no, seat_no, player_code FROM table_seats
             WHERE card_id = ? ORDER BY table_no, seat_no
@@ -1623,10 +1646,10 @@ public class TournamentCardService {
         Map<Integer, List<TableSeat>> grouped = new LinkedHashMap<>();
         rows.forEach(row -> grouped.computeIfAbsent(row.tableNumber(), ignored -> new ArrayList<>()).add(row));
         return grouped.entrySet().stream().map(entry -> new CardDtos.TableResponse(String.valueOf(entry.getKey()),
-            entry.getKey(), entry.getValue().stream().map(seat -> pcode(seat.playerCode())).toList())).toList();
+            entry.getKey(), entry.getValue().stream().map(seat -> pcode(codePrefix, seat.playerCode())).toList())).toList();
     }
 
-    private List<CardDtos.SnapshotResponse> loadSnapshots(UUID cardId, boolean staffView) {
+    private List<CardDtos.SnapshotResponse> loadSnapshots(UUID cardId, boolean staffView, String codePrefix) {
         var rows = pairingRows(cardId);
         Map<String, List<PairingRow>> grouped = new LinkedHashMap<>();
         for (PairingRow row : rows) {
@@ -1641,7 +1664,7 @@ public class TournamentCardService {
             String id = entry.getKey().equals("preview") ? "preview-" + games.get(0) : entry.getKey();
             return new CardDtos.SnapshotResponse(id, games, group.stream()
                 .map(row -> toPairingResponse(row,
-                    staffView || row.snapshotNo() != null || row.pairingPublishedAt() != null)).toList(), confirmedAt);
+                    staffView || row.snapshotNo() != null || row.pairingPublishedAt() != null, codePrefix)).toList(), confirmedAt);
         }).toList();
     }
 
@@ -1666,10 +1689,10 @@ public class TournamentCardService {
             rs.getTimestamp("pairing_published_at"), rs.getTimestamp("confirmed_at"));
     }
 
-    private CardDtos.PairingResponse toPairingResponse(PairingRow row, boolean includeResult) {
+    private CardDtos.PairingResponse toPairingResponse(PairingRow row, boolean includeResult, String codePrefix) {
         return new CardDtos.PairingResponse(matchApiId(row.gameNumber(), row.tableNumber()), row.gameNumber(), row.tableNumber(),
-            pcode(row.playerOne()), pcode(row.playerTwo()),
-            includeResult ? pcode(row.winner()) : null,
+            pcode(codePrefix, row.playerOne()), pcode(codePrefix, row.playerTwo()),
+            includeResult ? pcode(codePrefix, row.winner()) : null,
             includeResult ? row.scoreOne() : null,
             includeResult ? row.scoreTwo() : null,
             includeResult ? row.resultType() : null,
@@ -1792,12 +1815,13 @@ public class TournamentCardService {
     private CardRow cardRow(UUID cardId) {
         try {
             return jdbc.queryForObject("""
-                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version, final_type, final_games, gibson_enabled
+                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version, final_type, final_games, gibson_enabled, code_prefix
                 FROM tournament_cards WHERE id = ? FOR UPDATE
                 """, (rs, row) -> new CardRow(rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
                 rs.getInt("number_of_games"), CardStatus.valueOf(rs.getString("status")), RuntimeStage.valueOf(rs.getString("runtime_stage")),
                 rs.getInt("current_game"), rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
-                rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled")), cardId);
+                rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled"),
+                rs.getString("code_prefix")), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
@@ -1829,6 +1853,15 @@ public class TournamentCardService {
             throw new IllegalArgumentException("การ์ดนี้ประกาศผลหรือปิดแล้ว ไม่สามารถแก้ไขได้");
         if (card.runtimeStage() != expected)
             throw new IllegalArgumentException("ขั้นตอนปัจจุบันคือ " + card.runtimeStage() + " ไม่อนุญาตให้ทำรายการนี้");
+        return card;
+    }
+
+    private CardRow requireFinalEditable(UUID cardId) {
+        CardRow card = cardRow(cardId);
+        if (card.status() == CardStatus.CLOSED)
+            throw new IllegalArgumentException("การ์ดนี้ปิดแล้ว ไม่สามารถแก้ไขรอบชิงได้");
+        if (card.runtimeStage() != RuntimeStage.FINAL_COLLECTION && card.runtimeStage() != RuntimeStage.FINAL_PUBLISHED)
+            throw new IllegalArgumentException("แก้ไขรอบชิงได้เฉพาะช่วงกรอกผลรอบชิงหรือหลังประกาศผลแล้ว");
         return card;
     }
 
@@ -1896,10 +1929,13 @@ public class TournamentCardService {
         }
     }
 
-    /** "P001" -> 1. The P-prefix code is the player's public identity; storage keeps only the number. */
+    /**
+     * "A001" -> 1 (also accepts the legacy "P001" and a bare "1"). The letter prefix is a per-card
+     * display concern; storage keeps only the number, so any leading letters are stripped here.
+     */
     private int codeOf(String externalId) {
         if (externalId == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Player not found");
-        String digits = externalId.startsWith("P") || externalId.startsWith("p") ? externalId.substring(1) : externalId;
+        String digits = externalId.replaceFirst("^[A-Za-z]+", "");
         try {
             return Integer.parseInt(digits);
         } catch (NumberFormatException error) {
@@ -1907,9 +1943,47 @@ public class TournamentCardService {
         }
     }
 
-    /** 1 -> "P001" (codes above 999 stay naturally wider: 1000 -> "P1000"). */
-    private static String pcode(Integer code) {
-        return code == null ? null : "P" + String.format("%03d", code);
+    /** 1 -> "A001" for prefix "A" (codes above 999 stay naturally wider: 1000 -> "A1000"). */
+    private static String pcode(String prefix, Integer code) {
+        return code == null ? null : (prefix == null ? "P" : prefix) + String.format("%03d", code);
+    }
+
+    /** Legacy/audit fallback for older internal call sites that do not carry a card prefix. */
+    private static String pcode(Integer code) { return pcode("P", code); }
+
+    /** The card's stored player-code letter prefix (A, B, …, AA), unique within its tournament. */
+    private String cardPrefix(UUID cardId) {
+        String prefix = jdbc.queryForObject("SELECT code_prefix FROM tournament_cards WHERE id = ?", String.class, cardId);
+        return prefix == null ? "P" : prefix;
+    }
+
+    /**
+     * Bijective base-26 of a 0-based index: 0 -> A, 25 -> Z, 26 -> AA, 27 -> AB, … Capped at five
+     * letters (over 12 million cards in one tournament), which no real event can reach.
+     */
+    static String columnLetter(int index0) {
+        if (index0 < 0) throw new IllegalArgumentException("Card index cannot be negative");
+        StringBuilder letters = new StringBuilder();
+        int n = index0 + 1;
+        while (n > 0) {
+            n--;
+            letters.insert(0, (char) ('A' + n % 26));
+            n /= 26;
+        }
+        if (letters.length() > 5)
+            throw new IllegalArgumentException("Tournament has too many cards for a 5-letter code prefix");
+        return letters.toString();
+    }
+
+    /** Smallest letter not yet used by another card in this tournament, so gaps from deletes reuse. */
+    private String nextCardPrefix(UUID tournamentId) {
+        Set<String> used = new HashSet<>(jdbc.queryForList(
+            "SELECT code_prefix FROM tournament_cards WHERE tournament_id = ? AND code_prefix IS NOT NULL",
+            String.class, tournamentId));
+        for (int index = 0; ; index++) {
+            String candidate = columnLetter(index);
+            if (!used.contains(candidate)) return candidate;
+        }
     }
 
     private static String matchApiId(int gameNumber, int tableNumber) {
@@ -1994,7 +2068,7 @@ public class TournamentCardService {
         return false;
     }
 
-    private record CardRow(UUID id, String name, String division, int numberOfGames, CardStatus status, RuntimeStage runtimeStage, int currentGame, Instant createdAt, long version, String finalType, int finalGames, boolean gibsonEnabled) {}
+    private record CardRow(UUID id, String name, String division, int numberOfGames, CardStatus status, RuntimeStage runtimeStage, int currentGame, Instant createdAt, long version, String finalType, int finalGames, boolean gibsonEnabled, String codePrefix) {}
     private record PlayerAudit(int code, String firstName, String lastName, String school) {
         Map<String, String> asAuditValue() {
             return Map.of("id", pcode(code), "firstName", firstName, "lastName", lastName, "school", school);

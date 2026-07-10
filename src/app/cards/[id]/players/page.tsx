@@ -72,11 +72,13 @@ export default function PlayersPage() {
   const rankingCard = { ...card, snapshots: publishedSnapshots };
   const filtered = ranked.filter((player) => {
     const term = query.trim();
-    if (/^P?\d+$/i.test(term)) return matchesPlayerCode(player.id, term);
+    if (/^[A-Za-z]*\d+$/.test(term)) return matchesPlayerCode(player.id, term);
     return `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLowerCase().includes(term.toLowerCase());
   });
   const rankIndex = new Map(ranked.map((player, index) => [player.id, index + 1]));
-  const nextCode = `P${String(Math.max(0, ...card.players.map((player) => Number(player.id.match(/^P(\d+)$/)?.[1] ?? 0))) + 1).padStart(3, "0")}`;
+  // Preview the next code with the card's letter prefix, numbered after the current highest.
+  const codePrefix = card.codePrefix ?? card.players[0]?.id.replace(/\d+$/, "") ?? "P";
+  const nextCode = `${codePrefix}${String(Math.max(0, ...card.players.map((player) => Number(player.id.replace(/^[A-Za-z]+/, "")) || 0)) + 1).padStart(3, "0")}`;
   const busy = pending !== null || isSubmitting;
 
   const rankingColumns: DataColumn<{ player: Player; rank: number }>[] = [

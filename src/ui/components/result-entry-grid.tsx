@@ -1,9 +1,9 @@
 "use client";
 
 import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Megaphone, Pencil, Save, SaveAll, Shuffle, Undo2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
-import { normalizePlayerCode } from "@/domain/tournament/player-code";
+import { matchesPlayerCode, normalizePlayerCode } from "@/domain/tournament/player-code";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { applyColumnControls, GridHead, uniqueColumnValues, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
@@ -114,6 +114,163 @@ function PlayerNameWithGibsonMark({ player, fallback, gibsonized }: {
   return <span className="pairing-name-with-mark"><span>{name}</span>{gibsonized && <span className="gibson-mark">GIB</span>}</span>;
 }
 
+interface ResultEntryRowProps {
+  slot: EntrySlot;
+  pairing: Pairing | undefined;
+  players: Map<string, Player>;
+  maxDiff: number;
+  one: string;
+  two: string;
+  saved: boolean;
+  changed: boolean;
+  isEditing: boolean;
+  saving: boolean;
+  failed: boolean;
+  savingAll: boolean;
+  highlight: boolean;
+  onDraft: (id: string, field: "one" | "two", value: string, base: { one: string; two: string }) => void;
+  onSaveRow: (pairing: Pairing) => Promise<boolean>;
+  onSaveBye: (pairing: Pairing) => Promise<boolean>;
+  onStartEdit: (id: string) => void;
+  onCancelEdit: (id: string) => void;
+  onFocusNext: (origin: HTMLElement, direction: "other" | "next") => void;
+  onPenalty?: (pairing: Pairing) => void;
+  onRevokePenalty?: (pairing: Pairing) => void;
+}
+
+/**
+ * One result-entry row, memoized. All inputs are primitives or references that stay stable while
+ * another cell is being typed (the pairing, the players map, the callbacks), so React skips
+ * re-rendering every other row on each keystroke — only the row whose score/flags changed updates.
+ */
+const ResultEntryRow = memo(function ResultEntryRow({
+  slot, pairing, players, maxDiff, one, two, saved, changed, isEditing, saving, failed, savingAll,
+  highlight, onDraft, onSaveRow, onSaveBye, onStartEdit, onCancelEdit, onFocusNext, onPenalty, onRevokePenalty,
+}: ResultEntryRowProps) {
+  if (pairing?.resultType === "PENALTY") {
+    const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
+    const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
+    const penalty = pairing.calculatedDiff ?? 0;
+    return <tr className={`egrid-row egrid-row--locked egrid-row--penalty${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
+      <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
+      <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
+      <td className={`egrid-td cell-person-name${pairing.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback="บาย (ไม่มีคู่แข่ง)" gibsonized={pairing.playerOneGibsonized} /></td>
+      <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
+      <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
+      <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback="บาย (ไม่มีคู่แข่ง)" gibsonized={pairing.playerTwoGibsonized} /></td>
+      <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
+      <td className="egrid-td egrid-td--center cell-score">-</td>
+      <td className="egrid-td egrid-td--center cell-score">-</td>
+      <td className="egrid-td egrid-td--center cell-diff cell-diff--penalty">-{penalty}</td>
+      <td className="egrid-td cell-action">
+        {onRevokePenalty
+          ? <Button size="sm" variant="secondary" title="ถอนดาบเพื่อกลับไปกรอกผลใหม่" onClick={() => onRevokePenalty(pairing)}>ถอนดาบ</Button>
+          : <Badge tone="danger">ล็อกโดยผู้อำนวยการ</Badge>}
+      </td>
+    </tr>;
+  }
+  const side = slot.isBye ? byeSide(pairing) : null;
+  if (side && pairing) {
+    const present = players.get((side === "one" ? pairing.playerOneId : pairing.playerTwoId) ?? "");
+    const value = side === "one" ? one : two;
+    const locked = saved && !isEditing;
+    const disabled = locked || saving || savingAll;
+    const scoreNum = Number(value);
+    const valid = value.trim() !== "" && Number.isInteger(scoreNum) && scoreNum > 0;
+    const base = { one, two };
+    const presentCell = (
+      <>
+        <td className="egrid-td cell-id">{present?.id ?? "—"}</td>
+        <td className={`egrid-td cell-person-name${(side === "one" ? pairing.playerOneGibsonized : pairing.playerTwoGibsonized) ? " cell-gibsonized" : ""}`} title={`${present?.firstName ?? ""} ${present?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={present} fallback="—" gibsonized={side === "one" ? pairing.playerOneGibsonized : pairing.playerTwoGibsonized} /></td>
+        <td className="egrid-td cell-person-school" title={present?.school}>{present?.school ?? "—"}</td>
+      </>
+    );
+    const byeCell = (
+      <>
+        <td className="egrid-td cell-id">—</td>
+        <td className="egrid-td cell-person-name cell-bye">บาย (ไม่มีคู่แข่ง)</td>
+        <td className="egrid-td cell-person-school">—</td>
+      </>
+    );
+    const scoreInput = (
+      <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={1} aria-label={`คะแนน ${present?.id}`} placeholder="คะแนน" value={value} disabled={disabled}
+        onChange={(event) => onDraft(pairing.id, side, event.target.value, base)} onFocus={(event) => event.target.select()}
+        onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); await onSaveBye(pairing); }} /></td>
+    );
+    const byeScore = <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="บาย" /></td>;
+    return <tr className={`egrid-row egrid-row--bye${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}`}>
+      <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
+      {side === "one" ? presentCell : byeCell}
+      {side === "one" ? byeCell : presentCell}
+      {side === "one" ? scoreInput : byeScore}
+      {side === "one" ? byeScore : scoreInput}
+      <td className={`egrid-td egrid-td--center cell-diff cell-diff--${valid ? "win" : "pending"}`}>{valid ? `${present?.id} · ${Math.min(scoreNum, maxDiff)}` : "ต้องชนะ"}</td>
+      <td className="egrid-td cell-action">
+        {locked ? (
+          <div className="cell-action__group">
+            <Button size="sm" variant="secondary" onClick={() => onStartEdit(pairing.id)}><Pencil size={13} />แก้ไข</Button>
+            {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
+          </div>
+        ) : (
+          <div className="cell-action__group">
+            <Button size="sm" variant="success" disabled={!valid || !changed || saving || savingAll} onClick={() => void onSaveBye(pairing)}>{saving ? <LoaderCircle className="loading-spinner" size={13} /> : saved ? <Check size={13} /> : <Save size={13} />}เซฟ</Button>
+            {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
+          </div>
+        )}
+      </td>
+    </tr>;
+  }
+  if (!isCompletePairing(pairing)) {
+    const p1 = pairing?.playerOneId ? players.get(pairing.playerOneId) : undefined;
+    const p2 = pairing?.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
+    const waitingText = pairing ? "รอคู่แข่งจากอีก row" : "รอผลจากเกมก่อนหน้า";
+    return <tr className={`egrid-row egrid-row--pending${pairing?.playerOneGibsonized || pairing?.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
+      <td className="egrid-td egrid-td--center cell-pair">{slot.tableNumber}</td>
+      <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
+      <td className={`egrid-td cell-person-name${pairing?.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback={waitingText} gibsonized={pairing?.playerOneGibsonized} /></td>
+      <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
+      <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
+      <td className={`egrid-td cell-person-name${pairing?.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback={waitingText} gibsonized={pairing?.playerTwoGibsonized} /></td>
+      <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
+      <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
+      <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
+      <td className="egrid-td egrid-td--center cell-diff">—</td>
+      <td className="egrid-td cell-action"><Badge tone="neutral">{pairing ? "รออีกฝั่ง" : "รอข้อมูล"}</Badge></td>
+    </tr>;
+  }
+  const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
+  const locked = saved && !isEditing;
+  const disabled = locked || saving || savingAll;
+  const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
+  const base = { one, two };
+  return <tr className={`egrid-row${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}${highlight ? " egrid-row--flash" : ""}`}>
+    <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
+    <td className="egrid-td cell-id">{p1?.id}</td>
+    <td className={`egrid-td cell-person-name${pairing.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback="—" gibsonized={pairing.playerOneGibsonized} /></td>
+    <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school}</td>
+    <td className="egrid-td cell-id">{p2?.id}</td>
+    <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback="—" gibsonized={pairing.playerTwoGibsonized} /></td>
+    <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school}</td>
+    <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => onDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onFocusNext(event.currentTarget, "other"); } }} /></td>
+    <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => onDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await onSaveRow(pairing)) onFocusNext(origin, "next"); }} /></td>
+    <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>{outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ${outcome.diff}`) : "—"}</td>
+    <td className="egrid-td cell-action">
+      {locked ? (
+        <div className="cell-action__group">
+          <Button size="sm" variant="secondary" onClick={() => onStartEdit(pairing.id)}><Pencil size={13} />แก้ไข</Button>
+          {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้ทั้งคู่)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
+        </div>
+      ) : (
+        <div className="cell-action__group">
+          <Button size="sm" variant="success" disabled={!outcome || !changed || saving || savingAll} onClick={() => void onSaveRow(pairing)}>{saving ? <LoaderCircle className="loading-spinner" size={13} /> : saved ? <Check size={13} /> : <Save size={13} />}เซฟ</Button>
+          {saved && isEditing && <Button size="sm" variant="ghost" aria-label="ยกเลิกแก้ไข" disabled={saving || savingAll} onClick={() => onCancelEdit(pairing.id)}><X size={13} /></Button>}
+          {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้ทั้งคู่)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
+        </div>
+      )}
+    </td>
+  </tr>;
+});
+
 export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKey, onSubmit, onPenalty, onRevokePenalty, pairingEdit }: {
   gameNumber: number;
   slots: EntrySlot[];
@@ -147,14 +304,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const idARef = useRef<HTMLInputElement>(null); const scoreARef = useRef<HTMLInputElement>(null);
   const idBRef = useRef<HTMLInputElement>(null); const scoreBRef = useRef<HTMLInputElement>(null);
   const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(EDIT_COLUMNS, storageKey);
+  // Row callbacks read the latest drafts through a ref so they can stay referentially stable
+  // (useCallback with no per-keystroke deps) — that is what lets memoized rows skip re-rendering
+  // while another cell is being typed.
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
 
   // Any "this is the pair" highlight + inline feedback clears when closed or the next entry starts.
-  const clearFlash = () => { setQuickFeedback(null); setHighlightId(null); };
-
-  const valueOf = (pairing: Pairing) => {
-    const draft = drafts[pairing.id];
-    return { one: draft?.one ?? pairing.scoreOne?.toString() ?? "", two: draft?.two ?? pairing.scoreTwo?.toString() ?? "" };
-  };
+  const clearFlash = useCallback(() => { setQuickFeedback(null); setHighlightId(null); }, []);
 
   const rows = useMemo(() => slots.map((slot) => {
     const pairing = slot.pairing;
@@ -179,7 +336,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     return { slot, pairing, status: rowStatus, saved, changed, one, two };
   }), [slots, drafts]);
 
-  const accessors = useMemo<Record<string, (row: (typeof rows)[number]) => string | number>>(() => ({
+  const accessors = useMemo<Record<string, (row: { slot: EntrySlot; pairing?: Pairing }) => string | number>>(() => ({
     pair: (row) => row.slot.tableNumber,
     id1: (row) => players.get(row.pairing?.playerOneId ?? "")?.id ?? "—",
     name1: (row) => { const player = players.get(row.pairing?.playerOneId ?? ""); return player ? `${player.firstName} ${player.lastName}` : "—"; },
@@ -188,7 +345,11 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     name2: (row) => { const player = players.get(row.pairing?.playerTwoId ?? ""); return player ? `${player.firstName} ${player.lastName}` : "—"; },
     school2: (row) => players.get(row.pairing?.playerTwoId ?? "")?.school ?? "—",
   }), [players]);
-  const uniqueValues = useMemo(() => uniqueColumnValues(rows, accessors, ENTRY_FILTER_KEYS), [rows, accessors]);
+  // Filter-dropdown options depend only on the pairings' identity (codes/names/schools/table), not
+  // on the scores being typed, so derive them from slots — not `rows` — to avoid recomputing the
+  // unique-value sets on every keystroke.
+  const identityRows = useMemo(() => slots.map((slot) => ({ slot, pairing: slot.pairing })), [slots]);
+  const uniqueValues = useMemo(() => uniqueColumnValues(identityRows, accessors, ENTRY_FILTER_KEYS), [identityRows, accessors]);
   const filtered = useMemo(() => {
     const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, ["id1", "id2"]);
     return status === "all" ? byColumn : byColumn.filter((row) => row.status === status);
@@ -210,13 +371,13 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
       && Boolean(calcOutcome(row.one ?? "", row.two ?? "", maxDiff, row.pairing.playerOneId, row.pairing.playerTwoId));
   });
 
-  const setDraft = (id: string, field: "one" | "two", value: string, base: { one: string; two: string }) => {
+  const setDraft = useCallback((id: string, field: "one" | "two", value: string, base: { one: string; two: string }) => {
     clearFlash();
     setFailedIds((prev) => { if (!prev.has(id)) return prev; const next = new Set(prev); next.delete(id); return next; });
     setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? base), [field]: value } }));
-  };
+  }, [clearFlash]);
 
-  const saveValues = async (pairing: CompletePairing, one: string, two: string): Promise<SaveResult> => {
+  const saveValues = useCallback(async (pairing: CompletePairing, one: string, two: string): Promise<SaveResult> => {
     if (!calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId))
       return { ok: false, reason: "คะแนนต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป" };
     setSavingIds((prev) => new Set(prev).add(pairing.id));
@@ -232,21 +393,23 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     } finally {
       setSavingIds((prev) => { const next = new Set(prev); next.delete(pairing.id); return next; });
     }
-  };
+  }, [maxDiff, onSubmit]);
 
-  const saveRow = async (pairing: Pairing): Promise<boolean> => {
+  const saveRow = useCallback(async (pairing: Pairing): Promise<boolean> => {
     if (!isCompletePairing(pairing)) return false;
-    const { one, two } = valueOf(pairing);
+    const draft = draftsRef.current[pairing.id];
+    const one = draft?.one ?? pairing.scoreOne?.toString() ?? "";
+    const two = draft?.two ?? pairing.scoreTwo?.toString() ?? "";
     return (await saveValues(pairing, one, two)).ok;
-  };
+  }, [saveValues]);
 
   // A bye: the lone player must win. We send their entered score in their slot and 0 in the empty slot.
-  const byeValue = (pairing: Pairing, side: "one" | "two") =>
-    drafts[pairing.id]?.[side] ?? (side === "one" ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "";
-  const saveByeRow = async (pairing: Pairing): Promise<boolean> => {
+  const saveByeRow = useCallback(async (pairing: Pairing): Promise<boolean> => {
     const side = byeSide(pairing);
     if (!side) return false;
-    const score = Number(byeValue(pairing, side));
+    const draft = draftsRef.current[pairing.id];
+    const value = draft?.[side] ?? (side === "one" ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "";
+    const score = Number(value);
     if (!Number.isInteger(score) || score <= 0) return false;
     const scoreOne = side === "one" ? score : 0;
     const scoreTwo = side === "one" ? 0 : score;
@@ -263,7 +426,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     } finally {
       setSavingIds((prev) => { const next = new Set(prev); next.delete(pairing.id); return next; });
     }
-  };
+  }, [onSubmit]);
 
   const saveAll = async () => {
     if (filteredSavable.length === 0) return;
@@ -282,18 +445,20 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   // Quick key-in: validate that A vs B is a real pairing this game (either side), then save + highlight.
   const quickSave = async () => {
     if (quickSaving) return;
-    const a = normalizePlayerCode(qIdA); const b = normalizePlayerCode(qIdB);
+    const a = qIdA.trim(); const b = qIdB.trim();
+    // A code within one card always shares the same letter prefix, so a bare number ("16") matches
+    // the player just as well as the full code ("A16"); matchesPlayerCode compares prefix-agnostically.
     if (!a || !b) {
       setHighlightId(null);
       setQuickFeedback({ type: "error", message: "ไม่สำเร็จ · กรุณากรอกรหัส A และ B" });
       return;
     }
     const match = rows.find((row) => isCompletePairing(row.pairing)
-      && ((normalizePlayerCode(row.pairing.playerOneId) === a && normalizePlayerCode(row.pairing.playerTwoId) === b)
-        || (normalizePlayerCode(row.pairing.playerOneId) === b && normalizePlayerCode(row.pairing.playerTwoId) === a)));
+      && ((matchesPlayerCode(row.pairing.playerOneId, a) && matchesPlayerCode(row.pairing.playerTwoId, b))
+        || (matchesPlayerCode(row.pairing.playerOneId, b) && matchesPlayerCode(row.pairing.playerTwoId, a))));
     if (!match || !isCompletePairing(match.pairing)) {
       setHighlightId(null);
-      setQuickFeedback({ type: "error", message: `ไม่สำเร็จ · ${a} กับ ${b} ไม่ใช่คู่ในเกม ${gameNumber}` });
+      setQuickFeedback({ type: "error", message: `ไม่สำเร็จ · ${normalizePlayerCode(a)} กับ ${normalizePlayerCode(b)} ไม่ใช่คู่ในเกม ${gameNumber}` });
       return;
     }
     const pairing = match.pairing;
@@ -302,7 +467,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
       setQuickFeedback({ type: "error", message: `ไม่สำเร็จ · คู่ที่ ${pairing.tableNumber} ถูกลงดาบและล็อกแล้ว` });
       return;
     }
-    const aIsOne = normalizePlayerCode(pairing.playerOneId) === a;
+    const aIsOne = matchesPlayerCode(pairing.playerOneId, a);
     const oneScore = aIsOne ? qScoreA : qScoreB;
     const twoScore = aIsOne ? qScoreB : qScoreA;
     if (!calcOutcome(oneScore, twoScore, maxDiff, pairing.playerOneId, pairing.playerTwoId)) {
@@ -333,14 +498,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     } finally { setSwapping(false); }
   };
 
-  const startEdit = (id: string) => setEditing((prev) => new Set(prev).add(id));
-  const cancelEdit = (id: string) => {
+  const startEdit = useCallback((id: string) => setEditing((prev) => new Set(prev).add(id)), []);
+  const cancelEdit = useCallback((id: string) => {
     setEditing((prev) => { const next = new Set(prev); next.delete(id); return next; });
     setDrafts((prev) => { const next = { ...prev }; delete next[id]; return next; });
     setFailedIds((prev) => { if (!prev.has(id)) return prev; const next = new Set(prev); next.delete(id); return next; });
-  };
+  }, []);
 
-  const focusNext = (origin: HTMLElement, direction: "other" | "next") => {
+  const focusNext = useCallback((origin: HTMLElement, direction: "other" | "next") => {
     const row = origin.closest("tr"); if (!row) return;
     if (direction === "other") {
       const inputs = [...row.querySelectorAll<HTMLInputElement>("input.egrid-score")];
@@ -354,7 +519,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
       if (target) { target.focus(); target.select(); return; }
       sibling = sibling.nextElementSibling as HTMLElement | null;
     }
-  };
+  }, []);
 
   return (
     <div className="entry-grid-wrap">
@@ -447,138 +612,33 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
               <tr><td className="egrid-empty" colSpan={EDIT_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
             ) : filtered.map((row) => {
               const { slot, pairing } = row;
-              if (pairing?.resultType === "PENALTY") {
-                const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
-                const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
-                const penalty = pairing.calculatedDiff ?? 0;
-                return <tr key={pairing.id} className={`egrid-row egrid-row--locked egrid-row--penalty${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
-                  <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
-                  <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
-                  <td className={`egrid-td cell-person-name${pairing.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback="บาย (ไม่มีคู่แข่ง)" gibsonized={pairing.playerOneGibsonized} /></td>
-                  <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
-                  <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
-                  <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback="บาย (ไม่มีคู่แข่ง)" gibsonized={pairing.playerTwoGibsonized} /></td>
-                  <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
-                  <td className="egrid-td egrid-td--center cell-score">-</td>
-                  <td className="egrid-td egrid-td--center cell-score">-</td>
-                  <td className="egrid-td egrid-td--center cell-diff cell-diff--penalty">-{penalty}</td>
-                  <td className="egrid-td cell-action">
-                    {onRevokePenalty
-                      ? <Button size="sm" variant="secondary" title="ถอนดาบเพื่อกลับไปกรอกผลใหม่" onClick={() => onRevokePenalty(pairing)}>ถอนดาบ</Button>
-                      : <Badge tone="danger">ล็อกโดยผู้อำนวยการ</Badge>}
-                  </td>
-                </tr>;
-              }
-              const side = slot.isBye ? byeSide(pairing) : null;
-              if (side && pairing) {
-                const present = players.get((side === "one" ? pairing.playerOneId : pairing.playerTwoId) ?? "");
-                const value = byeValue(pairing, side);
-                const saved = isRecorded(pairing);
-                const isEditing = editing.has(pairing.id);
-                const saving = savingIds.has(pairing.id);
-                const failed = failedIds.has(pairing.id);
-                const locked = saved && !isEditing;
-                const disabled = locked || saving || savingAll;
-                const scoreNum = Number(value);
-                const valid = value.trim() !== "" && Number.isInteger(scoreNum) && scoreNum > 0;
-                const changed = value !== ((side === "one" ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "");
-                const base = { one: drafts[pairing.id]?.one ?? "", two: drafts[pairing.id]?.two ?? "" };
-                const presentCell = (
-                  <>
-                    <td className="egrid-td cell-id">{present?.id ?? "—"}</td>
-                    <td className={`egrid-td cell-person-name${(side === "one" ? pairing.playerOneGibsonized : pairing.playerTwoGibsonized) ? " cell-gibsonized" : ""}`} title={`${present?.firstName ?? ""} ${present?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={present} fallback="—" gibsonized={side === "one" ? pairing.playerOneGibsonized : pairing.playerTwoGibsonized} /></td>
-                    <td className="egrid-td cell-person-school" title={present?.school}>{present?.school ?? "—"}</td>
-                  </>
-                );
-                const byeCell = (
-                  <>
-                    <td className="egrid-td cell-id">—</td>
-                    <td className="egrid-td cell-person-name cell-bye">บาย (ไม่มีคู่แข่ง)</td>
-                    <td className="egrid-td cell-person-school">—</td>
-                  </>
-                );
-                const scoreInput = (
-                  <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={1} aria-label={`คะแนน ${present?.id}`} placeholder="คะแนน" value={value} disabled={disabled}
-                    onChange={(event) => setDraft(pairing.id, side, event.target.value, base)} onFocus={(event) => event.target.select()}
-                    onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); await saveByeRow(pairing); }} /></td>
-                );
-                const byeScore = <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="บาย" /></td>;
-                return <tr key={pairing.id} className={`egrid-row egrid-row--bye${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}`}>
-                  <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
-                  {side === "one" ? presentCell : byeCell}
-                  {side === "one" ? byeCell : presentCell}
-                  {side === "one" ? scoreInput : byeScore}
-                  {side === "one" ? byeScore : scoreInput}
-                  <td className={`egrid-td egrid-td--center cell-diff cell-diff--${valid ? "win" : "pending"}`}>{valid ? `${present?.id} · ${Math.min(scoreNum, maxDiff)}` : "ต้องชนะ"}</td>
-                  <td className="egrid-td cell-action">
-                    {locked ? (
-                      <div className="cell-action__group">
-                        <Button size="sm" variant="secondary" onClick={() => startEdit(pairing.id)}><Pencil size={13} />แก้ไข</Button>
-                        {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
-                      </div>
-                    ) : (
-                      <div className="cell-action__group">
-                        <Button size="sm" variant="success" disabled={!valid || !changed || saving || savingAll} onClick={() => void saveByeRow(pairing)}>{saving ? <LoaderCircle className="loading-spinner" size={13} /> : saved ? <Check size={13} /> : <Save size={13} />}เซฟ</Button>
-                        {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
-                      </div>
-                    )}
-                  </td>
-                </tr>;
-              }
-              if (!isCompletePairing(pairing)) {
-                const p1 = pairing?.playerOneId ? players.get(pairing.playerOneId) : undefined;
-                const p2 = pairing?.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
-                const waitingText = pairing ? "รอคู่แข่งจากอีก row" : "รอผลจากเกมก่อนหน้า";
-                return <tr key={pairing?.id ?? `pending-${slot.tableNumber}`} className={`egrid-row egrid-row--pending${pairing?.playerOneGibsonized || pairing?.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
-                  <td className="egrid-td egrid-td--center cell-pair">{slot.tableNumber}</td>
-                  <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
-                  <td className={`egrid-td cell-person-name${pairing?.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback={waitingText} gibsonized={pairing?.playerOneGibsonized} /></td>
-                  <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school ?? "—"}</td>
-                  <td className="egrid-td cell-id">{p2?.id ?? "—"}</td>
-                  <td className={`egrid-td cell-person-name${pairing?.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback={waitingText} gibsonized={pairing?.playerTwoGibsonized} /></td>
-                  <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school ?? "—"}</td>
-                  <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
-                  <td className="egrid-td"><input className="egrid-score" disabled value="" readOnly placeholder="—" /></td>
-                  <td className="egrid-td egrid-td--center cell-diff">—</td>
-                  <td className="egrid-td cell-action"><Badge tone="neutral">{pairing ? "รออีกฝั่ง" : "รอข้อมูล"}</Badge></td>
-                </tr>;
-              }
-              const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
-              const one = row.one ?? ""; const two = row.two ?? "";
-              const saved = Boolean(row.saved); const changed = Boolean(row.changed);
-              const isEditing = editing.has(pairing.id);
-              const saving = savingIds.has(pairing.id);
-              const failed = failedIds.has(pairing.id);
-              const locked = saved && !isEditing;
-              const disabled = locked || saving || savingAll;
-              const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
-              const base = { one, two };
-              return <tr key={pairing.id} className={`egrid-row${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}${highlightId === pairing.id ? " egrid-row--flash" : ""}`}>
-                <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
-                <td className="egrid-td cell-id">{p1?.id}</td>
-                <td className={`egrid-td cell-person-name${pairing.playerOneGibsonized ? " cell-gibsonized" : ""}`} title={`${p1?.firstName ?? ""} ${p1?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p1} fallback="—" gibsonized={pairing.playerOneGibsonized} /></td>
-                <td className="egrid-td cell-person-school" title={p1?.school}>{p1?.school}</td>
-                <td className="egrid-td cell-id">{p2?.id}</td>
-                <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback="—" gibsonized={pairing.playerTwoGibsonized} /></td>
-                <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school}</td>
-                <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => setDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); focusNext(event.currentTarget, "other"); } }} /></td>
-                <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => setDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await saveRow(pairing)) focusNext(origin, "next"); }} /></td>
-                <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>{outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ${outcome.diff}`) : "—"}</td>
-                <td className="egrid-td cell-action">
-                  {locked ? (
-                    <div className="cell-action__group">
-                      <Button size="sm" variant="secondary" onClick={() => startEdit(pairing.id)}><Pencil size={13} />แก้ไข</Button>
-                      {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้ทั้งคู่)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
-                    </div>
-                  ) : (
-                    <div className="cell-action__group">
-                      <Button size="sm" variant="success" disabled={!outcome || !changed || saving || savingAll} onClick={() => void saveRow(pairing)}>{saving ? <LoaderCircle className="loading-spinner" size={13} /> : saved ? <Check size={13} /> : <Save size={13} />}เซฟ</Button>
-                      {saved && isEditing && <Button size="sm" variant="ghost" aria-label="ยกเลิกแก้ไข" disabled={saving || savingAll} onClick={() => cancelEdit(pairing.id)}><X size={13} /></Button>}
-                      {onPenalty && <Button size="sm" variant="danger" title="ลงดาบ (บังคับแพ้ทั้งคู่)" onClick={() => onPenalty(pairing)}>ลงดาบ</Button>}
-                    </div>
-                  )}
-                </td>
-              </tr>;
+              const draft = pairing ? drafts[pairing.id] : undefined;
+              const one = draft?.one ?? pairing?.scoreOne?.toString() ?? "";
+              const two = draft?.two ?? pairing?.scoreTwo?.toString() ?? "";
+              return <ResultEntryRow
+                key={pairing?.id ?? `pending-${slot.tableNumber}`}
+                slot={slot}
+                pairing={pairing}
+                players={players}
+                maxDiff={maxDiff}
+                one={one}
+                two={two}
+                saved={Boolean(row.saved)}
+                changed={Boolean(row.changed)}
+                isEditing={pairing ? editing.has(pairing.id) : false}
+                saving={pairing ? savingIds.has(pairing.id) : false}
+                failed={pairing ? failedIds.has(pairing.id) : false}
+                savingAll={savingAll}
+                highlight={Boolean(pairing) && highlightId === pairing!.id}
+                onDraft={setDraft}
+                onSaveRow={saveRow}
+                onSaveBye={saveByeRow}
+                onStartEdit={startEdit}
+                onCancelEdit={cancelEdit}
+                onFocusNext={focusNext}
+                onPenalty={onPenalty}
+                onRevokePenalty={onRevokePenalty}
+              />;
             })}
           </tbody>
         </table>

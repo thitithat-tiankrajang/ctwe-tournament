@@ -292,15 +292,16 @@ public class CardController {
     @PutMapping("/{cardId}/final/{slot}/games/{gameIndex}")
     public CardDtos.CardResponse submitFinalResult(@PathVariable UUID cardId, @PathVariable int slot, @PathVariable int gameIndex,
                                                    @Valid @RequestBody CardDtos.FinalResultRequest request, Authentication authentication) {
-        authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
+        requireFinalEditCapability(cardId, request.password(), authentication);
         return changed(cardId, () -> service.submitFinalResult(cardId, slot, gameIndex, request.scoreOne(), request.scoreTwo(), authentication.getName()));
     }
 
     @PutMapping("/{cardId}/final/{slot}/winner")
     public CardDtos.CardResponse setFinalWinner(@PathVariable UUID cardId, @PathVariable int slot,
                                                 @Valid @RequestBody CardDtos.FinalWinnerRequest request, Authentication authentication) {
-        authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
-        return changed(cardId, () -> service.setFinalWinner(cardId, slot, request.winnerId(), authentication.getName()));
+        requireFinalEditCapability(cardId, request.password(), authentication);
+        return changed(cardId, () -> service.setFinalWinner(cardId, slot, request.winnerId(),
+            request.winnerWins(), request.winnerLosses(), request.totalDiff(), authentication.getName()));
     }
 
     @PostMapping("/{cardId}/final/publish")
@@ -324,6 +325,22 @@ public class CardController {
         events.publish(card);
         publishPublicIfBumped(cardId, publicVersionBefore);
         return card;
+    }
+
+    private void requireFinalEditCapability(UUID cardId, String password, Authentication authentication) {
+        authz.requireTournamentAccess(authentication, authz.tournamentOfCard(cardId));
+        CardDtos.CardResponse current = service.get(cardId, true);
+        boolean published = current.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.FINAL_PUBLISHED
+            || current.status() == com.ctwe.tournament.domain.model.CardStatus.FINISHED
+            || current.status() == com.ctwe.tournament.domain.model.CardStatus.CLOSED;
+        if (!published) {
+            authz.requireCardCapability(authentication, cardId, Capability.SUBMIT_RESULT);
+            return;
+        }
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        if (password == null || password.isBlank())
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.UNAUTHORIZED, "กรุณายืนยันรหัสผ่านผู้อำนวยการ");
+        reauthentication.requireCurrentPassword(authentication, password);
     }
 
     /** Create has no prior public version to compare; new cards appear via the (SSE-less) catalog. */

@@ -93,7 +93,7 @@ class PublicCardControllerTest {
         return new CardDtos.CardResponse(
             cardId, UUID.randomUUID(), "Card", "Division", CardStatus.RUNNING,
             RuntimeStage.RESULT_COLLECTION, 2, version, List.of(), List.of(), List.of(),
-            List.of(), List.of(), List.of(), "NONE", 0, null, false, Instant.EPOCH);
+            List.of(), List.of(), List.of(), "NONE", 0, null, false, Instant.EPOCH, "A");
     }
 
     private PublicCardDtos.CardSummary summary() {

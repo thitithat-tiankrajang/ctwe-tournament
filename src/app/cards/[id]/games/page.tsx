@@ -94,8 +94,8 @@ function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, o
   card: TournamentCard;
   canManage: boolean;
   onStart: () => Promise<void>;
-  onSubmitGame: (slot: number, gameIndex: number, scoreOne: number, scoreTwo: number) => Promise<void>;
-  onSetWinner: (slot: number, winnerId: string) => Promise<void>;
+  onSubmitGame: (slot: number, gameIndex: number, scoreOne: number, scoreTwo: number, password?: string) => Promise<void>;
+  onSetWinner: (slot: number, winnerId: string, winnerWins: number, winnerLosses: number, totalDiff: number, password?: string) => Promise<void>;
   onPublish: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -136,7 +136,27 @@ function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, o
           </div>
         </Panel>
       ) : (
-        <FinalRoundBoard card={card} canManage={canManage} readOnly={card.runtimeStage === "FINAL_PUBLISHED"} onSubmitGame={onSubmitGame} onSetWinner={onSetWinner} onPublish={onPublish} />
+        <FinalRoundBoard
+          card={card}
+          canManage={canManage}
+          onSubmitGame={onSubmitGame}
+          onSetWinner={onSetWinner}
+          onPublish={onPublish}
+          onUnlockPublishedEdit={canManage ? async () => {
+            const password = await appDialog.prompt("หลังประกาศผลรอบชิงแล้ว เฉพาะผู้อำนวยการเท่านั้นที่แก้ไขได้ กรุณายืนยันรหัสผ่าน", {
+              title: "แก้ไขรอบชิงหลังประกาศผล",
+              label: "รหัสผ่านผู้อำนวยการ",
+              type: "password",
+              confirmLabel: "ปลดล็อกแก้ไข",
+            });
+            if (!password) return null;
+            if (!await useTournamentStore.getState().verifyPassword(password)) {
+              await appDialog.alert("รหัสผ่านไม่ถูกต้อง", "ยืนยันตัวตนไม่สำเร็จ", true);
+              return null;
+            }
+            return password;
+          } : undefined}
+        />
       )}
     </>
   );
@@ -315,8 +335,8 @@ export default function GamesPage() {
   if (card.runtimeStage === "FINAL_SEEDING" || card.runtimeStage === "FINAL_COLLECTION" || (card.runtimeStage === "FINAL_PUBLISHED" && card.finalType !== "NONE")) {
     return <FinalRoundView card={card} canManage={isDirector}
       onStart={() => startFinal(id)}
-      onSubmitGame={(slot, gameIndex, scoreOne, scoreTwo) => submitFinalResult(id, slot, gameIndex, scoreOne, scoreTwo)}
-      onSetWinner={(slot, winnerId) => setFinalWinner(id, slot, winnerId)}
+      onSubmitGame={(slot, gameIndex, scoreOne, scoreTwo, password) => submitFinalResult(id, slot, gameIndex, scoreOne, scoreTwo, password)}
+      onSetWinner={(slot, winnerId, winnerWins, winnerLosses, totalDiff, password) => setFinalWinner(id, slot, winnerId, winnerWins, winnerLosses, totalDiff, password)}
       onPublish={() => publishFinal(id)} />;
   }
 

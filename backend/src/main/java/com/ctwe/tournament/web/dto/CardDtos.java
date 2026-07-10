@@ -30,8 +30,18 @@ public final class CardDtos {
     ) {}
 
     // Scores are stored as SMALLINT (V19); 30000 leaves headroom under the 32767 column limit.
-    public record FinalResultRequest(@NotNull @Min(0) @Max(30000) Integer scoreOne, @NotNull @Min(0) @Max(30000) Integer scoreTwo) {}
-    public record FinalWinnerRequest(@NotBlank String winnerId) {}
+    public record FinalResultRequest(
+        @NotNull @Min(0) @Max(30000) Integer scoreOne,
+        @NotNull @Min(0) @Max(30000) Integer scoreTwo,
+        String password
+    ) {}
+    public record FinalWinnerRequest(
+        @NotBlank String winnerId,
+        @NotNull @Min(0) @Max(12) Integer winnerWins,
+        @NotNull @Min(0) @Max(12) Integer winnerLosses,
+        @NotNull @Min(-1000000) @Max(1000000) Integer totalDiff,
+        String password
+    ) {}
 
     public record PlayerRequest(
         @Size(max = 64) @Pattern(regexp = "[A-Za-z0-9_-]+") String id,
@@ -103,8 +113,9 @@ public final class CardDtos {
     public record AuditResponse(String id, String timestamp, String user, String action, String oldValue, String newValue) {}
 
     // Final / championship round
-    public record FinalGameResponse(int gameIndex, Integer scoreOne, Integer scoreTwo, String winnerId) {}
-    public record FinalSlotResponse(int slot, String playerOneId, String playerTwoId, List<FinalGameResponse> games, String winnerId) {}
+    public record FinalGameResponse(int gameIndex, Integer scoreOne, Integer scoreTwo, String winnerId, Integer diff) {}
+    public record FinalSlotResponse(int slot, String playerOneId, String playerTwoId, List<FinalGameResponse> games,
+                                    String winnerId, Integer winnerWins, Integer winnerLosses, Integer totalDiff) {}
     public record FinalRoundResponse(List<FinalSlotResponse> slots) {}
 
     public record CardResponse(
@@ -126,6 +137,7 @@ public final class CardDtos {
         int finalGames,
         FinalRoundResponse finalRound,
         boolean gibsonEnabled,
-        Instant createdAt
+        Instant createdAt,
+        String codePrefix
     ) {}
 }

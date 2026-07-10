@@ -151,7 +151,7 @@ class CardEventPublisherTest {
             id, UUID.randomUUID(), "Card", "Division", CardStatus.RUNNING,
             RuntimeStage.RESULT_COLLECTION, 1, version,
             List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-            "NONE", 0, null, false, Instant.EPOCH);
+            "NONE", 0, null, false, Instant.EPOCH, "A");
     }
 
     private static final class FailingEmitter extends SseEmitter {

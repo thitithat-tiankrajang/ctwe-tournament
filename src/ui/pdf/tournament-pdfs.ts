@@ -20,6 +20,8 @@ const INK: RGB = [26, 28, 46];
 const MUTED: RGB = [107, 114, 128];
 const HEADER_BAND: RGB = [238, 242, 249];
 const ZEBRA: RGB = [244, 247, 251];
+const PAIR_BG_A: RGB = [238, 246, 255];
+const PAIR_BG_B: RGB = [255, 248, 229];
 const ACCENT: RGB = [22, 119, 255];
 const SEAT_BG: RGB = [225, 236, 255];
 
@@ -31,6 +33,9 @@ interface Column { header: string; x: number; width: number; align?: Align }
 export interface PdfMeta { tournamentName?: string }
 
 const MARGIN = 40;
+const GRAPHEME_SEGMENTER = typeof Intl !== "undefined" && "Segmenter" in Intl
+  ? new Intl.Segmenter("th", { granularity: "grapheme" })
+  : null;
 
 interface Doc {
   pdf: jsPDF;
@@ -63,20 +68,32 @@ function measure(doc: Doc, value: string, size: number, bold: boolean): number {
   return doc.pdf.getTextWidth(value);
 }
 
+function graphemes(value: string): string[] {
+  return GRAPHEME_SEGMENTER
+    ? Array.from(GRAPHEME_SEGMENTER.segment(value), (part) => part.segment)
+    : Array.from(value);
+}
+
 /** Truncate with an ellipsis so long Thai names/schools never collide with the next column. */
 function clip(doc: Doc, value: string, size: number, bold: boolean, maxWidth: number): string {
   if (measure(doc, value, size, bold) <= maxWidth) return value;
-  let low = 0, high = value.length;
+  const parts = graphemes(value);
+  let low = 0, high = parts.length;
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
-    if (measure(doc, value.slice(0, mid) + "…", size, bold) <= maxWidth) low = mid; else high = mid - 1;
+    if (measure(doc, parts.slice(0, mid).join("") + "…", size, bold) <= maxWidth) low = mid; else high = mid - 1;
   }
-  return value.slice(0, low) + "…";
+  return parts.slice(0, low).join("") + "…";
 }
 
 function fillBand(doc: Doc, y: number, height: number, color: RGB) {
   doc.pdf.setFillColor(color[0], color[1], color[2]);
   doc.pdf.rect(MARGIN, y, doc.pageW - MARGIN * 2, height, "F");
+}
+
+function fillCell(doc: Doc, x: number, y: number, width: number, height: number, color: RGB) {
+  doc.pdf.setFillColor(color[0], color[1], color[2]);
+  doc.pdf.rect(x, y, width, height, "F");
 }
 
 /**
@@ -132,7 +149,7 @@ function drawColumnHeader(doc: Doc, columns: Column[], height: number): void {
   for (const column of columns) {
     if (!column.header) continue;
     const x = column.align === "right" ? column.x + column.width : column.align === "center" ? column.x + column.width / 2 : column.x;
-    text(doc, column.header, x, doc.y + height - 7, { size: 9.5, bold: true, color: MUTED, align: column.align ?? "left" });
+    text(doc, column.header, x, doc.y + height - 7, { size: 9.5, bold: true, color: MUTED, align: column.align ?? "left", maxWidth: column.width });
   }
   doc.y += height + 3;
 }
@@ -226,58 +243,108 @@ export function buildRankingPdf(card: TournamentCard, gameNumber: number, meta: 
 
 // ---- Pairing & Result (one physical table = two pairings per row) ---------------------------
 
-const TABLE_ROW_H = 40;
+const PAIRING_ROW_H = 48;
+const RESULT_ROW_H = 54;
+const CELL_PAD_X = 8;
+const PLAYER_INNER_GAP = 10;
+const PLAYER_SEAT_W = 24;
 
-interface HalfLayout { seatW: number; centerW: number; athleteW: number; halfW: number; gap: number; withResult: boolean }
+interface HalfLayout {
+  playerW: number;
+  resultW: number;
+  halfW: number;
+  gap: number;
+  innerGap: number;
+  padX: number;
+  rowH: number;
+  withResult: boolean;
+}
 
 function halfLayout(doc: Doc, withResult: boolean): HalfLayout {
   const usable = doc.pageW - MARGIN * 2;
   const gap = 22;
   const halfW = (usable - gap) / 2;
-  const seatW = 24;
-  const centerW = withResult ? 62 : 34;
-  const athleteW = (halfW - centerW - seatW * 2) / 2;
-  return { seatW, centerW, athleteW, halfW, gap, withResult };
+  const padX = CELL_PAD_X;
+  const innerGap = PLAYER_INNER_GAP;
+  const contentW = halfW - padX * 2;
+  const resultW = withResult ? 80 : 0;
+  const playerW = withResult ? (contentW - resultW - innerGap * 2) / 2 : (contentW - innerGap) / 2;
+  const rowH = withResult ? RESULT_ROW_H : PAIRING_ROW_H;
+  return { playerW, resultW, halfW, gap, innerGap, padX, rowH, withResult };
 }
 
 /** A prominent seat badge — a filled rounded chip with the seat number, so seats read at a glance. */
 function seatBadge(doc: Doc, x: number, top: number, seat: number | null) {
   if (seat === null) return;
   doc.pdf.setFillColor(SEAT_BG[0], SEAT_BG[1], SEAT_BG[2]);
-  doc.pdf.roundedRect(x, top + 11, 20, 17, 3.5, 3.5, "F");
-  text(doc, String(seat), x + 10, top + 23, { size: 11, bold: true, color: ACCENT, align: "center" });
+  doc.pdf.roundedRect(x, top + 14, 20, 18, 3.5, 3.5, "F");
+  text(doc, String(seat), x + 10, top + 27, { size: 10.5, bold: true, color: ACCENT, align: "center" });
 }
 
-/** Draw one pairing (two athletes + "พบ", plus score for result) inside a half-width block. */
+function resultLabel(pairing: Pairing): string {
+  return `${pairing.playerOneId ?? "บาย"} พบ ${pairing.playerTwoId ?? "บาย"}`;
+}
+
+function scoreText(pairing: Pairing): string {
+  return pairing.resultType === "PENALTY" ? "ลงดาบ" : isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
+}
+
+function diffText(pairing: Pairing): string {
+  if (!isRecorded(pairing)) return "";
+  if (pairing.resultType === "PENALTY") return `−${pairing.calculatedDiff ?? 0}`;
+  if (pairing.resultType === "DRAW") return "เสมอ 0";
+  return signed(pairing.calculatedDiff ?? 0);
+}
+
+/** Draw one pairing inside a half-width block. Pairing has two player info columns; result adds a third. */
 function drawPairHalf(doc: Doc, x: number, top: number, pairing: Pairing, players: Map<string, Player>, layout: HalfLayout): void {
-  const { seatW, centerW, athleteW, withResult } = layout;
-  // Result rows reserve center space for the score, so their names run a touch smaller to fit.
-  const nameSize = withResult ? 8.5 : 9;
+  const { playerW, resultW, innerGap, padX, withResult } = layout;
+  const nameSize = withResult ? 8.2 : 9.1;
+  const nameY = top + 18;
+  const schoolY = top + 39;
   const athlete = (code: string | null, player: Player | undefined, seat: number, blockX: number) => {
     seatBadge(doc, blockX, top, code ? seat : null);
-    const textX = blockX + seatW;
+    const textX = blockX + PLAYER_SEAT_W;
+    const maxWidth = playerW - PLAYER_SEAT_W - 2;
     if (code) {
-      text(doc, codeName(code, player), textX, top + 17, { size: nameSize, bold: true, maxWidth: athleteW - seatW });
-      text(doc, player?.school ?? "", textX, top + 31, { size: 7.5, color: MUTED, maxWidth: athleteW - seatW });
+      text(doc, codeName(code, player), textX, nameY, { size: nameSize, bold: true, maxWidth });
+      text(doc, player?.school ?? "", textX, schoolY, { size: 7.4, color: MUTED, maxWidth });
     } else {
-      text(doc, "บาย — ไม่มีคู่แข่งขัน", textX, top + 24, { size: 8.5, color: MUTED, maxWidth: athleteW - seatW });
+      text(doc, "บาย — ไม่มีคู่แข่งขัน", textX, top + 30, { size: 8.5, color: MUTED, maxWidth });
     }
   };
   const one = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
   const two = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
-  const centerX = x + seatW + athleteW;
-  athlete(pairing.playerOneId, one, seatOf(pairing.tableNumber, 1), x);
-  text(doc, "พบ", centerX + centerW / 2, top + (withResult ? 17 : 24), { size: 9.5, bold: true, color: ACCENT, align: "center" });
+  const playerOneX = x + padX;
+  const playerTwoX = playerOneX + playerW + innerGap;
+  athlete(pairing.playerOneId, one, seatOf(pairing.tableNumber, 1), playerOneX);
+  athlete(pairing.playerTwoId, two, seatOf(pairing.tableNumber, 2), playerTwoX);
   if (withResult) {
-    const score = pairing.resultType === "PENALTY" ? "ลงดาบ" : isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
-    const diff = !isRecorded(pairing) ? ""
-      : pairing.resultType === "PENALTY" ? `−${pairing.calculatedDiff ?? 0}`
-      : pairing.resultType === "DRAW" ? "เสมอ 0"
-      : signed(pairing.calculatedDiff ?? 0);
-    text(doc, score, centerX + centerW / 2, top + 29, { size: 9.5, bold: true, align: "center" });
-    if (diff) text(doc, diff, centerX + centerW / 2, top + 38, { size: 7.5, color: MUTED, align: "center" });
+    const resultX = playerTwoX + playerW + innerGap;
+    const centerX = resultX + resultW / 2;
+    text(doc, resultLabel(pairing), centerX, top + 17, { size: 8.2, bold: true, color: ACCENT, align: "center", maxWidth: resultW });
+    text(doc, scoreText(pairing), centerX, top + 35, { size: 9.5, bold: true, align: "center", maxWidth: resultW });
+    const diff = diffText(pairing);
+    if (diff) text(doc, diff, centerX, top + 48, { size: 7.4, color: MUTED, align: "center", maxWidth: resultW });
   }
-  athlete(pairing.playerTwoId, two, seatOf(pairing.tableNumber, 2), centerX + centerW);
+}
+
+function tableColumns(layout: HalfLayout): Column[] {
+  const halfXs = [MARGIN, MARGIN + layout.halfW + layout.gap];
+  return halfXs.flatMap((halfX) => {
+    const playerOneX = halfX + layout.padX;
+    const playerTwoX = playerOneX + layout.playerW + layout.innerGap;
+    const columns: Column[] = [
+      { header: "Player1Info", x: playerOneX, width: layout.playerW },
+      { header: "Player2Info", x: playerTwoX, width: layout.playerW },
+    ];
+    if (layout.withResult) columns.push({ header: "Result", x: playerTwoX + layout.playerW + layout.innerGap, width: layout.resultW, align: "center" });
+    return columns;
+  });
+}
+
+function pairCellColor(rowIndex: number, columnIndex: number): RGB {
+  return (rowIndex + columnIndex) % 2 === 0 ? PAIR_BG_A : PAIR_BG_B;
 }
 
 function buildTableDoc(card: TournamentCard, gameNumber: number, meta: PdfMeta, docType: string, withResult: boolean): jsPDF {
@@ -287,25 +354,23 @@ function buildTableDoc(card: TournamentCard, gameNumber: number, meta: PdfMeta, 
   drawTitle(doc, card, meta, docType, `เกม ${gameNumber}`);
   const layout = halfLayout(doc, withResult);
 
-  // A "table" is two consecutive pairings (four seats). Grouping them per row shows one physical
-  // table per record and doubles the density to 20 pairings a page.
+  // A "table" is two consecutive pairings (four seats). Grouping them per row keeps the page dense
+  // while each pair still reads as one colored cell.
   const rows: [Pairing, Pairing | undefined][] = [];
   for (let index = 0; index < pairings.length; index += 2) rows.push([pairings[index], pairings[index + 1]]);
 
-  const columns: Column[] = [
-    { header: "ที่นั่ง · นักกีฬา", x: MARGIN, width: layout.halfW },
-    { header: "ที่นั่ง · นักกีฬา", x: MARGIN + layout.halfW + layout.gap, width: layout.halfW },
-  ];
+  const columns = tableColumns(layout);
   const header = () => drawColumnHeader(doc, columns, 20);
   header();
 
   rows.forEach(([pairA, pairB], index) => {
-    ensureRoom(doc, TABLE_ROW_H, header);
+    ensureRoom(doc, layout.rowH, header);
     const top = doc.y;
-    if (index % 2 === 1) fillBand(doc, top, TABLE_ROW_H, ZEBRA);
+    fillCell(doc, MARGIN, top, layout.halfW, layout.rowH - 2, pairCellColor(index, 0));
+    if (pairB) fillCell(doc, MARGIN + layout.halfW + layout.gap, top, layout.halfW, layout.rowH - 2, pairCellColor(index, 1));
     drawPairHalf(doc, MARGIN, top, pairA, players, layout);
     if (pairB) drawPairHalf(doc, MARGIN + layout.halfW + layout.gap, top, pairB, players, layout);
-    doc.y += TABLE_ROW_H;
+    doc.y += layout.rowH;
   });
 
   footer(doc, formatNow());
