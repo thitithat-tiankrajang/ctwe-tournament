@@ -33,12 +33,22 @@ public record RuntimeSettings(
     }
 
     public static RuntimeSettings fromRows(Map<String, String> rows, Instant updatedAt) {
+        return fromRows(rows, updatedAt, MAX_PUBLIC_SSE_CEILING);
+    }
+
+    /**
+     * The public ceiling is deploy-time configurable (MAX_PUBLIC_SSE_CEILING env): on event days
+     * the operator upgrades the Render instance and raises the ceiling together, then the admin
+     * Realtime panel can set the runtime cap anywhere below it. The default protects the small
+     * everyday instance exactly as before.
+     */
+    public static RuntimeSettings fromRows(Map<String, String> rows, Instant updatedAt, int publicSseCeiling) {
         RuntimeSettings base = defaults();
         return new RuntimeSettings(
             bool(rows, "realtime.enabled", base.realtimeEnabled()),
             bool(rows, "realtime.sse-enabled", base.sseEnabled()),
             false, // SSE-only architecture; legacy database rows cannot re-enable client polling.
-            clamped(rows, "realtime.max-public-sse-connections", base.maxPublicSseConnections(), 0, MAX_PUBLIC_SSE_CEILING),
+            clamped(rows, "realtime.max-public-sse-connections", Math.min(base.maxPublicSseConnections(), publicSseCeiling), 0, publicSseCeiling),
             clamped(rows, "realtime.max-staff-sse-connections", base.maxStaffSseConnections(), 0, MAX_STAFF_SSE_CEILING),
             clamped(rows, "realtime.polling-interval-ms", base.pollingIntervalMs(), MIN_POLLING_INTERVAL_MS, MAX_POLLING_INTERVAL_MS),
             clamped(rows, "realtime.heartbeat-interval-ms", base.heartbeatIntervalMs(), MIN_HEARTBEAT_INTERVAL_MS, MAX_HEARTBEAT_INTERVAL_MS),

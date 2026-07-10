@@ -233,7 +233,10 @@ public class CardController {
     @PostMapping("/{cardId}/pairings/confirm")
     public CardDtos.CardResponse confirm(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        CardDtos.CardResponse card = changed(cardId, () -> service.confirmPairingPreview(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changedWithPublicDelta(cardId,
+            () -> service.confirmPairingPreview(cardId, authentication.getName()),
+            (result, version) -> events.publishPublicPairings(
+                cardId, version, result.currentGame(), publicPairingsOf(cardId, result.currentGame())));
         push.pairingPublished(cardId, card.currentGame());
         return card;
     }
@@ -241,12 +244,14 @@ public class CardController {
     @PostMapping("/{cardId}/pairings/publish-next")
     public CardDtos.CardResponse publishNextPairing(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        long previousPublicVersion = publicCards.version(cardId);
-        // changed() already notifies viewer streams on the bump; here the bump also gates Web Push.
-        CardDtos.CardResponse card = changed(cardId, () -> service.publishPairResultDestination(cardId, authentication.getName()));
-        if (publicCards.version(cardId) > previousPublicVersion)
-            push.pairingPublished(cardId, card.currentGame() + 1);
-        return card;
+        // Viewer streams receive the destination game's rows as data; the bump also gates Web Push.
+        return changedWithPublicDelta(cardId,
+            () -> service.publishPairResultDestination(cardId, authentication.getName()),
+            (result, version) -> {
+                int destinationGame = result.currentGame() + 1;
+                events.publishPublicPairings(cardId, version, destinationGame, publicPairingsOf(cardId, destinationGame));
+                push.pairingPublished(cardId, destinationGame);
+            });
     }
 
     @PostMapping("/{cardId}/results/review")
@@ -264,7 +269,21 @@ public class CardController {
     @PostMapping("/{cardId}/results/publish")
     public CardDtos.CardResponse publishResults(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        CardDtos.CardResponse card = changed(cardId, () -> service.publishResults(cardId, authentication.getName()));
+        CardDtos.CardResponse card = changedWithPublicDelta(cardId,
+            () -> service.publishResults(cardId, authentication.getName()),
+            (result, version) -> {
+                // Viewers hold every result already (streamed live); the publish delta is only the
+                // confirmation + the card's new public stage, read from the public projection.
+                CardDtos.CardResponse pub = publicCards.get(cardId);
+                CardDtos.SnapshotResponse confirmed = pub.snapshots().stream()
+                    .filter(item -> item.confirmedAt() != null && !item.confirmedAt().isBlank())
+                    .max(java.util.Comparator.comparingInt(item ->
+                        item.gameNumbers().stream().mapToInt(Integer::intValue).max().orElse(0)))
+                    .orElseThrow(() -> new IllegalStateException("published card has no confirmed snapshot"));
+                events.publishPublicSnapshot(cardId, version, new CardEventPublisher.SnapshotPublishEvent(
+                    cardId, version, java.time.Instant.now(), confirmed.id(), confirmed.gameNumbers(),
+                    confirmed.confirmedAt(), pub.runtimeStage(), pub.currentGame()));
+            });
         CardDtos.SnapshotResponse snapshot = card.snapshots().stream()
             .filter(item -> item.confirmedAt() != null && !item.confirmedAt().isBlank())
             .max(java.util.Comparator.comparingInt(item ->
@@ -325,6 +344,40 @@ public class CardController {
         events.publish(card);
         publishPublicIfBumped(cardId, publicVersionBefore);
         return card;
+    }
+
+    /**
+     * Like {@link #changed}, but for the big publishes the viewer streams receive the DATA itself
+     * (new pairings / snapshot confirmation) instead of a bare "something changed" bump, so no
+     * viewer has to refetch the card. If building the delta fails for any reason, fall back to the
+     * generic bump — viewers then resync the old way and nothing is ever silently lost.
+     */
+    private CardDtos.CardResponse changedWithPublicDelta(
+        UUID cardId,
+        Supplier<CardDtos.CardResponse> action,
+        java.util.function.ObjLongConsumer<CardDtos.CardResponse> publicDelta
+    ) {
+        long publicVersionBefore = publicCards.version(cardId);
+        CardDtos.CardResponse card = action.get();
+        events.publish(card);
+        long current = publicCards.version(cardId);
+        if (current > publicVersionBefore) {
+            try {
+                publicDelta.accept(card, current);
+            } catch (RuntimeException deltaFailed) {
+                events.publishPublic(cardId, current);
+            }
+        }
+        return card;
+    }
+
+    /** The just-published public pairing rows of one game (public projection, from the read cache). */
+    private List<CardDtos.PairingResponse> publicPairingsOf(UUID cardId, int gameNumber) {
+        return publicCards.get(cardId).snapshots().stream()
+            .filter(snapshot -> snapshot.gameNumbers().contains(gameNumber))
+            .flatMap(snapshot -> snapshot.pairings().stream())
+            .filter(pairing -> pairing.gameNumber() == gameNumber)
+            .toList();
     }
 
     private void requireFinalEditCapability(UUID cardId, String password, Authentication authentication) {

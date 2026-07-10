@@ -29,15 +29,20 @@ public class RuntimeSettingsService {
     private final JdbcTemplate jdbc;
     private final boolean loadTestMode;
     private final int loadTestMaxSseConnections;
+    private final int publicSseCeiling;
 
     public RuntimeSettingsService(
         JdbcTemplate jdbc,
         @Value("${app.load-test.enabled:false}") boolean loadTestMode,
-        @Value("${app.load-test.max-sse-connections:10000}") int loadTestMaxSseConnections
+        @Value("${app.load-test.max-sse-connections:10000}") int loadTestMaxSseConnections,
+        @Value("${app.realtime.max-public-sse-ceiling:1500}") int publicSseCeiling
     ) {
         this.jdbc = jdbc;
         this.loadTestMode = loadTestMode;
         this.loadTestMaxSseConnections = loadTestMaxSseConnections;
+        this.publicSseCeiling = Math.max(1, publicSseCeiling);
+        if (publicSseCeiling != 1500)
+            log.info("Public SSE ceiling set to {} (event-day override)", publicSseCeiling);
         if (loadTestMode) {
             if (loadTestMaxSseConnections < 1)
                 throw new IllegalArgumentException("MAX_SSE_CONNECTIONS must be at least 1 in load-test mode");
@@ -58,7 +63,7 @@ public class RuntimeSettingsService {
             if (updated != null && (latest[0] == null || updated.toInstant().isAfter(latest[0])))
                 latest[0] = updated.toInstant();
         });
-        return withLoadTestOverride(RuntimeSettings.fromRows(rows, latest[0]));
+        return withLoadTestOverride(RuntimeSettings.fromRows(rows, latest[0], publicSseCeiling));
     }
 
     /**
@@ -106,7 +111,7 @@ public class RuntimeSettingsService {
             if (updated != null && (latest[0] == null || updated.toInstant().isAfter(latest[0])))
                 latest[0] = updated.toInstant();
         });
-        return withLoadTestOverride(RuntimeSettings.fromRows(rows, latest[0]));
+        return withLoadTestOverride(RuntimeSettings.fromRows(rows, latest[0], publicSseCeiling));
     }
 
     private void upsert(String key, String value, String actor) {

@@ -46,6 +46,15 @@ export interface RealtimeSettings {
 
 export type RealtimeSettingsInput = Omit<RealtimeSettings, "activePublicStreams" | "activeStaffStreams" | "updatedAt">;
 
+/** Ranking-publish delta pushed over SSE: the snapshot confirmation plus the card's new stage. */
+export interface SnapshotPublishPatch {
+  snapshotId: string;
+  gameNumbers: number[];
+  confirmedAt: string;
+  runtimeStage: TournamentCard["runtimeStage"];
+  currentGame: number;
+}
+
 interface TournamentState {
   cards: TournamentCard[];
   auth: AuthState;
@@ -59,6 +68,8 @@ interface TournamentState {
   syncCard: (cardId: string, publicVersion?: number) => Promise<void>;
   applyCardState: (card: TournamentCard) => void;
   applyResultPatch: (cardId: string, version: number, changedPairings: Pairing[]) => boolean;
+  applyPairingsPatch: (cardId: string, version: number, gameNumber: number, pairings: Pairing[]) => boolean;
+  applySnapshotPublish: (cardId: string, version: number, publish: SnapshotPublishPatch) => boolean;
   loadAudit: (cardId: string) => Promise<AuditEntry[]>;
   refreshAuth: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
@@ -340,6 +351,72 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     return patched;
   };
 
+  /**
+   * A pairing publish, applied from SSE data: splice the game's rows into the open (unconfirmed)
+   * snapshot — creating it when this is the block's first game — so no refetch is needed.
+   */
+  const applyPairingsPatch = (cardId: string, version: number, gameNumber: number, pairings: Pairing[]) => {
+    let patched = false;
+    let mutated = false;
+    set((state) => {
+      const cards = state.cards.map((card) => {
+        if (card.id !== cardId) return card;
+        if (card.version >= version) {
+          patched = true;
+          return card;
+        }
+        patched = true;
+        mutated = true;
+        const index = card.snapshots.findIndex((snapshot) => !snapshot.confirmedAt);
+        const rows = [...pairings].sort((a, b) => a.tableNumber - b.tableNumber);
+        if (index < 0) {
+          const snapshot = { id: `preview-${gameNumber}`, gameNumbers: [gameNumber], pairings: rows, confirmedAt: "" };
+          return { ...card, snapshots: [...card.snapshots, snapshot], version, currentGame: Math.max(card.currentGame, gameNumber) };
+        }
+        const open = card.snapshots[index];
+        const keptPairings = open.pairings.filter((pairing) => (pairing.gameNumber ?? open.gameNumbers[0]) !== gameNumber);
+        const gameNumbers = open.gameNumbers.includes(gameNumber) ? open.gameNumbers : [...open.gameNumbers, gameNumber].sort((a, b) => a - b);
+        const merged = [...keptPairings, ...rows]
+          .sort((a, b) => (a.gameNumber ?? 0) - (b.gameNumber ?? 0) || a.tableNumber - b.tableNumber);
+        const snapshots = card.snapshots.map((snapshot, i) =>
+          i === index ? { ...snapshot, gameNumbers, pairings: merged } : snapshot);
+        return { ...card, snapshots, version };
+      });
+      return mutated ? { cards, error: null } : state;
+    });
+    return patched;
+  };
+
+  /**
+   * A ranking publish, applied from SSE data: the viewer already holds every result, so confirming
+   * the open snapshot locally (plus the card's new stage) is all a publish means to the public.
+   */
+  const applySnapshotPublish = (cardId: string, version: number, publish: SnapshotPublishPatch) => {
+    let patched = false;
+    let mutated = false;
+    set((state) => {
+      const cards = state.cards.map((card) => {
+        if (card.id !== cardId) return card;
+        if (card.version >= version) {
+          patched = true;
+          return card;
+        }
+        const index = card.snapshots.findIndex((snapshot) =>
+          !snapshot.confirmedAt && snapshot.gameNumbers.some((game) => publish.gameNumbers.includes(game)));
+        if (index < 0) return card; // nothing to confirm locally — caller falls back to a refetch
+        patched = true;
+        mutated = true;
+        const snapshots = card.snapshots.map((snapshot, i) =>
+          i === index
+            ? { ...snapshot, id: publish.snapshotId, gameNumbers: publish.gameNumbers, confirmedAt: publish.confirmedAt }
+            : snapshot);
+        return { ...card, snapshots, version, runtimeStage: publish.runtimeStage, currentGame: publish.currentGame };
+      });
+      return mutated ? { cards, error: null } : state;
+    });
+    return patched;
+  };
+
   return {
     cards: [],
     auth: anonymous,
@@ -376,6 +453,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     applyCardState: replaceCard,
     applyResultPatch,
+    applyPairingsPatch,
+    applySnapshotPublish,
     async loadAudit(cardId) {
       // Audit is no longer in the card payload (kept the hot path cheap); fetch it on demand for the audit page.
       return request<AuditEntry[]>(`/api/cards/${cardId}/audit`);

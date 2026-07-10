@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { Pairing, PublicCardVersion } from "@/domain/tournament/types";
+import type { Pairing, PublicCardVersion, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { useTournamentStore } from "./store";
 import { useRealtimeConfig } from "./use-realtime-config";
@@ -10,6 +10,25 @@ interface PublicResultEvent {
   cardId: string;
   version: number;
   changedPairings: Pairing[];
+}
+
+/** A pairing publish pushed as data (the new game's rows) — applied without any refetch. */
+interface PublicPairingsEvent {
+  cardId: string;
+  version: number;
+  gameNumber: number;
+  pairings: Pairing[];
+}
+
+/** A ranking publish pushed as the confirmation fact — applied without any refetch. */
+interface PublicSnapshotEvent {
+  cardId: string;
+  version: number;
+  snapshotId: string;
+  gameNumbers: number[];
+  confirmedAt: string;
+  runtimeStage: TournamentCard["runtimeStage"];
+  currentGame: number;
 }
 
 /** Spread broadcast-triggered full refetches so thousands of viewers do not hit the origin in the same second. */
@@ -32,6 +51,8 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
   const cards = useTournamentStore((state) => state.cards);
   const syncCard = useTournamentStore((state) => state.syncCard);
   const applyResultPatch = useTournamentStore((state) => state.applyResultPatch);
+  const applyPairingsPatch = useTournamentStore((state) => state.applyPairingsPatch);
+  const applySnapshotPublish = useTournamentStore((state) => state.applySnapshotPublish);
   const config = useRealtimeConfig();
   const versionsRef = useRef(new Map<string, number>());
 
@@ -89,10 +110,26 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
     const refreshOpenCard = (event?: Event) => {
       try {
         const payload = JSON.parse((event as MessageEvent<string> | undefined)?.data ?? "") as PublicCardVersion;
+        // A delta event (result/pairings/publish) may already have advanced us to this version —
+        // the generic bump is then old news and must not trigger a redundant refetch.
+        const known = versionsRef.current.get(cardId);
+        if (known !== undefined && payload.version <= known) return;
         syncSoon(payload.version);
       } catch {
         syncSoon();
       }
+    };
+
+    /** Shared guard for delta events: apply exactly version+1, resync on any gap or failure. */
+    const applyDelta = (version: number, apply: () => boolean) => {
+      const known = versionsRef.current.get(cardId);
+      if (known !== undefined && version <= known) return;
+      if (known === undefined || version !== known + 1) {
+        void syncCard(cardId, version);
+        return;
+      }
+      if (apply()) versionsRef.current.set(cardId, version);
+      else void syncCard(cardId, version);
     };
 
     const connect = () => {
@@ -123,16 +160,37 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
       stream.addEventListener("result", (event) => {
         try {
           const payload = JSON.parse((event as MessageEvent<string>).data) as PublicResultEvent;
-          const currentVersion = versionsRef.current.get(cardId);
           if (payload.cardId !== cardId || payload.changedPairings === undefined)
             throw new Error("Malformed public result event");
-          if (currentVersion === undefined || payload.version !== currentVersion + 1) {
-            void syncCard(cardId, payload.version);
-            return;
-          }
-          const patched = applyResultPatch(cardId, payload.version, payload.changedPairings);
-          if (patched) versionsRef.current.set(cardId, payload.version);
-          else void syncCard(cardId, payload.version);
+          applyDelta(payload.version, () => applyResultPatch(cardId, payload.version, payload.changedPairings));
+        } catch {
+          void syncCard(cardId);
+        }
+      });
+      // A pairing publish arrives as data: splice the new game's rows in, no refetch.
+      stream.addEventListener("pairings", (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as PublicPairingsEvent;
+          if (payload.cardId !== cardId || payload.pairings === undefined)
+            throw new Error("Malformed public pairings event");
+          applyDelta(payload.version, () => applyPairingsPatch(cardId, payload.version, payload.gameNumber, payload.pairings));
+        } catch {
+          void syncCard(cardId);
+        }
+      });
+      // A ranking publish arrives as the confirmation fact: mark the snapshot confirmed locally.
+      stream.addEventListener("publish", (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as PublicSnapshotEvent;
+          if (payload.cardId !== cardId || payload.snapshotId === undefined)
+            throw new Error("Malformed public publish event");
+          applyDelta(payload.version, () => applySnapshotPublish(cardId, payload.version, {
+            snapshotId: payload.snapshotId,
+            gameNumbers: payload.gameNumbers,
+            confirmedAt: payload.confirmedAt,
+            runtimeStage: payload.runtimeStage,
+            currentGame: payload.currentGame,
+          }));
         } catch {
           void syncCard(cardId);
         }
@@ -156,5 +214,5 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
       timers.forEach((timer) => window.clearTimeout(timer));
       source?.close();
     };
-  }, [applyResultPatch, cardId, enabled, config.realtimeEnabled, config.sseEnabled, config.pollingEnabled, config.pollingIntervalMs, config.reconnectDelayMs, syncCard]);
+  }, [applyResultPatch, applyPairingsPatch, applySnapshotPublish, cardId, enabled, config.realtimeEnabled, config.sseEnabled, config.pollingEnabled, config.pollingIntervalMs, config.reconnectDelayMs, syncCard]);
 }

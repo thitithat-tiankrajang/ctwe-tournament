@@ -7,7 +7,7 @@ import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { rankingAfterGame } from "@/domain/tournament/history";
-import type { FinalSlot, Pairing, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
+import type { FinalSlot, Pairing, PairingSnapshot, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
@@ -55,6 +55,23 @@ function AthleteCell({ player, gibsonized = false }: { player?: Player; gibsoniz
 
 function isRecorded(pairing: Pairing) {
   return pairing.scoreOne != null && pairing.scoreTwo != null && Boolean(pairing.resultType);
+}
+
+/**
+ * The overview shows what the audience is meant to see. Rows of an unconfirmed snapshot count only
+ * once the director published them: PAIR_RESULT materialises the destination game's pairings while
+ * the source game is still being scored, and those stay backstage (even for logged-in staff, whose
+ * card payload contains them) until the explicit "Publish Pairing" milestone.
+ */
+function overviewPairings(snapshot: PairingSnapshot) {
+  return snapshot.confirmedAt ? snapshot.pairings : snapshot.pairings.filter((pairing) => pairing.pairingPublished);
+}
+
+/** Games of a snapshot that have at least one overview-visible pairing row. */
+function overviewGames(snapshot: PairingSnapshot) {
+  if (snapshot.confirmedAt) return snapshot.gameNumbers;
+  const games = new Set(overviewPairings(snapshot).map((pairing) => pairing.gameNumber ?? snapshot.gameNumbers[0]));
+  return snapshot.gameNumbers.filter((game) => games.has(game));
 }
 
 function RankingTable({ players, rankingPositions, selectedId, onPlayerClick, resizableColumns }: {
@@ -160,22 +177,31 @@ function CrownBadge() {
   return <span className="final-history-crown">★</span>;
 }
 
-function defaultOverviewState(card: TournamentCard | undefined): { key: string; view: OverviewView } | null {
+/**
+ * The card's current headline state, split into two signals with different jobs:
+ *
+ * - `forcedKey` changes ONLY on the big publishes — a pairing publish (`pairing:N`) or a ranking
+ *   publish (`ranking:N`) — and steering follows it live: whoever is watching gets switched to
+ *   that view the moment the director publishes.
+ * - `entryView` additionally prefers Result once the game has its first recorded score, but it is
+ *   applied only when (re)entering the card — a result trickling in never yanks the viewer away
+ *   from whatever they chose to look at.
+ */
+function overviewViewState(card: TournamentCard | undefined): { forcedKey: string; forcedView: OverviewView; entryView: OverviewView } | null {
   if (!card) return null;
   const visibleSnapshots = card.snapshots.filter((snapshot) =>
     Boolean(snapshot.confirmedAt)
     || card.runtimeStage !== "PAIRING_PREVIEW"
     || !snapshot.gameNumbers.includes(card.currentGame));
-  const latestGame = Math.max(0, ...visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
+  const latestGame = Math.max(0, ...visibleSnapshots.flatMap(overviewGames));
   const activeGame = latestGame > 0 ? latestGame : card.currentGame;
-  const snapshot = visibleSnapshots.find((item) => item.gameNumbers.includes(activeGame));
+  const snapshot = visibleSnapshots.find((item) => overviewGames(item).includes(activeGame));
   if (!snapshot) return null;
-  if (snapshot.confirmedAt) return { key: `ranking:${activeGame}`, view: "ranking" };
-  const currentPairings = snapshot.pairings.filter((pairing) => (pairing.gameNumber ?? activeGame) === activeGame);
-  const hasFirstResult = currentPairings.some((pairing) => pairing.scoreOne !== null || pairing.scoreTwo !== null);
-  return hasFirstResult
-    ? { key: `result:${activeGame}`, view: "result" }
-    : { key: `pairing:${activeGame}`, view: "pairing" };
+  if (snapshot.confirmedAt) return { forcedKey: `ranking:${activeGame}`, forcedView: "ranking", entryView: "ranking" };
+  const currentPairings = overviewPairings(snapshot).filter((pairing) => (pairing.gameNumber ?? activeGame) === activeGame);
+  // Loose != : an unscored pairing arrives with the score fields OMITTED (undefined), not null.
+  const hasFirstResult = currentPairings.some((pairing) => pairing.scoreOne != null || pairing.scoreTwo != null);
+  return { forcedKey: `pairing:${activeGame}`, forcedView: "pairing", entryView: hasFirstResult ? "result" : "pairing" };
 }
 
 /** Read-only card overview (ranking / pairing / results) shared by /cards/[id] and the /tour viewer. */
@@ -194,15 +220,31 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [recordFilter, setRecordFilter] = useState<OverviewRecordFilterValue>({ mode: "player", playerIds: [], schools: [] });
   const viewRefs = useRef<Record<OverviewView, HTMLDivElement | null>>({ ranking: null, pairing: null, result: null });
-  const defaultState = defaultOverviewState(card);
+  const viewState = overviewViewState(card);
+  const enteredCardRef = useRef<string | null>(null);
+  const appliedForcedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     setRecordFilter({ mode: "player", playerIds: [], schools: [] });
   }, [id]);
 
+  // Entering a card applies the entry default (Result once a first score exists); after that, only
+  // the big publishes steer the screen: pairing publish -> Pairing, ranking publish -> Ranking.
+  // A result being recorded mid-game deliberately never forces a view change. Steering happens only
+  // when forcedKey actually advances — a re-run with the same key (StrictMode double-invoke, an
+  // unrelated re-render) must not overwrite what the entry default or the visitor chose.
   useEffect(() => {
-    if (defaultState) setViews(new Set<OverviewView>([defaultState.view]));
-  }, [defaultState?.key]);
+    if (!viewState) return;
+    if (enteredCardRef.current !== id) {
+      enteredCardRef.current = id;
+      appliedForcedKeyRef.current = viewState.forcedKey;
+      setViews(new Set<OverviewView>([viewState.entryView]));
+      return;
+    }
+    if (appliedForcedKeyRef.current === viewState.forcedKey) return;
+    appliedForcedKeyRef.current = viewState.forcedKey;
+    setViews(new Set<OverviewView>([viewState.forcedView]));
+  }, [id, viewState?.forcedKey]);
 
   useEffect(() => {
     if (!selectedRankingPlayerId) return;
@@ -221,15 +263,15 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const visibleSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt) || card.runtimeStage !== "PAIRING_PREVIEW" || !snapshot.gameNumbers.includes(card.currentGame));
   const publishedSnapshots = visibleSnapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const publishedGames = new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
-  const visibleGames = new Set(visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
+  const visibleGames = new Set(visibleSnapshots.flatMap(overviewGames));
   const hasFinalRound = card.finalType !== "NONE" && Boolean(card.finalRound);
   const finalActive = hasFinalRound && (card.runtimeStage === "FINAL_COLLECTION" || card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED");
-  const latestVisibleGame = Math.max(0, ...visibleSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
+  const latestVisibleGame = Math.max(0, ...visibleSnapshots.flatMap(overviewGames));
   const currentVisibleGame = latestVisibleGame > 0 ? latestVisibleGame : card.currentGame;
   const selectedFinal = hasFinalRound && (historyGame === "final" || (historyGame == null && finalActive));
   const selectedGame = typeof historyGame === "number" && visibleGames.has(historyGame) ? historyGame : currentVisibleGame;
-  const selectedSnapshot = visibleSnapshots.find((snapshot) => snapshot.gameNumbers.includes(selectedGame));
-  const selectedPairings = selectedSnapshot?.pairings.filter((pairing) => (pairing.gameNumber ?? selectedGame) === selectedGame) ?? [];
+  const selectedSnapshot = visibleSnapshots.find((snapshot) => overviewGames(snapshot).includes(selectedGame));
+  const selectedPairings = selectedSnapshot ? overviewPairings(selectedSnapshot).filter((pairing) => (pairing.gameNumber ?? selectedGame) === selectedGame) : [];
   const rankingCard = { ...card, snapshots: publishedSnapshots };
   const historicalRanking = selectedGame > 0 ? rankingAfterGame(rankingCard, selectedGame) : [...card.players].sort((a, b) => a.id.localeCompare(b.id));
   const rankingPositions = new Map(historicalRanking.map((player, index) => [player.id, index + 1]));
@@ -249,7 +291,8 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     ? selectedPairings.filter((pairing) => matchesRecordFilter(pairing.playerOneId) || matchesRecordFilter(pairing.playerTwoId))
     : selectedPairings;
   const selectedResultsPublished = Boolean(selectedSnapshot?.confirmedAt);
-  const selectedHasResults = selectedPairings.some((pairing) => pairing.scoreOne !== null || pairing.scoreTwo !== null);
+  // Loose != : an unscored pairing arrives with the score fields OMITTED (undefined), not null.
+  const selectedHasResults = selectedPairings.some((pairing) => pairing.scoreOne != null || pairing.scoreTwo != null);
   const selectedResultsVisible = selectedResultsPublished || selectedHasResults;
   const historyPlayer = historyPlayerId ? players.get(historyPlayerId) : undefined;
   const historyCard = { ...rankingCard, snapshots: publishedSnapshots.filter((snapshot) => Math.max(...snapshot.gameNumbers) <= selectedGame) };
@@ -307,9 +350,14 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
                   </div>
                 </div>
                 {!selectedFinal && <div className="segmented overview-view-picker" role="group" aria-label="เลือกมุมมอง">
-                  {(["ranking", "pairing", "result"] as const).map((view) => (
-                    <button key={view} type="button" className={`segment${views.has(view) ? " segment--on" : ""}`} aria-pressed={views.has(view)} onClick={() => toggleView(view)}>{view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result"}</button>
-                  ))}
+                  {(["ranking", "pairing", "result"] as const).map((view) => {
+                    // Result opens only once the game has its first recorded score (or is published).
+                    const unavailable = view === "result" && !selectedResultsVisible;
+                    const active = views.has(view) && !unavailable;
+                    return (
+                      <button key={view} type="button" className={`segment${active ? " segment--on" : ""}`} aria-pressed={active} disabled={unavailable} title={unavailable ? "ผลจะเปิดให้ดูเมื่อมีการบันทึกคะแนนคู่แรกของเกมนี้" : undefined} onClick={() => toggleView(view)}>{view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result"}</button>
+                    );
+                  })}
                 </div>}
               </div>
             )}
@@ -358,22 +406,24 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
             </div>
           )}
 
-          {views.has("result") && (
+          {views.has("result") && selectedResultsVisible && (
             <div ref={(element) => { viewRefs.current.result = element; }} className="overview-view-section">
               <Panel className="overview-data-panel" title={`ผลการแข่งขันเกม ${selectedGame}`}>
-                {selectedResultsVisible
-                  ? <ResultTable pairings={visiblePairings} players={players} storageKey={`${id}:overview:results`} resizableColumns={resizableColumns} />
-                  : <EmptyState icon={<LockKeyhole size={25} />} title="Pairing เผยแพร่แล้ว · รอผลคู่แรก" description="เมื่อเจ้าหน้าที่บันทึกคะแนน ผลการแข่งขันจะปรากฏที่นี่แบบ Realtime" />}
+                <ResultTable pairings={visiblePairings} players={players} storageKey={`${id}:overview:results`} resizableColumns={resizableColumns} />
               </Panel>
             </div>
           )}
 
           <nav className="overview-mobile-nav" aria-label="มุมมองข้อมูลการแข่งขัน">
-            {(["ranking", "pairing", "result"] as const).map((view) => (
-              <button key={view} type="button" className={views.has(view) ? "overview-mobile-nav__button overview-mobile-nav__button--on" : "overview-mobile-nav__button"} aria-pressed={views.has(view)} onClick={() => toggleView(view)}>
-                {view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result"}
-              </button>
-            ))}
+            {(["ranking", "pairing", "result"] as const).map((view) => {
+              const unavailable = view === "result" && !selectedResultsVisible;
+              const active = views.has(view) && !unavailable;
+              return (
+                <button key={view} type="button" className={active ? "overview-mobile-nav__button overview-mobile-nav__button--on" : "overview-mobile-nav__button"} aria-pressed={active} disabled={unavailable} onClick={() => toggleView(view)}>
+                  {view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result"}
+                </button>
+              );
+            })}
           </nav>
         </>
       ))}

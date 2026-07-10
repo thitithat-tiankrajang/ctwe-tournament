@@ -31,7 +31,7 @@ class RuntimeSettingsServiceLoadTestModeTest {
 
     @Test
     void productionModeKeepsDatabaseValueAndCeiling() {
-        var service = new RuntimeSettingsService(jdbcReturning("999999"), false, 10_000);
+        var service = new RuntimeSettingsService(jdbcReturning("999999"), false, 10_000, 1500);
 
         RuntimeSettings settings = service.current();
 
@@ -41,7 +41,7 @@ class RuntimeSettingsServiceLoadTestModeTest {
 
     @Test
     void loadTestModeOverridesPublicCapAboveCeiling() {
-        var service = new RuntimeSettingsService(jdbcReturning("800"), true, 10_000);
+        var service = new RuntimeSettingsService(jdbcReturning("800"), true, 10_000, 1500);
 
         RuntimeSettings settings = service.current();
 
@@ -54,15 +54,25 @@ class RuntimeSettingsServiceLoadTestModeTest {
 
     @Test
     void loadTestModeRejectsNonPositiveOverride() {
-        assertThatThrownBy(() -> new RuntimeSettingsService(jdbcReturning("800"), true, 0))
+        assertThatThrownBy(() -> new RuntimeSettingsService(jdbcReturning("800"), true, 0, 1500))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("MAX_SSE_CONNECTIONS");
     }
 
     @Test
     void loadTestModeOffIsIdentity() {
-        var service = new RuntimeSettingsService(jdbcReturning("800"), false, 10_000);
+        var service = new RuntimeSettingsService(jdbcReturning("800"), false, 10_000, 1500);
 
         assertThat(service.current().maxPublicSseConnections()).isEqualTo(800);
+    }
+
+    @Test
+    void eventDayCeilingRaisesTheAdminCapRange() {
+        // Same database row (4000) is clamped by the everyday ceiling but honored on event days.
+        var everyday = new RuntimeSettingsService(jdbcReturning("4000"), false, 10_000, 1500);
+        var eventDay = new RuntimeSettingsService(jdbcReturning("4000"), false, 10_000, 6000);
+
+        assertThat(everyday.current().maxPublicSseConnections()).isEqualTo(1500);
+        assertThat(eventDay.current().maxPublicSseConnections()).isEqualTo(4000);
     }
 }

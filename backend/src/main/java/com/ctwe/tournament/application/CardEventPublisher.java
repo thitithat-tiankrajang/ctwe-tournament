@@ -193,6 +193,39 @@ public class CardEventPublisher {
     }
 
     /**
+     * A freshly published pairing, pushed as data. Viewers splice the rows into their in-memory
+     * card instead of refetching it, so a publish costs the origin ZERO follow-up requests no
+     * matter how many viewers are watching — the delta (a few KB) rides the streams they already
+     * hold. The client falls back to a full refetch whenever the version sequence has a gap.
+     */
+    public void publishPublicPairings(
+        UUID cardId,
+        long publicVersion,
+        int gameNumber,
+        List<CardDtos.PairingResponse> pairings
+    ) {
+        List<SseEmitter> cardEmitters = publicEmitters.get(cardId);
+        if (cardEmitters == null || cardEmitters.isEmpty()) return;
+
+        PairingsPublishEvent event = new PairingsPublishEvent(cardId, publicVersion, Instant.now(), gameNumber, pairings);
+        for (SseEmitter emitter : cardEmitters)
+            send(publicEmitters, cardId, emitter, "pairings", publicVersion, event);
+    }
+
+    /**
+     * A ranking publish, pushed as the tiny fact it is: "this snapshot is now confirmed" plus the
+     * card's new public stage. Viewers already hold every result (streamed live), so they mark the
+     * snapshot confirmed and recompute standings locally — again zero follow-up requests.
+     */
+    public void publishPublicSnapshot(UUID cardId, long publicVersion, SnapshotPublishEvent event) {
+        List<SseEmitter> cardEmitters = publicEmitters.get(cardId);
+        if (cardEmitters == null || cardEmitters.isEmpty()) return;
+
+        for (SseEmitter emitter : cardEmitters)
+            send(publicEmitters, cardId, emitter, "publish", publicVersion, event);
+    }
+
+    /**
      * Detects and prunes dead connections; comments are invisible to EventSource handlers.
      * The scheduler ticks fast so the runtime-configured interval applies without a restart.
      */
@@ -286,4 +319,9 @@ public class CardEventPublisher {
     public record CardStateEvent(UUID cardId, long version, Instant updatedAt, CardDtos.CardResponse card) {}
     public record ResultChangeEvent(UUID cardId, long version, Instant updatedAt,
                                     List<CardDtos.PairingResponse> changedPairings) {}
+    public record PairingsPublishEvent(UUID cardId, long version, Instant updatedAt, int gameNumber,
+                                       List<CardDtos.PairingResponse> pairings) {}
+    public record SnapshotPublishEvent(UUID cardId, long version, Instant updatedAt, String snapshotId,
+                                       List<Integer> gameNumbers, String confirmedAt,
+                                       com.ctwe.tournament.domain.model.RuntimeStage runtimeStage, int currentGame) {}
 }

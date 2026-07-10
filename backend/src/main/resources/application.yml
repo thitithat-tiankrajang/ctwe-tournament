@@ -63,6 +63,10 @@ app:
   load-test:
     enabled: ${LOAD_TEST_MODE:false}
     max-sse-connections: ${MAX_SSE_CONNECTIONS:10000}
+  realtime:
+    # Hard ceiling for the admin-tunable public SSE cap. Raise together with the Render instance
+    # (and TOMCAT_MAX_CONNECTIONS) on high-traffic days; the everyday default protects Starter.
+    max-public-sse-ceiling: ${MAX_PUBLIC_SSE_CEILING:1500}
   security:
     allowed-origins: "${CORS_ALLOWED_ORIGINS:https://ctwe-tournament.ctwe.workers.dev,https://ct-we.com,http://192.168.1.36:3000}"
   # SSE caps, heartbeat, polling interval and reconnect delay moved to the runtime_settings table
