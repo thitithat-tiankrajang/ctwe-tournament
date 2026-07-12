@@ -26,6 +26,26 @@ class PairingStrategiesTest {
     }
 
     @Test
+    void rankingFollowsDisplayedCumulativeDiffBeforeHiddenTieBreakers() {
+        // B beat A head-to-head and outscored everyone, but the displayed ranking sorts by
+        // capped diff — pairing must agree with what the standings pages show.
+        var players = List.of(
+            score("A", 4, 100, 100, 100),
+            score("B", 4, 80, 999, 999),
+            score("C", 4, 60, 500, 500),
+            score("D", 4, 40, 400, 400)
+        );
+        var context = new PairingStrategy.PairingContext(2, List.of(), Map.of(
+            "B", Map.of("A", 2),
+            "A", Map.of("B", 0)
+        ));
+
+        assertThat(new KingOfTheHillStrategy().generate(players, context)).containsExactly(
+            pair("A", "B"), pair("C", "D")
+        );
+    }
+
+    @Test
     void rankingUsesHeadToHeadBeforeScoreForAndRawDiffWhenWinPointsAreTied() {
         var players = List.of(
             score("1", 4, 0, 10, -100),

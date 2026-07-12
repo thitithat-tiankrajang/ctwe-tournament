@@ -36,6 +36,11 @@ public interface PairingStrategy {
 
     private static Comparator<PlayerScore> rankingWithinSameWinPoints(Map<String, Integer> headToHeadPoints) {
         return (first, second) -> {
+            // Capped cumulative diff is the tie-break every ranking surface shows (standings pages,
+            // PDF, final seeding); pairing must follow it or pairs contradict the visible อันดับ.
+            int byDiff = Integer.compare(second.diff(), first.diff());
+            if (byDiff != 0) return byDiff;
+
             int byHeadToHead = Integer.compare(
                 headToHeadPoints.getOrDefault(second.playerId(), 0),
                 headToHeadPoints.getOrDefault(first.playerId(), 0)
