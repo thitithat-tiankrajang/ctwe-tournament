@@ -1,4 +1,5 @@
 import type { Pairing, PairingRuleType, Player } from "./types";
+import { comparePlayerCodes } from "./player-code";
 
 export interface PairingStrategy {
   readonly type: PairingRuleType;
@@ -6,7 +7,7 @@ export interface PairingStrategy {
 }
 
 const ranked = (players: Player[]) =>
-  [...players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || a.id.localeCompare(b.id));
+  [...players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || comparePlayerCodes(a.id, b.id));
 
 const pairSequentially = (players: Player[], gameNumber: number): Pairing[] => {
   const result: Pairing[] = [];

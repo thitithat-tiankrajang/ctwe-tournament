@@ -188,16 +188,16 @@ function drawThaiCluster(doc: Doc, cluster: ThaiCluster, x: number, y: number, s
   const markCenter = x + prefixW + baseW * 0.5;
   cluster.lower.forEach((mark, index) => {
     const markW = measure(doc, mark, size, bold);
-    doc.pdf.text(mark, markCenter - markW / 2, y + 1.2 + index * 2);
+    doc.pdf.text(mark, markCenter - markW / 2, y + index * 1.8);
   });
   cluster.upper.forEach((mark, index) => {
     const markW = measure(doc, mark, size, bold);
-    doc.pdf.text(mark, markCenter - markW / 2, y - 0.6 - index * 3.2);
+    doc.pdf.text(mark, markCenter - markW / 2, y - index * 1.8);
   });
   cluster.tone.forEach((mark, index) => {
     const markW = measure(doc, mark, size, bold);
-    const stackedOffset = cluster.upper.length > 0 ? 5.4 : 0.8;
-    doc.pdf.text(mark, markCenter - markW / 2, y - stackedOffset - index * 3.2);
+    const stackedOffset = cluster.upper.length > 0 ? Math.max(2.1, size * 0.25) : 0;
+    doc.pdf.text(mark, markCenter - markW / 2, y - stackedOffset - index * 1.8);
   });
   return clusterAdvance(doc, cluster, size, bold);
 }
@@ -425,8 +425,8 @@ function drawPairHalf(doc: Doc, x: number, top: number, pairing: Pairing, player
     const textX = blockX + PLAYER_SEAT_W;
     const maxWidth = playerW - PLAYER_SEAT_W - 2;
     if (code) {
-      text(doc, codeName(code, player), textX, nameY, { size: nameSize, bold: true, maxWidth });
-      text(doc, player?.school ?? "", textX, schoolY, { size: 7.4, color: MUTED, maxWidth });
+      textThai(doc, codeName(code, player), textX, nameY, { size: nameSize, bold: true, maxWidth });
+      textThai(doc, player?.school ?? "", textX, schoolY, { size: 7.4, color: MUTED, maxWidth });
     } else {
       text(doc, "บาย — ไม่มีคู่แข่งขัน", textX, top + 30, { size: 8.5, color: MUTED, maxWidth });
     }

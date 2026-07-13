@@ -1,4 +1,5 @@
 import type { Pairing, PairingSnapshot, Player, TournamentCard } from "./types";
+import { comparePlayerCodes } from "./player-code";
 
 export function snapshotForGame(snapshots: PairingSnapshot[], gameNumber: number) {
   return snapshots.find((snapshot) => snapshot.gameNumbers.includes(gameNumber));
@@ -16,18 +17,17 @@ export interface PlayerHistoryRow {
   opponentId: string;
 }
 
-function hasTwoPlayers(pairing: Pairing): pairing is Pairing & { playerOneId: string; playerTwoId: string } {
-  return Boolean(pairing.playerOneId && pairing.playerTwoId);
+function hasPlayer(pairing: Pairing, playerId: string): boolean {
+  return pairing.playerOneId === playerId || pairing.playerTwoId === playerId;
 }
-type CompletePairing = Pairing & { playerOneId: string; playerTwoId: string };
 
 /** Per-game play history for one player across all published results, with running totals. */
 export function playerHistory(card: TournamentCard, playerId: string): PlayerHistoryRow[] {
-  const entries: { game: number; pairing: CompletePairing }[] = [];
+  const entries: { game: number; pairing: Pairing }[] = [];
   card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt)).forEach((snapshot) => {
     snapshot.pairings.forEach((pairing) => {
-      const recorded = hasTwoPlayers(pairing) && pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
-      if (!recorded || (pairing.playerOneId !== playerId && pairing.playerTwoId !== playerId)) return;
+      const recorded = pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
+      if (!recorded || !hasPlayer(pairing, playerId)) return;
       entries.push({ game: pairing.gameNumber ?? Math.min(...snapshot.gameNumbers), pairing });
     });
   });
@@ -40,9 +40,11 @@ export function playerHistory(card: TournamentCard, playerId: string): PlayerHis
     const opponentScore = (isOne ? pairing.scoreTwo : pairing.scoreOne) ?? 0;
     const result: "W" | "T" | "L" = pairing.resultType === "DRAW" ? "T" : pairing.winnerId === playerId ? "W" : "L";
     cumulativeWinPoints += result === "W" ? 2 : result === "T" ? 1 : 0;
-    const diff = ownScore - opponentScore;
+    const diff = pairing.resultType === "PENALTY"
+      ? -(pairing.calculatedDiff ?? 0)
+      : ownScore - opponentScore;
     cumulativeDiff += diff;
-    return { game, table: pairing.tableNumber, result, cumulativeWinPoints, ownScore, opponentScore, diff, cumulativeDiff, opponentId: isOne ? pairing.playerTwoId : pairing.playerOneId };
+    return { game, table: pairing.tableNumber, result, cumulativeWinPoints, ownScore, opponentScore, diff, cumulativeDiff, opponentId: (isOne ? pairing.playerTwoId : pairing.playerOneId) ?? "" };
   });
 }
 
@@ -60,19 +62,30 @@ export function rankingAfterGame(card: TournamentCard, gameNumber: number): Play
     .sort((a, b) => Math.min(...a.gameNumbers) - Math.min(...b.gameNumbers));
 
   snapshots.forEach((snapshot) => snapshot.pairings.forEach((pairing) => {
-    if (!hasTwoPlayers(pairing) || (pairing.gameNumber ?? snapshot.gameNumbers[0]) > gameNumber || pairing.scoreOne === undefined || pairing.scoreTwo === undefined) return;
-    const one = ranking.get(pairing.playerOneId); const two = ranking.get(pairing.playerTwoId);
-    if (!one || !two) return;
+    if ((!pairing.playerOneId && !pairing.playerTwoId) || (pairing.gameNumber ?? snapshot.gameNumbers[0]) > gameNumber || pairing.scoreOne === undefined || pairing.scoreTwo === undefined) return;
+    const one = pairing.playerOneId ? ranking.get(pairing.playerOneId) : undefined;
+    const two = pairing.playerTwoId ? ranking.get(pairing.playerTwoId) : undefined;
     if (pairing.resultType === "DRAW") {
+      if (!one || !two) return;
       one.draws += 1; two.draws += 1; one.winPoints += 1; two.winPoints += 1;
       return;
     }
-    const winner = pairing.winnerId === one.id ? one : two;
+    if (pairing.resultType === "PENALTY") {
+      const diff = pairing.calculatedDiff ?? 0;
+      for (const penalised of [one, two]) {
+        if (!penalised) continue;
+        penalised.losses += 1;
+        penalised.diff -= diff;
+      }
+      return;
+    }
+    const winner = pairing.winnerId === one?.id ? one : pairing.winnerId === two?.id ? two : undefined;
+    if (!winner) return;
     const loser = winner === one ? two : one;
     const diff = pairing.calculatedDiff ?? Math.abs(pairing.scoreOne - pairing.scoreTwo);
     winner.wins += 1; winner.winPoints += 2; winner.diff += diff;
-    loser.losses += 1; loser.diff -= diff;
+    if (loser) { loser.losses += 1; loser.diff -= diff; }
   }));
 
-  return [...ranking.values()].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || a.id.localeCompare(b.id));
+  return [...ranking.values()].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || comparePlayerCodes(a.id, b.id));
 }

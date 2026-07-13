@@ -7,6 +7,7 @@ import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { rankingAfterGame } from "@/domain/tournament/history";
+import { comparePlayerCodes } from "@/domain/tournament/player-code";
 import type { FinalSlot, Pairing, PairingSnapshot, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
@@ -273,7 +274,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const selectedSnapshot = visibleSnapshots.find((snapshot) => overviewGames(snapshot).includes(selectedGame));
   const selectedPairings = selectedSnapshot ? overviewPairings(selectedSnapshot).filter((pairing) => (pairing.gameNumber ?? selectedGame) === selectedGame) : [];
   const rankingCard = { ...card, snapshots: publishedSnapshots };
-  const historicalRanking = selectedGame > 0 ? rankingAfterGame(rankingCard, selectedGame) : [...card.players].sort((a, b) => a.id.localeCompare(b.id));
+  const historicalRanking = selectedGame > 0 ? rankingAfterGame(rankingCard, selectedGame) : [...card.players].sort((a, b) => comparePlayerCodes(a.id, b.id));
   const rankingPositions = new Map(historicalRanking.map((player, index) => [player.id, index + 1]));
   const players = new Map(card.players.map((player) => [player.id, player]));
   const activeRecordValues = recordFilter.mode === "player" ? recordFilter.playerIds : recordFilter.schools;

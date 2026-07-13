@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicTournamentBundle, PublicTournamentSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
+import { comparePlayerCodes } from "@/domain/tournament/player-code";
 
 export interface AuthState {
   authenticated: boolean;
@@ -774,4 +775,4 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 });
 
 export const selectCard = (cards: TournamentCard[], cardId: string) => cards.find((card) => card.id === cardId);
-export const rankPlayers = (players: Player[]) => [...players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || a.id.localeCompare(b.id));
+export const rankPlayers = (players: Player[]) => [...players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || comparePlayerCodes(a.id, b.id));

@@ -89,8 +89,6 @@ export async function proxyToRender(request: Request): Promise<Response> {
     return Response.json(
       {
         message: "Backend service is unavailable",
-        error: error instanceof Error ? error.message : String(error),
-        backendUrl: process.env.BACKEND_URL ?? null,
       },
       {
         status: 503,
