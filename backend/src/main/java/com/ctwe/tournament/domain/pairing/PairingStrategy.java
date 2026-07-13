@@ -11,6 +11,12 @@ public interface PairingStrategy {
     PairingRuleType type();
     List<Pair> generate(List<PlayerScore> players, PairingContext context);
 
+    /** Select the player removed as a bye before generating an odd-sized field. */
+    default String selectBye(List<PlayerScore> players, PairingContext context) {
+        List<PlayerScore> ranked = ranked(players, context);
+        return ranked.isEmpty() ? null : ranked.get(ranked.size() - 1).playerId();
+    }
+
     static List<PlayerScore> ranked(List<PlayerScore> players, PairingContext context) {
         PairingContext safeContext = context == null ? new PairingContext(0, List.of()) : context;
         Map<Integer, List<PlayerScore>> byWinPoints = new java.util.TreeMap<>(Comparator.reverseOrder());

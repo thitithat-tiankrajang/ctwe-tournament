@@ -122,6 +122,25 @@ class PairingStrategiesTest {
     }
 
     @Test
+    void swissUsesCeilingHalfAndGivesTheMiddlePlayerAByeInAnOddFinalGroup() {
+        var players = new java.util.ArrayList<PairingStrategy.PlayerScore>();
+        for (int rank = 1; rank <= 16; rank++) players.add(score(String.valueOf(rank), 2, 100 - rank));
+        for (int rank = 17; rank <= 31; rank++) players.add(score(String.valueOf(rank), 0, 100 - rank));
+        var strategy = new SwissStrategy();
+
+        String bye = strategy.selectBye(players, CONTEXT);
+        players.removeIf(player -> player.playerId().equals(bye));
+        var pairs = strategy.generate(players, CONTEXT);
+
+        assertThat(bye).isEqualTo("24");
+        assertThat(pairs).contains(
+            pair("17", "25"), pair("18", "26"), pair("19", "27"), pair("20", "28"),
+            pair("21", "29"), pair("22", "30"), pair("23", "31")
+        );
+        assertThat(pairs).doesNotContain(pair("17", "24"));
+    }
+
+    @Test
     void randomPairingAvoidsSameSchoolAndSpreadsSchoolsAcrossFourSeatTables() {
         var players = List.of(
             score("A1", "A"), score("A2", "A"),

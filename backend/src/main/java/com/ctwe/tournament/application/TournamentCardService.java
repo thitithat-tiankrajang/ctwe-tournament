@@ -458,13 +458,12 @@ public class TournamentCardService {
             ORDER BY code
             """, (rs, row) -> new PairingStrategy.PlayerScore(
                 String.valueOf(rs.getInt("code")), rs.getString("school"), 0, 0), cardId));
+        var context = new PairingStrategy.PairingContext(1, List.of());
         if (appliedRule == PairingRuleType.RANDOM) Collections.shuffle(players, secureRandom);
-        else players = new ArrayList<>(PairingStrategy.ranked(players, new PairingStrategy.PairingContext(1, List.of())));
-        // RANDOM selects a fresh bye; ranked modes consistently give it to the lowest seed.
-        PairingStrategy.PlayerScore bye = players.size() % 2 != 0 ? players.remove(players.size() - 1) : null;
+        else players = new ArrayList<>(PairingStrategy.ranked(players, context));
+        PairingStrategy.PlayerScore bye = removeBye(players, appliedRule, context);
         List<PairingStrategy.Pair> pairs = players.isEmpty() ? List.of()
-            : strategies.resolve(appliedRule).generate(players,
-                new PairingStrategy.PairingContext(1, List.of()));
+            : strategies.resolve(appliedRule).generate(players, context);
         if (appliedRule == PairingRuleType.RANDOM)
             pairs = SchoolAwarePairing.orderForTables(
                 pairs, players, secureRandom, bye == null ? null : bye.playerId());
@@ -1319,7 +1318,7 @@ public class TournamentCardService {
             .map(entry -> new PairingStrategy.PlayerScore(String.valueOf(entry.getKey()), "", (int) entry.getValue()[0],
                 (int) entry.getValue()[1], entry.getValue()[2], entry.getValue()[3]))
             .toList(), context));
-        PairingStrategy.PlayerScore byePlayer = ranked.size() % 2 != 0 ? ranked.remove(ranked.size() - 1) : null;
+        PairingStrategy.PlayerScore byePlayer = removeBye(ranked, PairingRuleType.SWISS, context);
         List<PairingStrategy.Pair> pairs = ranked.isEmpty() ? List.of()
             : strategies.resolve(PairingRuleType.SWISS).generate(ranked, context);
         pairs = orderPairsForTables(cardId, pairs, byePlayer == null ? null : byePlayer.playerId());
@@ -1463,14 +1462,14 @@ public class TournamentCardService {
         PairingRuleType appliedRule = ruleForGame(cardId, gameNumber);
         if (appliedRule == PairingRuleType.PAIR_RESULT)
             throw new IllegalArgumentException("เกมแบบแพ้เจอแพ้/ชนะเจอชนะต้องถูกสร้างจากผลของเกมก่อนหน้าโดยอัตโนมัติ");
-        // Every strategy receives an even field. Ranked modes give the lowest-ranked player the bye;
-        // RANDOM chooses it from a pre-shuffle so regenerating the preview produces a fresh result.
+        // Every strategy receives an even field. Swiss chooses a group-aware middle bye while
+        // RANDOM chooses from a pre-shuffle and KOTH uses the lowest-ranked player.
         Integer byePlayer = null;
         if (scores.size() % 2 != 0) {
             List<PairingStrategy.PlayerScore> ranked = new ArrayList<>(scores);
             if (appliedRule == PairingRuleType.RANDOM) Collections.shuffle(ranked, secureRandom);
             else ranked = new ArrayList<>(PairingStrategy.ranked(ranked, context));
-            PairingStrategy.PlayerScore bye = ranked.remove(ranked.size() - 1);
+            PairingStrategy.PlayerScore bye = removeBye(ranked, appliedRule, context);
             byePlayer = Integer.valueOf(bye.playerId());
             scores = ranked;
         }
@@ -1521,6 +1520,21 @@ public class TournamentCardService {
         return rule == PairingRuleType.RANDOM
             ? orderPairsForTables(cardId, pairs, byePlayerId)
             : List.copyOf(pairs);
+    }
+
+    private PairingStrategy.PlayerScore removeBye(
+        List<PairingStrategy.PlayerScore> players,
+        PairingRuleType rule,
+        PairingStrategy.PairingContext context
+    ) {
+        if (players.size() % 2 == 0) return null;
+        String byePlayerId = rule == PairingRuleType.RANDOM
+            ? players.get(players.size() - 1).playerId()
+            : strategies.resolve(rule).selectBye(players, context);
+        for (int index = 0; index < players.size(); index++) {
+            if (players.get(index).playerId().equals(byePlayerId)) return players.remove(index);
+        }
+        throw new IllegalStateException("Pairing strategy selected an unknown bye player");
     }
 
     /**
