@@ -131,13 +131,34 @@ class PairingStrategiesTest {
         String bye = strategy.selectBye(players, CONTEXT);
         players.removeIf(player -> player.playerId().equals(bye));
         var pairs = strategy.generate(players, CONTEXT);
+        var finalGroupPairs = pairs.stream()
+            .filter(current -> Integer.parseInt(current.playerOneId()) >= 17)
+            .toList();
 
         assertThat(bye).isEqualTo("24");
-        assertThat(pairs).contains(
+        assertThat(finalGroupPairs).containsExactly(
             pair("17", "25"), pair("18", "26"), pair("19", "27"), pair("20", "28"),
             pair("21", "29"), pair("22", "30"), pair("23", "31")
         );
         assertThat(pairs).doesNotContain(pair("17", "24"));
+    }
+
+    @Test
+    void swissUsesVisibleRankingOrderWhenHiddenTieBreakersDisagree() {
+        var players = List.of(
+            score("8", 0, -350, 800, 800), score("7", 0, -350, 700, 700),
+            score("6", 0, -350, 600, 600), score("5", 0, -350, 500, 500),
+            score("4", 0, -350, 400, 400), score("3", 0, -350, 300, 300),
+            score("2", 0, -350, 200, 200), score("1", 0, -350, 100, 100)
+        );
+        var hiddenTieContext = new PairingStrategy.PairingContext(2, List.of(), Map.of(
+            "8", Map.of("1", 2),
+            "1", Map.of("8", 0)
+        ));
+
+        assertThat(new SwissStrategy().generate(players, hiddenTieContext)).containsExactly(
+            pair("1", "5"), pair("2", "6"), pair("3", "7"), pair("4", "8")
+        );
     }
 
     @Test

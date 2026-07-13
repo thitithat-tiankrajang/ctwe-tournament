@@ -63,7 +63,7 @@ public interface PairingStrategy {
         };
     }
 
-    private static int comparePlayerCode(String first, String second) {
+    static int comparePlayerCode(String first, String second) {
         Long firstNumber = numericPlayerCode(first);
         Long secondNumber = numericPlayerCode(second);
         if (firstNumber != null && secondNumber != null) {
