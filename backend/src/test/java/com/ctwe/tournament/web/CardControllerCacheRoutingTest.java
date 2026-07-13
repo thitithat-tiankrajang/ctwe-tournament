@@ -245,7 +245,7 @@ class CardControllerCacheRoutingTest {
     ) {
         return new CardDtos.CardResponse(
             source.id(), source.tournamentId(), source.name(), source.division(), source.status(),
-            stage, currentGame, source.version(), source.games(), source.rules(), source.players(),
+            stage, currentGame, source.version(), source.games(), source.initialPairingRule(), source.rules(), source.players(),
             source.tables(), snapshots, source.audit(), source.finalType(), source.finalGames(),
             source.finalRound(), source.gibsonEnabled(), source.createdAt(), source.codePrefix());
     }
@@ -254,7 +254,8 @@ class CardControllerCacheRoutingTest {
         return new CardDtos.CardResponse(
             id, UUID.randomUUID(), "Card", "Division", CardStatus.DRAFT,
             RuntimeStage.PLAYER_REGISTRATION, 1, 0,
-            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+            List.of(), com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
+            List.of(), List.of(), List.of(), List.of(), List.of(),
             "NONE", 0, null, false, Instant.EPOCH, "A");
     }
 }

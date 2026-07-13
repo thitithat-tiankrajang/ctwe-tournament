@@ -12,6 +12,8 @@ import type { FinalType, PairingRuleType, Tournament } from "@/domain/tournament
 import { Button } from "@/ui/components/button";
 import { Panel } from "@/ui/components/page";
 
+type InitialPairingRule = Exclude<PairingRuleType, "PAIR_RESULT">;
+
 const ruleLabels: Record<PairingRuleType, string> = {
   RANDOM: "Random — สุ่มใหม่ พร้อมกระจายสถาบันระดับคู่และโต๊ะ",
   SWISS: "Swiss — จับคู่ตามคะแนนและผลต่าง",
@@ -30,6 +32,7 @@ interface CardCreateFormProps {
 
 export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancelHref }: CardCreateFormProps) {
   const createCard = useTournamentStore((state) => state.createCard);
+  const [initialPairingRule, setInitialPairingRule] = useState<InitialPairingRule>("RANDOM");
   const [rules, setRules] = useState<PairingRuleType[]>(["SWISS", "SWISS", "SWISS"]);
   const [gameMaxDiffs, setGameMaxDiffs] = useState<number[]>([350, 350, 350, 350]);
   const [finalType, setFinalType] = useState<FinalType>("NONE");
@@ -66,7 +69,7 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
     const tour = resolveTournament();
     if (!tour) { await appDialog.alert("กรุณาเลือกรายการแข่งขัน (tournament) ก่อนสร้างการ์ด"); return; }
     try {
-      const id = await createCard({ tournamentId: tour.id, ...values, rules, gameMaxDiffs, finalType, finalGames: finalType === "NONE" ? 0 : finalGames, gibsonEnabled });
+      const id = await createCard({ tournamentId: tour.id, ...values, initialPairingRule, rules, gameMaxDiffs, finalType, finalGames: finalType === "NONE" ? 0 : finalGames, gibsonEnabled });
       onCreated(id, tour);
     } catch (error) {
       await appDialog.alert(error instanceof Error ? error.message : "ไม่สามารถสร้างการ์ดได้", "สร้างการ์ดไม่สำเร็จ", true);
@@ -151,7 +154,18 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
       </Panel>
 
       <Panel title="ลำดับเกมและกติกาการจับคู่" description="ทุกเส้นเชื่อมต้องมีกติกาหนึ่งรายการก่อนบันทึก">
-        <div className="notice notice--info" style={{ margin: 18 }}><Info size={18} /><p><strong>กติกามีผลกับเกมถัดไป</strong><span>ตัวอย่าง: กติกาบนเส้น เกม 1 → เกม 2 ใช้สร้างคู่แข่งขันของเกม 2</span></p></div>
+        <div className="notice notice--info" style={{ margin: 18 }}><Info size={18} /><p><strong>ระบบอ่านกติกาแยกตามเกม</strong><span>เกม 1 ใช้กติกาเริ่มต้น ส่วนกติกาบนเส้น เกม 1 → เกม 2 ใช้สร้างคู่แข่งขันของเกม 2</span></p></div>
+        <div className="panel-padding" style={{ paddingTop: 0 }}>
+          <div className="form-field">
+            <label className="form-label" htmlFor="cf-initial-rule">กติกา Pairing เกม 1</label>
+            <select className="select" id="cf-initial-rule" value={initialPairingRule}
+              onChange={(event) => setInitialPairingRule(event.target.value as InitialPairingRule)}>
+              <option value="RANDOM">{ruleLabels.RANDOM}</option>
+              <option value="SWISS">{ruleLabels.SWISS}</option>
+              <option value="KING_OF_THE_HILL">{ruleLabels.KING_OF_THE_HILL}</option>
+            </select>
+          </div>
+        </div>
         {rules.includes("PAIR_RESULT") && <div className="notice notice--warning" style={{ margin: 18 }}><Info size={18} /><p><strong>แพ้เจอแพ้ / ชนะเจอชนะ รองรับจำนวนผู้เล่นทุกจำนวน</strong><span>เจ้าหน้าที่จะกรอกผลทั้ง Game ต้นทางและ Game ถัดไปในชุดเดียวกัน ระบบสร้างคู่บายและจัดกลุ่มเศษให้อัตโนมัติ · ห้ามเลือกกติกานี้ต่อกันสองเส้น</span></p></div>}
         <div className="rule-list">
           {rules.map((rule, index) => (

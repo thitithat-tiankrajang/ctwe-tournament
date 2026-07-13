@@ -12,7 +12,7 @@ const ruleLabels: Record<PairingRuleType, string> = {
 };
 
 export function pairingRuleForGame(card: TournamentCard, gameNumber: number) {
-  if (gameNumber === 1) return "Random / Initial";
+  if (gameNumber === 1) return `${ruleLabels[card.initialPairingRule ?? "RANDOM"]} / Initial`;
   const rule = card.rules.find((item) => item.toGame === gameNumber);
   return rule ? ruleLabels[rule.type] : "ยังไม่กำหนด";
 }

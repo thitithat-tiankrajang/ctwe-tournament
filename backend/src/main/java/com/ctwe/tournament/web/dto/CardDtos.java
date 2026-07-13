@@ -26,7 +26,8 @@ public final class CardDtos {
         @NotNull @Size(min = 2, max = 12) List<@NotNull @Min(1) @Max(1000000) Integer> gameMaxDiffs,
         @Pattern(regexp = "NONE|CHAMPION|CHAMPION_AND_THIRD") String finalType,
         @Min(0) @Max(12) int finalGames,
-        boolean gibsonEnabled
+        boolean gibsonEnabled,
+        PairingRuleType initialPairingRule
     ) {}
 
     // Scores are stored as SMALLINT (V19); 30000 leaves headroom under the 32767 column limit.
@@ -128,6 +129,7 @@ public final class CardDtos {
         int currentGame,
         long version,
         List<GameResponse> games,
+        PairingRuleType initialPairingRule,
         List<RuleResponse> rules,
         List<PlayerResponse> players,
         List<TableResponse> tables,

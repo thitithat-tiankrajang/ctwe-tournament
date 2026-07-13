@@ -65,7 +65,8 @@ public class TournamentCardService {
         CardRow card;
         try {
             card = jdbc.queryForObject("""
-                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version, final_type, final_games, gibson_enabled, code_prefix
+                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version,
+                       final_type, final_games, gibson_enabled, code_prefix, initial_pairing_rule
                 FROM tournament_cards WHERE id = ?
                 """, (rs, row) -> new CardRow(
                 rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
@@ -73,7 +74,7 @@ public class TournamentCardService {
                 RuntimeStage.valueOf(rs.getString("runtime_stage")), rs.getInt("current_game"),
                 rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
                 rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled"),
-                rs.getString("code_prefix")), cardId);
+                rs.getString("code_prefix"), initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
@@ -104,7 +105,7 @@ public class TournamentCardService {
         var audit = List.<CardDtos.AuditResponse>of();
         var finalRound = "NONE".equals(card.finalType()) ? null : loadFinalRound(cardId, prefix);
         return new CardDtos.CardResponse(card.id(), tournamentId, card.name(), card.division(), card.status(), card.runtimeStage(),
-            card.currentGame(), card.version(), games, rules, players, tables, snapshots, audit,
+            card.currentGame(), card.version(), games, card.initialPairingRule(), rules, players, tables, snapshots, audit,
             card.finalType(), card.finalGames(), finalRound, card.gibsonEnabled(), card.createdAt(), prefix);
     }
 
@@ -176,12 +177,17 @@ public class TournamentCardService {
         int finalGames = "NONE".equals(finalType) ? 0 : request.finalGames();
         if (!"NONE".equals(finalType) && finalGames < 1)
             throw new IllegalArgumentException("รอบชิงต้องมีอย่างน้อย 1 เกม");
+        PairingRuleType initialPairingRule = request.initialPairingRule() == null
+            ? PairingRuleType.RANDOM
+            : request.initialPairingRule();
+        if (initialPairingRule == PairingRuleType.PAIR_RESULT)
+            throw new IllegalArgumentException("PAIR_RESULT cannot be used for game 1");
         UUID cardId = UUID.randomUUID();
         String codePrefix = nextCardPrefix(request.tournamentId());
         jdbc.update("""
-            INSERT INTO tournament_cards (id, tournament_id, name, division, number_of_games, status, runtime_stage, current_game, final_type, final_games, gibson_enabled, code_prefix)
-            VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PLAYER_REGISTRATION', 1, ?, ?, ?, ?)
-            """, cardId, request.tournamentId(), request.name().trim(), request.division().trim(), request.numberOfGames(), finalType, finalGames, request.gibsonEnabled(), codePrefix);
+            INSERT INTO tournament_cards (id, tournament_id, name, division, number_of_games, status, runtime_stage, current_game, final_type, final_games, gibson_enabled, code_prefix, initial_pairing_rule)
+            VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PLAYER_REGISTRATION', 1, ?, ?, ?, ?, ?)
+            """, cardId, request.tournamentId(), request.name().trim(), request.division().trim(), request.numberOfGames(), finalType, finalGames, request.gibsonEnabled(), codePrefix, initialPairingRule.name());
         for (int game = 1; game <= request.numberOfGames(); game++) {
             jdbc.update("INSERT INTO games (card_id, game_number, status, max_diff) VALUES (?, ?, 'PENDING', ?)",
                 cardId, game, request.gameMaxDiffs().get(game - 1));
@@ -191,7 +197,8 @@ public class TournamentCardService {
                 cardId, index + 1, request.rules().get(index).name());
         }
         audit(cardId, actor, "CREATE_CARD", null, Map.of(
-            "name", request.name().trim(), "division", request.division().trim(), "gameMaxDiffs", request.gameMaxDiffs()
+            "name", request.name().trim(), "division", request.division().trim(),
+            "initialPairingRule", initialPairingRule.name(), "rules", request.rules(), "gameMaxDiffs", request.gameMaxDiffs()
         ));
         return get(cardId, true);
     }
@@ -425,23 +432,25 @@ public class TournamentCardService {
         if (activeInGame(cardId, card.currentGame()) < 2)
             throw new IllegalArgumentException("ต้องมีผู้เล่นอย่างน้อย 2 คน");
 
-        PairingRuleType appliedRule = null;
+        PairingRuleType appliedRule = ruleForGame(cardId, card.currentGame());
         if (card.currentGame() == 1) {
-            generateInitialTables(cardId);
+            generateInitialTables(cardId, appliedRule);
         } else {
             appliedRule = generateSystemMatches(cardId, card.currentGame());
         }
         jdbc.update("UPDATE tournament_cards SET runtime_stage = 'PAIRING_PREVIEW', version = version + 1 WHERE id = ?", cardId);
         Map<String, Object> pairingLog = new LinkedHashMap<>();
         pairingLog.put("game", card.currentGame());
-        pairingLog.put("rule", card.currentGame() == 1 ? "RANDOM_SCHOOL_SAFE" : appliedRule.name());
+        pairingLog.put("rule", appliedRule.name());
         pairingLog.put("configuredEdge", card.currentGame() == 1 ? "initial" : "game " + (card.currentGame() - 1) + " -> game " + card.currentGame());
         pairingLog.put("players", activeInGame(cardId, card.currentGame()));
         audit(cardId, actor, "GENERATE_PAIRING_PREVIEW", null, pairingLog);
         return get(cardId, true);
     }
 
-    private void generateInitialTables(UUID cardId) {
+    private void generateInitialTables(UUID cardId, PairingRuleType appliedRule) {
+        if (appliedRule == PairingRuleType.PAIR_RESULT)
+            throw new IllegalArgumentException("PAIR_RESULT cannot be used for game 1");
         jdbc.update("DELETE FROM table_seats WHERE card_id = ?", cardId);
         List<PairingStrategy.PlayerScore> players = new ArrayList<>(jdbc.query("""
             SELECT code, school FROM players
@@ -449,14 +458,16 @@ public class TournamentCardService {
             ORDER BY code
             """, (rs, row) -> new PairingStrategy.PlayerScore(
                 String.valueOf(rs.getInt("code")), rs.getString("school"), 0, 0), cardId));
-        Collections.shuffle(players, secureRandom);
-        // The random pre-shuffle also selects a different bye when the preview is regenerated.
+        if (appliedRule == PairingRuleType.RANDOM) Collections.shuffle(players, secureRandom);
+        else players = new ArrayList<>(PairingStrategy.ranked(players, new PairingStrategy.PairingContext(1, List.of())));
+        // RANDOM selects a fresh bye; ranked modes consistently give it to the lowest seed.
         PairingStrategy.PlayerScore bye = players.size() % 2 != 0 ? players.remove(players.size() - 1) : null;
         List<PairingStrategy.Pair> pairs = players.isEmpty() ? List.of()
-            : strategies.resolve(PairingRuleType.RANDOM).generate(players,
+            : strategies.resolve(appliedRule).generate(players,
                 new PairingStrategy.PairingContext(1, List.of()));
-        pairs = SchoolAwarePairing.orderForTables(
-            pairs, players, secureRandom, bye == null ? null : bye.playerId());
+        if (appliedRule == PairingRuleType.RANDOM)
+            pairs = SchoolAwarePairing.orderForTables(
+                pairs, players, secureRandom, bye == null ? null : bye.playerId());
         int tableNumber = 1;
         for (int pairIndex = 0; pairIndex < pairs.size(); pairIndex += 2) {
             int seatNumber = 1;
@@ -1464,9 +1475,9 @@ public class TournamentCardService {
             scores = ranked;
         }
         GibsonPairingPlan plan = applyGibsonPairing(cardId, gameNumber, scores, context, appliedRule);
-        var pairs = moveGibsonPairsLast(orderPairsForTables(cardId,
-            plan.pairs(), byePlayer == null ? null : String.valueOf(byePlayer)),
-            plan.gibsonizedPlayerIds());
+        var configuredPairs = orderPairsForRule(cardId, appliedRule, plan.pairs(),
+            byePlayer == null ? null : String.valueOf(byePlayer));
+        var pairs = moveGibsonPairsLast(configuredPairs, plan.gibsonizedPlayerIds());
         int table = 1;
         for (var pair : pairs) {
             jdbc.update("""
@@ -1497,6 +1508,19 @@ public class TournamentCardService {
             """, (rs, row) -> new PairingStrategy.PlayerScore(
                 String.valueOf(rs.getInt("code")), rs.getString("school"), 0, 0), cardId);
         return SchoolAwarePairing.orderForTables(pairs, players, secureRandom, byePlayerId);
+    }
+
+    List<PairingStrategy.Pair> orderPairsForRule(
+        UUID cardId,
+        PairingRuleType rule,
+        List<PairingStrategy.Pair> pairs,
+        String byePlayerId
+    ) {
+        // Ranked rules are deterministic and must stay in ranking order. Only RANDOM may shuffle
+        // table placement and player orientation after choosing the matchups.
+        return rule == PairingRuleType.RANDOM
+            ? orderPairsForTables(cardId, pairs, byePlayerId)
+            : List.copyOf(pairs);
     }
 
     /**
@@ -1806,22 +1830,25 @@ public class TournamentCardService {
             """, cardId);
     }
 
-    private PairingRuleType ruleForGame(UUID cardId, int gameNumber) {
-        if (gameNumber == 1) return PairingRuleType.KING_OF_THE_HILL;
-        return jdbc.queryForObject("SELECT rule_type FROM pairing_rules WHERE card_id = ? AND from_game = ?",
-            (rs, row) -> PairingRuleType.valueOf(rs.getString("rule_type")), cardId, gameNumber - 1);
+    PairingRuleType ruleForGame(UUID cardId, int gameNumber) {
+        String configured = gameNumber == 1
+            ? jdbc.queryForObject("SELECT initial_pairing_rule FROM tournament_cards WHERE id = ?", String.class, cardId)
+            : jdbc.queryForObject("SELECT rule_type FROM pairing_rules WHERE card_id = ? AND from_game = ?",
+                String.class, cardId, gameNumber - 1);
+        return PairingRuleType.valueOf(Objects.requireNonNull(configured, "Missing pairing rule for game " + gameNumber));
     }
 
     private CardRow cardRow(UUID cardId) {
         try {
             return jdbc.queryForObject("""
-                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version, final_type, final_games, gibson_enabled, code_prefix
+                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version,
+                       final_type, final_games, gibson_enabled, code_prefix, initial_pairing_rule
                 FROM tournament_cards WHERE id = ? FOR UPDATE
                 """, (rs, row) -> new CardRow(rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
                 rs.getInt("number_of_games"), CardStatus.valueOf(rs.getString("status")), RuntimeStage.valueOf(rs.getString("runtime_stage")),
                 rs.getInt("current_game"), rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
                 rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled"),
-                rs.getString("code_prefix")), cardId);
+                rs.getString("code_prefix"), initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
@@ -1829,6 +1856,12 @@ public class TournamentCardService {
 
     private void ensureEditable(UUID cardId) {
         if (cardRow(cardId).status() == CardStatus.CLOSED) throw new IllegalArgumentException("This card is closed and immutable");
+    }
+
+    private PairingRuleType initialPairingRule(String configured) {
+        return configured == null || configured.isBlank()
+            ? PairingRuleType.RANDOM
+            : PairingRuleType.valueOf(configured);
     }
 
     /** Player details / termination are editable throughout the tournament but not once it has finished. */
@@ -2068,7 +2101,7 @@ public class TournamentCardService {
         return false;
     }
 
-    private record CardRow(UUID id, String name, String division, int numberOfGames, CardStatus status, RuntimeStage runtimeStage, int currentGame, Instant createdAt, long version, String finalType, int finalGames, boolean gibsonEnabled, String codePrefix) {}
+    private record CardRow(UUID id, String name, String division, int numberOfGames, CardStatus status, RuntimeStage runtimeStage, int currentGame, Instant createdAt, long version, String finalType, int finalGames, boolean gibsonEnabled, String codePrefix, PairingRuleType initialPairingRule) {}
     private record PlayerAudit(int code, String firstName, String lastName, String school) {
         Map<String, String> asAuditValue() {
             return Map.of("id", pcode(code), "firstName", firstName, "lastName", lastName, "school", school);

@@ -15,6 +15,7 @@ function flowCard(currentGame: number): TournamentCard {
     currentGame,
     version: 1,
     games: [1, 2, 3, 4, 5].map((number) => ({ id: `game-${number}`, number, name: `Game ${number}`, status: "PENDING", maxDiff: 100 })),
+    initialPairingRule: "RANDOM",
     rules: [
       { fromGame: 1, toGame: 2, type: "PAIR_RESULT" },
       { fromGame: 2, toGame: 3, type: "SWISS" },

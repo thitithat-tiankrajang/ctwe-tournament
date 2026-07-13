@@ -31,6 +31,7 @@ function cardWith(pairings: Pairing[]): TournamentCard {
     currentGame: 3,
     version: 1,
     games: [1, 2, 3].map((number) => ({ id: `game-${number}`, number, name: `Game ${number}`, status: "COMPLETED", maxDiff: 100 })),
+    initialPairingRule: "RANDOM",
     rules: [],
     players: [player("A001"), player("A002")],
     tables: [],

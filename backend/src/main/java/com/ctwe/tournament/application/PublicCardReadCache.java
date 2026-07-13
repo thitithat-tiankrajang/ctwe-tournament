@@ -92,7 +92,7 @@ public class PublicCardReadCache {
                     : com.ctwe.tournament.domain.model.RuntimeStage.TABLE_PAIRING;
         return new CardDtos.CardResponse(
             source.id(), source.tournamentId(), source.name(), source.division(), source.status(), publicStage,
-            source.currentGame(), publicVersion, source.games(), List.of(), source.players(), List.of(),
+            source.currentGame(), publicVersion, source.games(), source.initialPairingRule(), List.of(), source.players(), List.of(),
             source.snapshots(), List.of(), source.finalType(), source.finalGames(),
             finalVisible ? source.finalRound() : null, source.gibsonEnabled(), source.createdAt(), source.codePrefix()
         );

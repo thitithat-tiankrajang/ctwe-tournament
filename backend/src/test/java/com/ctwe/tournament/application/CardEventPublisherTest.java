@@ -150,7 +150,8 @@ class CardEventPublisherTest {
         return new CardDtos.CardResponse(
             id, UUID.randomUUID(), "Card", "Division", CardStatus.RUNNING,
             RuntimeStage.RESULT_COLLECTION, 1, version,
-            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+            List.of(), com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
+            List.of(), List.of(), List.of(), List.of(), List.of(),
             "NONE", 0, null, false, Instant.EPOCH, "A");
     }
 

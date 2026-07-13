@@ -146,6 +146,7 @@ export interface TournamentCard {
   currentGame: number;
   version: number;
   games: Game[];
+  initialPairingRule: Exclude<PairingRuleType, "PAIR_RESULT">;
   rules: PairingRule[];
   players: Player[];
   tables: SeatingTable[];
@@ -190,6 +191,7 @@ export interface CreateCardInput {
   name: string;
   division: string;
   numberOfGames: number;
+  initialPairingRule: Exclude<PairingRuleType, "PAIR_RESULT">;
   rules: PairingRuleType[];
   gameMaxDiffs: number[];
   finalType: FinalType;

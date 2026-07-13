@@ -92,7 +92,8 @@ class PublicCardControllerTest {
     private CardDtos.CardResponse cardResponse(UUID cardId, long version) {
         return new CardDtos.CardResponse(
             cardId, UUID.randomUUID(), "Card", "Division", CardStatus.RUNNING,
-            RuntimeStage.RESULT_COLLECTION, 2, version, List.of(), List.of(), List.of(),
+            RuntimeStage.RESULT_COLLECTION, 2, version, List.of(),
+            com.ctwe.tournament.domain.model.PairingRuleType.RANDOM, List.of(), List.of(),
             List.of(), List.of(), List.of(), "NONE", 0, null, false, Instant.EPOCH, "A");
     }
 

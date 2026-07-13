@@ -175,6 +175,7 @@ function publicSummaryCard(summary: PublicCardSummary): TournamentCard {
     currentGame: summary.currentGame,
     version: summary.version,
     games: [],
+    initialPairingRule: "RANDOM",
     rules: [],
     players: [],
     tables: [],

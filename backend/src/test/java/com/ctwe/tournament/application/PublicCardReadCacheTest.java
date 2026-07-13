@@ -99,7 +99,8 @@ class PublicCardReadCacheTest {
         CardDtos.CardResponse source = new CardDtos.CardResponse(
             cardId, UUID.randomUUID(), "Final", "Open", CardStatus.RUNNING,
             RuntimeStage.FINAL_COLLECTION, 8, 42,
-            List.of(), List.of(new CardDtos.RuleResponse(1, 2,
+            List.of(), com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
+            List.of(new CardDtos.RuleResponse(1, 2,
                 com.ctwe.tournament.domain.model.PairingRuleType.SWISS)),
             List.of(), List.of(), List.of(), List.of(), "CHAMPION", 3,
             finalRound, false, Instant.EPOCH, "A");
@@ -177,7 +178,8 @@ class PublicCardReadCacheTest {
         return new CardDtos.CardResponse(
             id, UUID.randomUUID(), "Card", "Division", CardStatus.DRAFT,
             RuntimeStage.PLAYER_REGISTRATION, 1, 0,
-            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+            List.of(), com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
+            List.of(), List.of(), List.of(), List.of(), List.of(),
             "NONE", 0, null, false, Instant.EPOCH, "A");
     }
 
