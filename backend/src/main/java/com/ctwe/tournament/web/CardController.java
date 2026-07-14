@@ -138,6 +138,23 @@ public class CardController {
         return changed(cardId, () -> service.finishRegistration(cardId, authentication.getName()));
     }
 
+    /**
+     * Director reopens registration ("ลงทะเบียนเพิ่ม") before any game-1 result exists. The password
+     * is optional: when present it is verified here, and only a verified password authorizes the
+     * service to discard an already-generated game-1 pairing (the service re-checks under the row
+     * lock, so a concurrently generated pairing is never dropped without re-auth).
+     */
+    @PostMapping("/{cardId}/registration/reopen")
+    public CardDtos.CardResponse reopenRegistration(@PathVariable UUID cardId,
+                                                    @RequestBody(required = false) CardDtos.ReopenRegistrationRequest request,
+                                                    Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        String password = request == null ? null : request.password();
+        boolean pairingDiscardConfirmed = password != null && !password.isBlank();
+        if (pairingDiscardConfirmed) reauthentication.requireCurrentPassword(authentication, password);
+        return changed(cardId, () -> service.reopenRegistration(cardId, pairingDiscardConfirmed, authentication.getName()));
+    }
+
     @PostMapping("/{cardId}/tables/swap")
     public CardDtos.CardResponse swap(@PathVariable UUID cardId, @Valid @RequestBody CardDtos.SwapRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);

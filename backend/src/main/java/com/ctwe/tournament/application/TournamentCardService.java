@@ -426,6 +426,56 @@ public class TournamentCardService {
         return get(cardId, true);
     }
 
+    /**
+     * Reopen player registration ("ลงทะเบียนเพิ่ม") — allowed from the moment registration is
+     * finished until the FIRST game-1 result is saved. Any game-1 pairing (seats, preview or
+     * published rows) is discarded, but discarding one requires the director's password re-auth
+     * upstream, signalled here by {@code pairingDiscardConfirmed} and re-checked under the card row
+     * lock so a pairing generated concurrently can never be dropped without that confirmation.
+     * Players keep their codes, so late registrations continue after the existing ones; pre-game
+     * terminate/restore bookkeeping is cleared because the roster is fully editable again.
+     */
+    @Transactional
+    @EvictPublicCard
+    public CardDtos.CardResponse reopenRegistration(UUID cardId, boolean pairingDiscardConfirmed, String actor) {
+        CardRow card = cardRow(cardId);
+        if (card.runtimeStage() == RuntimeStage.PLAYER_REGISTRATION)
+            throw new IllegalArgumentException("การ์ดนี้อยู่ในขั้นตอนลงทะเบียนอยู่แล้ว เพิ่มผู้เล่นได้ทันที");
+        boolean beforeFirstBlockDone = card.currentGame() == 1
+            && (card.runtimeStage() == RuntimeStage.TABLE_PAIRING
+                || card.runtimeStage() == RuntimeStage.PAIRING_PREVIEW
+                || card.runtimeStage() == RuntimeStage.RESULT_COLLECTION)
+            && card.status() != CardStatus.FINISHED && card.status() != CardStatus.CLOSED;
+        if (!beforeFirstBlockDone)
+            throw new IllegalArgumentException("ลงทะเบียนเพิ่มได้เฉพาะช่วงก่อนเริ่มบันทึกผลเกม 1 เท่านั้น");
+        if (count("SELECT COUNT(*) FROM matches WHERE card_id = ? AND result_type IS NOT NULL", cardId) > 0)
+            throw new IllegalArgumentException("มีการบันทึกผลการแข่งขันของเกม 1 แล้ว ไม่สามารถกลับไปลงทะเบียนเพิ่มได้");
+        if (count("SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ?", cardId) > 0)
+            throw new IllegalArgumentException("การ์ดนี้มีผลที่ประกาศแล้ว ไม่สามารถกลับไปลงทะเบียนเพิ่มได้");
+        boolean pairingExists = card.runtimeStage() != RuntimeStage.TABLE_PAIRING;
+        if (pairingExists && !pairingDiscardConfirmed)
+            throw new IllegalArgumentException("ผลประกบคู่เกมแรกถูกสร้างแล้ว ต้องยืนยันด้วยรหัสผ่านผู้อำนวยการก่อนลงทะเบียนเพิ่ม");
+
+        jdbc.update("DELETE FROM matches WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM table_seats WHERE card_id = ?", cardId);
+        jdbc.update("UPDATE games SET status = 'PENDING' WHERE card_id = ?", cardId);
+        // Pre-game terminate/restore leftovers (a player restored with "keep pairing" carries a
+        // game-1 loss without any match row) would silently distort standings after re-finish.
+        jdbc.update("""
+            UPDATE players SET terminated_at = NULL, terminated_by = NULL,
+                               carry_losses = 0, carry_diff = 0, rejoin_game = 1
+            WHERE card_id = ?
+            """, cardId);
+        recalculateStandings(cardId);
+        jdbc.update("UPDATE tournament_cards SET status = 'DRAFT', runtime_stage = 'PLAYER_REGISTRATION', current_game = 1, version = version + 1 WHERE id = ?", cardId);
+        publishPublic(cardId);
+        audit(cardId, actor, "REOPEN_REGISTRATION", card.runtimeStage().name(), Map.of(
+            "discardedGameOnePairing", pairingExists,
+            "players", activePlayerCount(cardId)
+        ));
+        return get(cardId, true);
+    }
+
     @Transactional
     public CardDtos.CardResponse generatePairingPreview(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.TABLE_PAIRING);

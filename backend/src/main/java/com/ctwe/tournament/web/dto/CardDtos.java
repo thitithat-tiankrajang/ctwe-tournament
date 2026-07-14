@@ -82,6 +82,12 @@ public final class CardDtos {
     /** Director re-auth for pairing manipulation (undo / unpair). */
     public record PasswordRequest(@NotBlank String password) {}
 
+    /**
+     * Reopen player registration ("ลงทะเบียนเพิ่ม"). The password is optional: it is only required
+     * (and verified) when a game-1 pairing already exists and must be discarded.
+     */
+    public record ReopenRegistrationRequest(String password) {}
+
     /** Batch terminate: pull players out of the running competition (director password required). */
     public record TerminateRequest(
         @NotNull @Size(min = 1, max = 5000) List<@NotBlank String> playerIds,

@@ -82,6 +82,8 @@ interface TournamentState {
   updatePlayer: (cardId: string, playerId: string, player: Pick<Player, "firstName" | "lastName" | "school">) => Promise<void>;
   removePlayer: (cardId: string, playerId: string) => Promise<void>;
   finishRegistration: (cardId: string) => Promise<void>;
+  /** Reopen registration before any game-1 result; the password is required once a game-1 pairing exists. */
+  reopenRegistration: (cardId: string, password?: string) => Promise<void>;
   generateMockPlayers: (cardId: string, count: number) => Promise<void>;
   generatePairings: (cardId: string) => Promise<void>;
   swapPlayers: (cardId: string, firstId: string, secondId: string, password: string, confirmSchoolConflict?: boolean, gameNumber?: number) => Promise<void>;
@@ -568,6 +570,12 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async finishRegistration(cardId) {
       await mutateCard(`/api/cards/${cardId}/registration/finish`, cardId, { method: "POST" });
+    },
+    async reopenRegistration(cardId, password) {
+      await mutateCard(`/api/cards/${cardId}/registration/reopen`, cardId, {
+        method: "POST",
+        body: JSON.stringify(password ? { password } : {}),
+      });
     },
     async generateMockPlayers(cardId, count) {
       await mutateCard(`/api/dev/cards/${cardId}/players?count=${count}`, cardId, { method: "POST" });

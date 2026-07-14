@@ -542,6 +542,8 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 /* PromptDialog: single-input modal reusing the confirm-dialog frame. */
 .confirm-dialog > .form-label { display: block; margin: 0; padding: 14px 16px 6px; }
 .confirm-dialog > .form-label + .input { display: block; margin: 0 16px 4px; width: calc(100% - 32px); }
+.confirm-dialog > .form-label + .fresh-secret-input { margin: 0 16px 4px; width: calc(100% - 32px); }
+.confirm-dialog > .fresh-secret-input + .confirm-dialog__error { margin-top: 10px; }
 .confirm-dialog > p + .form-label { padding-top: 0; }
 .notification-consent { width: min(560px, 100%); }
 .notification-consent__events {

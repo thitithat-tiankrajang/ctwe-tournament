@@ -39,6 +39,7 @@ Create body:
 - `GET|POST /cards/{cardId}/players`
 - `PUT|DELETE /cards/{cardId}/players/{playerId}`
 - `POST /cards/{cardId}/registration/finish`
+- `POST /cards/{cardId}/registration/reopen` — director-only late registration ("ลงทะเบียนเพิ่ม"), allowed until the first game-1 result is saved. Optional body `{ "password": "..." }`: required (re-auth) when a game-1 pairing already exists, since reopening discards that pairing.
 - `POST /cards/{cardId}/players/import` — multipart CSV.
 - `GET /cards/{cardId}/players/export` — CSV.
 - `POST /cards/{cardId}/pairings/preview`

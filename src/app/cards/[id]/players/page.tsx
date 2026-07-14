@@ -22,6 +22,7 @@ import { GameFlow } from "@/ui/components/game-flow";
 import { InstitutionCombobox } from "@/ui/components/institution-combobox";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { PlayerTermination } from "@/ui/components/player-termination";
+import { ReopenRegistration } from "@/ui/components/reopen-registration";
 
 type Confirmation = { kind: "update" | "delete"; player: Player } | null;
 
@@ -183,7 +184,7 @@ export default function PlayersPage() {
         actions={canManage
           ? registrationOpen
             ? <Button variant="success" disabled={busy || card.players.length < 2} onClick={finish}>Finish registration <ArrowRight size={16} /></Button>
-            : <Link prefetch={false} href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link>
+            : <><ReopenRegistration card={card} /><Link prefetch={false} href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link></>
           : undefined}
       />
 
