@@ -7,9 +7,11 @@ import { useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { canManageTournament, hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import type { TournamentCard } from "@/domain/tournament/types";
+import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { EmptyState, PageHeader } from "@/ui/components/page";
+import { cardStageInfo } from "@/ui/components/stage-info";
 
 export default function CardsPage() {
   const router = useRouter();
@@ -85,7 +87,7 @@ export default function CardsPage() {
       />
       {error && <div className="notice notice--warning"><p><strong>เชื่อมต่อฐานข้อมูลไม่สำเร็จ</strong><span>{error}</span></p></div>}
       {loading ? <div className="panel panel-padding">กำลังโหลดข้อมูลจากฐานข้อมูล…</div> : needsTournament ? (
-        <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="เปิดการแข่งขันผ่านลิงก์ของรายการนั้น หรือจัดการได้จากคอนโซลผู้ดูแล" action={<Link prefetch={false} href="/admin"><Button><Trophy size={16} />ไปคอนโซลผู้ดูแล</Button></Link>} />
+        <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="กลับหน้าแรกเพื่อเลือกรายการแข่งขันของคุณ" action={<Link prefetch={false} href="/"><Button><Trophy size={16} />กลับหน้าแรก</Button></Link>} />
       ) : visibleCards.length === 0 ? (
         <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้" description={activeTournament ? (director ? "สร้างรุ่นการแข่งขันแรกของรายการนี้ได้เลย" : "ยังไม่มีรุ่นการแข่งขันในรายการนี้") : "ยังไม่มีการแข่งขันที่เผยแพร่"} action={activeTournament && director ? <Link prefetch={false} href={createHref}><Button>สร้างการ์ด</Button></Link> : undefined} />
       ) : (
@@ -94,20 +96,23 @@ export default function CardsPage() {
             <section className="card-group" key={name}>
               <h2 className="card-group__title">{name}</h2>
               <div className="card-group__rows">
-                {group.map((card) => (
-                  <article className="card-select-row" key={card.id}>
-                    <Link prefetch={false} href={cardHref(card)} className="card-select-row__link">
-                      <span className="card-select-row__name">{card.name}</span>
-                      <span className="card-select-row__division">{card.division}</span>
-                      <ChevronRight size={19} aria-hidden />
-                    </Link>
-                    {canManage && (
-                      <Button variant="ghost" size="sm" className="card-select-row__delete" aria-label={`ลบการ์ด ${card.name} ${card.division}`} title="ลบการ์ดและข้อมูลทั้งหมด" onClick={() => { setDeleteError(""); setDeleting(card); }}>
-                        <Trash2 size={15} />
-                      </Button>
-                    )}
-                  </article>
-                ))}
+                {group.map((card) => {
+                  const stage = cardStageInfo(card, "staff");
+                  return (
+                    <article className="card-select-row" key={card.id}>
+                      <Link prefetch={false} href={cardHref(card)} className="card-select-row__link">
+                        <span className="card-select-row__name">{card.division}</span>
+                        <span className="card-select-row__stage"><Badge tone={stage.tone}>{stage.label}</Badge></span>
+                        <ChevronRight size={19} aria-hidden />
+                      </Link>
+                      {canManage && (
+                        <Button variant="ghost" size="sm" className="card-select-row__delete" aria-label={`ลบการ์ด ${card.name} ${card.division}`} title="ลบการ์ดและข้อมูลทั้งหมด" onClick={() => { setDeleteError(""); setDeleting(card); }}>
+                          <Trash2 size={15} />
+                        </Button>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             </section>
           ))}
@@ -116,7 +121,7 @@ export default function CardsPage() {
 
       <ConfirmDialog
         open={deleting !== null}
-        title={`ลบการ์ด “${deleting?.name}” ?`}
+        title={`ลบการ์ด “${deleting?.name}${deleting?.division ? ` ${deleting.division}` : ""}” ?`}
         description="ระบบจะลบการ์ดนี้และข้อมูลที่เกี่ยวข้องทั้งหมดอย่างถาวร ทั้งผู้เล่น, pairing, ผลการแข่งขัน, อันดับ และบันทึกกิจกรรม (log) ทั้งหมด — ไม่สามารถกู้คืนได้"
         confirmLabel="ลบถาวร"
         danger

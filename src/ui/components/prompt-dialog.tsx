@@ -15,6 +15,9 @@ interface PromptDialogProps {
   confirmLabel: string;
   minLength?: number;
   busy?: boolean;
+  danger?: boolean;
+  /** Header accent above the title. */
+  eyebrow?: string;
   error?: string;
   onSubmit: (value: string) => void;
   onCancel: () => void;
@@ -31,6 +34,8 @@ export function PromptDialog({
   confirmLabel,
   minLength = 1,
   busy = false,
+  danger = false,
+  eyebrow = "ยืนยันการดำเนินการ",
   error,
   onSubmit,
   onCancel,
@@ -59,10 +64,10 @@ export function PromptDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={() => !busy && onCancel()}>
-      <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="prompt-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section className={`confirm-dialog${danger ? " confirm-dialog--danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby="prompt-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <div className="confirm-dialog__icon"><KeyRound size={20} /></div>
-          <div><span>ยืนยันการดำเนินการ</span><h2 id="prompt-dialog-title">{title}</h2></div>
+          <div><span>{eyebrow}</span><h2 id="prompt-dialog-title">{title}</h2></div>
           <button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={busy} onClick={onCancel}><X size={18} /></button>
         </header>
         {description && <p>{description}</p>}

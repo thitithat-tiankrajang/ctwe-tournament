@@ -6,6 +6,7 @@ import type { FinalSlot, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { appDialog } from "@/application/ui/dialog";
+import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
 import { Panel } from "@/ui/components/page";
 
 const slotTitle = (slot: number) => (slot === 0 ? "ชิงอันดับ 1 - 2" : "ชิงอันดับ 3 - 4");
@@ -125,6 +126,17 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
   const [savingGame, setSavingGame] = useState<number | null>(null);
   const [savingSummary, setSavingSummary] = useState(false);
 
+  // Warn before the tab closes while a typed score or summary hasn't been saved yet.
+  const gamesDirty = slot.games.some((game) => {
+    const draft = gameDrafts[game.gameIndex];
+    return Boolean(draft) && (draft.one !== (game.scoreOne?.toString() ?? "") || draft.two !== (game.scoreTwo?.toString() ?? ""));
+  });
+  const summaryDirty = summary.winnerId !== (slot.winnerId ?? "")
+    || summary.wins !== (slot.winnerWins?.toString() ?? "")
+    || summary.losses !== (slot.winnerLosses?.toString() ?? "")
+    || summary.diff !== (slot.totalDiff?.toString() ?? "");
+  useUnsavedChangesWarning(editable && (gamesDirty || summaryDirty));
+
   useEffect(() => {
     setGameDrafts(Object.fromEntries(slot.games.map((game) => [game.gameIndex, {
       one: game.scoreOne?.toString() ?? "",
@@ -193,7 +205,7 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
       <div className="final-slot">
         <table className="final-slot-table">
           <thead>
-            <tr><th>เกม</th><th>{playerHeader(slot.playerOneId)}</th><th>{playerHeader(slot.playerTwoId)}</th><th>fill-diff</th>{editable && <th>save</th>}</tr>
+            <tr><th>เกม</th><th>{playerHeader(slot.playerOneId)}</th><th>{playerHeader(slot.playerTwoId)}</th><th>ผลเกม</th>{editable && <th>บันทึก</th>}</tr>
           </thead>
           <tbody>
             {slot.games.map((game) => {
@@ -205,7 +217,7 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
                   <td><ScoreCell editable={editable} value={draft.one} onChange={(value) => setScore(game.gameIndex, "one", value)} onOpenHistory={onOpenHistory} /></td>
                   <td><ScoreCell editable={editable} value={draft.two} onChange={(value) => setScore(game.gameIndex, "two", value)} onOpenHistory={onOpenHistory} /></td>
                   <td className={fill && fill.diff > 0 ? "final-fill-diff final-fill-diff--win" : "final-fill-diff"}>{fill?.label ?? "—"}</td>
-                  {editable && <td><Button size="sm" variant="success" disabled={savingGame === game.gameIndex} onClick={() => void saveGame(game.gameIndex)}>{savingGame === game.gameIndex ? <LoaderCircle className="loading-spinner" size={13} /> : <Save size={13} />}Save</Button></td>}
+                  {editable && <td><Button size="sm" variant="success" disabled={savingGame === game.gameIndex} onClick={() => void saveGame(game.gameIndex)}>{savingGame === game.gameIndex ? <LoaderCircle className="loading-spinner" size={13} /> : <Save size={13} />}บันทึก</Button></td>}
                 </tr>
               );
             })}
@@ -220,7 +232,7 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
             <label>แพ้<input className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.losses} onChange={(event) => setSummary((prev) => ({ ...prev, losses: event.target.value }))} /></label>
             <label>Total diff<input className="input" disabled={!editable} type="number" inputMode="numeric" value={summary.diff} onChange={(event) => setSummary((prev) => ({ ...prev, diff: event.target.value }))} /></label>
             {editable
-              ? <Button size="sm" variant="success" disabled={savingSummary} onClick={() => void saveSummary()}>{savingSummary ? <LoaderCircle className="loading-spinner" size={13} /> : <Save size={13} />}Save summary</Button>
+              ? <Button size="sm" variant="success" disabled={savingSummary} onClick={() => void saveSummary()}>{savingSummary ? <LoaderCircle className="loading-spinner" size={13} /> : <Save size={13} />}บันทึกสรุปผล</Button>
               : onOpenHistory && <button type="button" className="final-history-link" onClick={onOpenHistory}>ดูประวัติรอบชิง</button>}
           </div>
         </section>

@@ -8,7 +8,17 @@ import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { Panel } from "@/ui/components/page";
 
-const numberField: React.CSSProperties = { maxWidth: 160 };
+/** The panel edits only the SSE-relevant subset; polling fields pass through untouched. */
+type RealtimeForm = Omit<RealtimeSettingsInput, "pollingEnabled" | "pollingIntervalMs">;
+
+const toForm = (settings: RealtimeSettings): RealtimeForm => ({
+  realtimeEnabled: settings.realtimeEnabled,
+  sseEnabled: settings.sseEnabled,
+  maxPublicSseConnections: settings.maxPublicSseConnections,
+  maxStaffSseConnections: settings.maxStaffSseConnections,
+  heartbeatIntervalMs: settings.heartbeatIntervalMs,
+  reconnectDelayMs: settings.reconnectDelayMs,
+});
 
 /**
  * Admin-tunable realtime behaviour (stored in runtime_settings, applied without redeploy).
@@ -18,44 +28,30 @@ export function RealtimeSettingsPanel() {
   const loadRealtimeSettings = useTournamentStore((state) => state.loadRealtimeSettings);
   const updateRealtimeSettings = useTournamentStore((state) => state.updateRealtimeSettings);
   const [settings, setSettings] = useState<RealtimeSettings | null>(null);
-  const [form, setForm] = useState<RealtimeSettingsInput | null>(null);
+  const [form, setForm] = useState<RealtimeForm | null>(null);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       const current = await loadRealtimeSettings();
       setSettings(current);
-      setForm((existing) => existing ?? {
-        realtimeEnabled: current.realtimeEnabled,
-        sseEnabled: current.sseEnabled,
-        pollingEnabled: current.pollingEnabled,
-        maxPublicSseConnections: current.maxPublicSseConnections,
-        maxStaffSseConnections: current.maxStaffSseConnections,
-        pollingIntervalMs: current.pollingIntervalMs,
-        heartbeatIntervalMs: current.heartbeatIntervalMs,
-        reconnectDelayMs: current.reconnectDelayMs,
-      });
+      setForm((existing) => existing ?? toForm(current));
     } catch { /* surfaced via store.error */ }
   }, [loadRealtimeSettings]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   const save = async () => {
-    if (!form) return;
+    if (!form || !settings) return;
     setBusy(true);
     try {
-      const saved = await updateRealtimeSettings(form);
-      setSettings(saved);
-      setForm({
-        realtimeEnabled: saved.realtimeEnabled,
-        sseEnabled: saved.sseEnabled,
-        pollingEnabled: saved.pollingEnabled,
-        maxPublicSseConnections: saved.maxPublicSseConnections,
-        maxStaffSseConnections: saved.maxStaffSseConnections,
-        pollingIntervalMs: saved.pollingIntervalMs,
-        heartbeatIntervalMs: saved.heartbeatIntervalMs,
-        reconnectDelayMs: saved.reconnectDelayMs,
+      const saved = await updateRealtimeSettings({
+        ...form,
+        pollingEnabled: settings.pollingEnabled,
+        pollingIntervalMs: settings.pollingIntervalMs,
       });
+      setSettings(saved);
+      setForm(toForm(saved));
       toast.success("บันทึกแล้ว — มีผลทันทีโดยไม่ต้อง deploy ใหม่");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "บันทึกการตั้งค่าไม่สำเร็จ");
@@ -64,9 +60,9 @@ export function RealtimeSettingsPanel() {
     }
   };
 
-  const setNumber = (key: keyof RealtimeSettingsInput) => (event: React.ChangeEvent<HTMLInputElement>) =>
+  const setNumber = (key: keyof RealtimeForm) => (event: React.ChangeEvent<HTMLInputElement>) =>
     setForm((current) => current ? { ...current, [key]: Number(event.target.value) } : current);
-  const setFlag = (key: keyof RealtimeSettingsInput) => (event: React.ChangeEvent<HTMLInputElement>) =>
+  const setFlag = (key: keyof RealtimeForm) => (event: React.ChangeEvent<HTMLInputElement>) =>
     setForm((current) => current ? { ...current, [key]: event.target.checked } : current);
 
   return (
@@ -78,40 +74,40 @@ export function RealtimeSettingsPanel() {
         <p className="muted panel-padding">กำลังโหลดการตั้งค่า…</p>
       ) : (
         <>
-          <div className="panel-padding" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div className="panel-padding console-flex">
             <Badge tone="info"><RadioTower size={13} /> SSE ผู้ชมที่เปิดอยู่ {settings?.activePublicStreams ?? 0} / {form.maxPublicSseConnections}</Badge>
             <Badge tone="info"><Activity size={13} /> SSE เจ้าหน้าที่ที่เปิดอยู่ {settings?.activeStaffStreams ?? 0} / {form.maxStaffSseConnections}</Badge>
-            {settings?.updatedAt && <span className="muted" style={{ fontSize: 12 }}>แก้ไขล่าสุด {new Date(settings.updatedAt).toLocaleString("th-TH")}</span>}
+            {settings?.updatedAt && <span className="console-note">แก้ไขล่าสุด {new Date(settings.updatedAt).toLocaleString("th-TH")}</span>}
           </div>
-          <div className="panel-padding" style={{ display: "flex", gap: 18, flexWrap: "wrap", paddingTop: 0 }}>
-            <label className="checkbox-chip" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div className="panel-padding panel-padding--flush-top console-flex console-flex--spread">
+            <label className="checkbox-chip">
               <input type="checkbox" checked={form.realtimeEnabled} onChange={setFlag("realtimeEnabled")} />
               Realtime Enabled (สวิตช์หลัก)
             </label>
-            <label className="checkbox-chip" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label className="checkbox-chip">
               <input type="checkbox" checked={form.sseEnabled} onChange={setFlag("sseEnabled")} />
               SSE Enabled
             </label>
           </div>
-          <div className="panel-padding form-grid" style={{ paddingTop: 0 }}>
+          <div className="panel-padding panel-padding--flush-top form-grid">
             <div className="form-field">
               <label className="form-label" htmlFor="rt-max-public">Max SSE Connections — ผู้ชม (0–1500)</label>
-              <input className="input" id="rt-max-public" type="number" min={0} max={1500} style={numberField}
+              <input className="input input--narrow" id="rt-max-public" type="number" min={0} max={1500}
                 value={form.maxPublicSseConnections} onChange={setNumber("maxPublicSseConnections")} />
             </div>
             <div className="form-field">
               <label className="form-label" htmlFor="rt-max-staff">Max SSE Connections — เจ้าหน้าที่ (0–1000)</label>
-              <input className="input" id="rt-max-staff" type="number" min={0} max={1000} style={numberField}
+              <input className="input input--narrow" id="rt-max-staff" type="number" min={0} max={1000}
                 value={form.maxStaffSseConnections} onChange={setNumber("maxStaffSseConnections")} />
             </div>
             <div className="form-field">
               <label className="form-label" htmlFor="rt-heartbeat">Heartbeat Interval (ms, 5000–120000)</label>
-              <input className="input" id="rt-heartbeat" type="number" min={5000} max={120000} step={1000} style={numberField}
+              <input className="input input--narrow" id="rt-heartbeat" type="number" min={5000} max={120000} step={1000}
                 value={form.heartbeatIntervalMs} onChange={setNumber("heartbeatIntervalMs")} />
             </div>
             <div className="form-field">
               <label className="form-label" htmlFor="rt-reconnect">Reconnect Delay (ms, 500–30000)</label>
-              <input className="input" id="rt-reconnect" type="number" min={500} max={30000} step={100} style={numberField}
+              <input className="input input--narrow" id="rt-reconnect" type="number" min={500} max={30000} step={100}
                 value={form.reconnectDelayMs} onChange={setNumber("reconnectDelayMs")} />
             </div>
           </div>

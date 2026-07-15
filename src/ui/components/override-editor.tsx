@@ -1,11 +1,13 @@
 "use client";
 
-import { LoaderCircle, Save, ShieldCheck, X } from "lucide-react";
+import { Save, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { appDialog } from "@/application/ui/dialog";
+import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
+import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { Panel } from "@/ui/components/page";
 
 const validScore = (value: string) => value.trim() !== "" && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 1_000_000_000;
@@ -40,6 +42,8 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
     if ((draft.one === oldOne && draft.two === oldTwo) || !validScore(draft.one) || !validScore(draft.two)) return [];
     return [{ game, pairing, oldOne, oldTwo, newOne: draft.one, newTwo: draft.two }];
   });
+  // Buffered edits only reach the server on the final confirm — guard against losing them.
+  useUnsavedChangesWarning(changes.length > 0);
 
   const commit = async () => {
     setCommitting(true);
@@ -90,35 +94,36 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
         <Button disabled={committing || changes.length === 0} onClick={() => setConfirmOpen(true)}><Save size={16} />บันทึกการแก้ไขทั้งหมด ({changes.length})</Button>
       </div>
 
-      {confirmOpen && (
-        <div className="dialog-backdrop" role="presentation" onMouseDown={() => !committing && setConfirmOpen(false)}>
-          <section className="confirm-dialog confirm-dialog--wide" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-            <header><div className="confirm-dialog__icon"><ShieldCheck size={20} /></div><div><span>ตรวจสอบก่อนเผยแพร่</span><h2>ยืนยันการแก้ไขผล {changes.length} รายการ</h2></div><button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={committing} onClick={() => setConfirmOpen(false)}><X size={18} /></button></header>
-            <p>รายการที่จะถูกบันทึกและเผยแพร่สาธารณะ · standing จะคำนวณใหม่ทุกเกม</p>
-            <div className="dense-table-wrap">
-              <table className="data-table">
-                <thead><tr><th className="numeric">เกม</th><th className="numeric">คู่</th><th>ฝ่ายที่ 1</th><th>ฝ่ายที่ 2</th><th className="numeric">เดิม</th><th className="numeric">ใหม่</th></tr></thead>
-                <tbody>
-                  {changes.map((change) => (
-                    <tr key={change.pairing.id}>
-                      <td className="numeric">{change.game}</td>
-                      <td className="numeric">{change.pairing.tableNumber}</td>
-                      <td title={nameOf(change.pairing.playerOneId)}>{nameOf(change.pairing.playerOneId)}</td>
-                      <td title={nameOf(change.pairing.playerTwoId)}>{nameOf(change.pairing.playerTwoId)}</td>
-                      <td className="numeric">{change.oldOne || "—"} : {change.oldTwo || "—"}</td>
-                      <td className="numeric"><Badge tone="success">{change.newOne} : {change.newTwo}</Badge></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <footer>
-              <Button variant="secondary" disabled={committing} onClick={() => setConfirmOpen(false)}>ยกเลิก</Button>
-              <Button disabled={committing} onClick={() => void commit()}>{committing ? <LoaderCircle className="loading-spinner" size={16} /> : <Save size={16} />}{committing ? "กำลังบันทึก…" : "ยืนยันและเผยแพร่"}</Button>
-            </footer>
-          </section>
+      <ConfirmDialog
+        open={confirmOpen}
+        eyebrow="ตรวจสอบก่อนเผยแพร่"
+        icon={<ShieldCheck size={20} />}
+        title={`ยืนยันการแก้ไขผล ${changes.length} รายการ`}
+        description="รายการที่จะถูกบันทึกและเผยแพร่สาธารณะ · standing จะคำนวณใหม่ทุกเกม"
+        confirmLabel="ยืนยันและเผยแพร่"
+        className="confirm-dialog--wide"
+        busy={committing}
+        onConfirm={() => void commit()}
+        onCancel={() => { if (!committing) setConfirmOpen(false); }}
+      >
+        <div className="dense-table-wrap">
+          <table className="data-table">
+            <thead><tr><th className="numeric">เกม</th><th className="numeric">คู่</th><th>ฝ่ายที่ 1</th><th>ฝ่ายที่ 2</th><th className="numeric">เดิม</th><th className="numeric">ใหม่</th></tr></thead>
+            <tbody>
+              {changes.map((change) => (
+                <tr key={change.pairing.id}>
+                  <td className="numeric">{change.game}</td>
+                  <td className="numeric">{change.pairing.tableNumber}</td>
+                  <td title={nameOf(change.pairing.playerOneId)}>{nameOf(change.pairing.playerOneId)}</td>
+                  <td title={nameOf(change.pairing.playerTwoId)}>{nameOf(change.pairing.playerTwoId)}</td>
+                  <td className="numeric">{change.oldOne || "—"} : {change.oldTwo || "—"}</td>
+                  <td className="numeric"><Badge tone="success">{change.newOne} : {change.newTwo}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
+      </ConfirmDialog>
     </>
   );
 }

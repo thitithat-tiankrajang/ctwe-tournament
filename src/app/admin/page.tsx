@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, FileDown, KeyRound, Link2, Lock, LockKeyhole, LockOpen, Plus, Shield, Trash2, Trophy, UserPlus } from "lucide-react";
+import { Copy, ExternalLink, FileDown, KeyRound, Link2, Lock, LockKeyhole, LockOpen, Plus, Shield, Trash2, Trophy, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { toast } from "@/application/ui/toast";
@@ -122,13 +122,13 @@ export default function AdminConsolePage() {
       <PageHeader eyebrow="Platform admin" title="ผู้ดูแลระบบ" description="สร้างรายการแข่งขัน สร้างบัญชีผู้อำนวยการ และกำหนดสิทธิ์ให้แต่ละ tournament" actions={<Badge tone="warning">ADMIN ONLY</Badge>} />
 
       <Panel title="รายการแข่งขัน (Tournaments)" description="เฉพาะผู้ดูแลระบบเท่านั้นที่สร้าง/ลบรายการแข่งขันได้">
-        <div className="panel-padding" style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
-            <div className="form-field" style={{ flex: 1, minWidth: 220 }}>
+        <div className="panel-padding console-stack">
+          <div className="console-inline-form">
+            <div className="form-field">
               <label className="form-label" htmlFor="t-name">ชื่อรายการแข่งขัน</label>
               <input className="input" id="t-name" value={tName} placeholder="เช่น CTWE 2026" onChange={(e) => setTName(e.target.value)} />
             </div>
-            <div className="form-field" style={{ flex: 1, minWidth: 220 }}>
+            <div className="form-field">
               <label className="form-label" htmlFor="t-slug">ลิงก์เข้าชม (ตั้งแล้วแก้ไม่ได้)</label>
               <input
                 className="input"
@@ -140,40 +140,41 @@ export default function AdminConsolePage() {
             </div>
             <Button disabled={busy || tName.trim().length === 0 || !slugValid} onClick={() => act(async () => { await createTournament(tName.trim(), tSlug); setTName(""); setTSlug(""); })}><Plus size={16} />สร้าง Tournament</Button>
           </div>
-          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+          <p className="console-note">
             ใช้ a-z, 0-9 และขีดกลางคั่นคำ (3-64 ตัวอักษร) · ลิงก์ถาวร แก้ไขไม่ได้หลังสร้าง
             {tSlug && (slugValid
               ? <> · ผู้ชมจะเข้าที่ <code>{tournamentLink(tSlug)}</code></>
-              : <span style={{ color: "var(--danger, #d4380d)" }}> · รูปแบบลิงก์ยังไม่ถูกต้อง</span>)}
+              : <span className="console-note--error"> · รูปแบบลิงก์ยังไม่ถูกต้อง</span>)}
           </p>
         </div>
-        <div className="panel-padding" style={{ display: "grid", gap: 12 }}>
+        <div className="panel-padding console-stack">
           {tournaments.length === 0 && <p className="muted">ยังไม่มีรายการแข่งขัน</p>}
           {tournaments.map((t) => (
-            <div key={t.id} className="notice" style={{ display: "block" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Trophy size={16} />{t.name}<Badge tone={t.status === "OPEN" ? "success" : "danger"}>{t.status === "OPEN" ? "เปิด" : "ปิด"}</Badge></strong>
-                <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div key={t.id} className="console-row">
+              <div className="console-row__head">
+                <strong className="console-row__title"><Trophy size={16} />{t.name}<Badge tone={t.status === "OPEN" ? "success" : "danger"}>{t.status === "OPEN" ? "ลิงก์เปิด" : "ลิงก์ปิด"}</Badge></strong>
+                <span className="console-row__actions">
                   <Badge>{t.cardCount} การ์ด</Badge>
                   <Button variant="secondary" size="sm" disabled={busy} title={t.status === "OPEN" ? "ปิดลิงก์ (เข้าไม่ได้)" : "เปิดลิงก์ให้เข้าถึงได้"} onClick={() => toggleStatus(t)}>{t.status === "OPEN" ? <><Lock size={14} />ปิดลิงก์</> : <><LockOpen size={14} />เปิดลิงก์</>}</Button>
-                  <Button variant="secondary" size="sm" disabled={busy} title="เก็บเป็น Excel แล้วลบข้อมูลออกจากฐานข้อมูล" onClick={() => setConfirm({ title: `เก็บทัวร์นาเมนต์ "${t.name}" เข้าคลัง?`, description: `ระบบจะเก็บเป็นไฟล์ Excel แล้วลบข้อมูลทั้งหมด (${t.cardCount} การ์ด) ออกจากฐานข้อมูลอย่างถาวร — ไฟล์ยังดาวน์โหลดได้ภายหลัง`, confirmLabel: "เก็บเข้าคลัง", danger: true, run: () => archiveTournament(t.id) })}><FileDown size={14} /> เก็บเข้าคลัง</Button>
+                  <Button variant="danger" size="sm" disabled={busy} title="เก็บเป็น Excel แล้วลบข้อมูลออกจากฐานข้อมูลถาวร" onClick={() => setConfirm({ title: `เก็บทัวร์นาเมนต์ "${t.name}" เข้าคลัง?`, description: `ระบบจะเก็บเป็นไฟล์ Excel แล้วลบข้อมูลทั้งหมด (${t.cardCount} การ์ด) ออกจากฐานข้อมูลอย่างถาวร — ไฟล์ยังดาวน์โหลดได้ภายหลัง`, confirmLabel: "เก็บเข้าคลัง", danger: true, run: () => archiveTournament(t.id) })}><FileDown size={14} /> เก็บเข้าคลัง</Button>
                 </span>
               </div>
-              <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                <span className="muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}><Link2 size={13} />ลิงก์เข้าถึง:</span>
-                <code style={{ fontSize: 12, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6, padding: "2px 8px", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tournamentLink(t.accessToken)}</code>
+              <div className="console-row__meta">
+                <span className="console-hint"><Link2 size={13} />ลิงก์เข้าถึง:</span>
+                <code className="console-code">{tournamentLink(t.accessToken)}</code>
                 <Button variant="ghost" size="sm" disabled={busy} title="คัดลอกลิงก์" onClick={() => void copyLink(t.accessToken)}><Copy size={14} />คัดลอก</Button>
-                {t.status !== "OPEN" && <span className="muted" style={{ fontSize: 12 }}>· ลิงก์ปิดอยู่ ผู้เข้าจะเข้าไม่ได้จนกว่าจะเปิด</span>}
+                <a href={tournamentLink(t.accessToken)} target="_blank" rel="noreferrer"><Button variant="ghost" size="sm" disabled={busy} title="เปิดหน้าสำหรับผู้ชมในแท็บใหม่"><ExternalLink size={14} />เปิดดู</Button></a>
+                {t.status !== "OPEN" && <span className="console-note">· ลิงก์ปิดอยู่ ผู้เข้าจะเข้าไม่ได้จนกว่าจะเปิด</span>}
               </div>
-              <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                <span className="muted" style={{ fontSize: 13 }}>ผู้อำนวยการ:</span>
-                {t.directors.length === 0 && <span className="muted" style={{ fontSize: 13 }}>— ยังไม่ได้กำหนด —</span>}
+              <div className="console-row__meta">
+                <span className="console-hint">ผู้อำนวยการ:</span>
+                {t.directors.length === 0 && <span className="console-hint">— ยังไม่ได้กำหนด —</span>}
                 {t.directors.map((d) => (
                   <Badge key={d} tone="info">{d}
                     <button aria-label={`ถอด ${d}`} className="chip-remove" disabled={busy} onClick={() => act(() => unassignDirector(t.id, d))}>×</button>
                   </Badge>
                 ))}
-                <select className="select" style={{ maxWidth: 220 }} value="" disabled={busy} onChange={(e) => e.target.value && void act(() => assignDirector(t.id, e.target.value))}>
+                <select className="select console-select" value="" disabled={busy} onChange={(e) => e.target.value && void act(() => assignDirector(t.id, e.target.value))}>
                   <option value="">+ เพิ่มผู้อำนวยการ…</option>
                   {directors.filter((d) => !t.directors.includes(d.username)).map((d) => <option key={d.username} value={d.username}>{d.username}</option>)}
                 </select>
@@ -182,8 +183,6 @@ export default function AdminConsolePage() {
           ))}
         </div>
       </Panel>
-
-      <RealtimeSettingsPanel />
 
       <Panel title="คลังที่เก็บถาวร (Excel)" description="เฉพาะผู้ดูแลระบบเท่านั้นที่ดาวน์โหลดหรือลบไฟล์ Excel ที่เก็บถาวรได้">
         <div className="panel-padding">
@@ -202,36 +201,41 @@ export default function AdminConsolePage() {
             <FreshSecretInput className="input" id="d-pass" value={dPass} onChange={(e) => setDPass(e.target.value)} />
           </div>
         </div>
-        <div className="panel-padding" style={{ paddingTop: 0 }}>
-          <span className="muted" style={{ fontSize: 13 }}>มอบหมาย tournament (เลือกได้หลายรายการ):</span>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+        <div className="panel-padding panel-padding--flush-top">
+          <span className="console-hint">มอบหมาย tournament (เลือกได้หลายรายการ):</span>
+          <div className="chip-list">
             {tournaments.map((t) => (
-              <label key={t.id} className="checkbox-chip" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label key={t.id} className="checkbox-chip">
                 <input type="checkbox" checked={dTournaments.includes(t.id)} onChange={() => toggleDTournament(t.id)} />{t.name}
               </label>
             ))}
           </div>
-          <div className="form-actions" style={{ paddingLeft: 0 }}>
+          <div className="form-actions form-actions--flush">
             <Button disabled={busy || dUser.trim().length < 3 || dPass.length < 8} onClick={() => act(async () => {
               await createDirector(dUser.trim(), dPass, dTournaments);
               setDUser(""); setDPass(""); setDTournaments([]);
             })}><UserPlus size={16} />สร้างผู้อำนวยการ</Button>
           </div>
         </div>
-        <div className="panel-padding" style={{ display: "grid", gap: 8 }}>
+        <div className="panel-padding console-stack">
           {directors.length === 0 && <p className="muted">ยังไม่มีบัญชีผู้อำนวยการ</p>}
           {directors.map((d) => (
-            <div key={d.username} className="notice" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Shield size={15} />{d.username} {!d.enabled && <Badge tone="warning">ปิดใช้งาน</Badge>}</strong>
-              <span style={{ display: "flex", gap: 6 }}>
-                <Button variant="secondary" size="sm" disabled={busy} onClick={() => act(() => setAccountEnabled("directors", d.username, !d.enabled))}>{d.enabled ? "ปิดใช้งาน" : "เปิดใช้งาน"}</Button>
-                <Button variant="secondary" size="sm" disabled={busy} title="ตั้งรหัสผ่านใหม่" onClick={() => { setDialogError(""); setPrompt({ title: `ตั้งรหัสผ่านใหม่ · ${d.username}`, label: "รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)", type: "password", placeholder: "อย่างน้อย 8 ตัวอักษร", minLength: 8, confirmLabel: "บันทึกรหัสผ่าน", run: (p) => resetAccountPassword("directors", d.username, p) }); }}><KeyRound size={14} /></Button>
-                <Button variant="danger" size="sm" disabled={busy} onClick={() => setConfirm({ title: `ลบผู้อำนวยการ ${d.username}?`, description: "บัญชีผู้อำนวยการและ staff ทั้งหมดของเขาจะถูกลบอย่างถาวร", confirmLabel: "ลบถาวร", danger: true, run: () => deleteDirector(d.username) })}><Trash2 size={14} /></Button>
-              </span>
+            <div key={d.username} className="console-row">
+              <div className="console-row__head">
+                <strong className="console-row__title"><Shield size={15} />{d.username} {!d.enabled && <Badge tone="warning">ปิดใช้งาน</Badge>}</strong>
+                <span className="console-row__actions">
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => act(() => setAccountEnabled("directors", d.username, !d.enabled))}>{d.enabled ? "ปิดใช้งาน" : "เปิดใช้งาน"}</Button>
+                  <Button variant="secondary" size="sm" disabled={busy} title="ตั้งรหัสผ่านใหม่" onClick={() => { setDialogError(""); setPrompt({ title: `ตั้งรหัสผ่านใหม่ · ${d.username}`, label: "รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)", type: "password", placeholder: "อย่างน้อย 8 ตัวอักษร", minLength: 8, confirmLabel: "บันทึกรหัสผ่าน", run: (p) => resetAccountPassword("directors", d.username, p) }); }}><KeyRound size={14} /></Button>
+                  <Button variant="danger" size="sm" disabled={busy} onClick={() => setConfirm({ title: `ลบผู้อำนวยการ ${d.username}?`, description: "บัญชีผู้อำนวยการและ staff ทั้งหมดของเขาจะถูกลบอย่างถาวร", confirmLabel: "ลบถาวร", danger: true, run: () => deleteDirector(d.username) })}><Trash2 size={14} /></Button>
+                </span>
+              </div>
             </div>
           ))}
         </div>
       </Panel>
+
+      {/* Infra tuning sits last — it is not part of the day-to-day tournament content flow. */}
+      <RealtimeSettingsPanel />
 
       <ConfirmDialog
         open={confirm !== null}

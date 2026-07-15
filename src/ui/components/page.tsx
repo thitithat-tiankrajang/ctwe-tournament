@@ -14,9 +14,9 @@ export function PageHeader({ eyebrow, title, subtitle, description, actions, cla
   );
 }
 
-export function Panel({ title, description, actions, children, className = "" }: { title?: string; description?: string; actions?: ReactNode; children: ReactNode; className?: string }) {
+export function Panel({ title, description, actions, children, className = "", id }: { title?: string; description?: string; actions?: ReactNode; children: ReactNode; className?: string; id?: string }) {
   return (
-    <section className={`panel ${className}`}>
+    <section id={id} className={`panel ${className}`}>
       {(title || actions) && (
         <div className="panel__header">
           <div>
@@ -28,16 +28,6 @@ export function Panel({ title, description, actions, children, className = "" }:
       )}
       {children}
     </section>
-  );
-}
-
-export function Stat({ label, value, tone = "blue", note }: { label: string; value: ReactNode; tone?: "blue" | "green" | "yellow" | "red"; note?: string }) {
-  return (
-    <div className={`stat stat--${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {note && <small>{note}</small>}
-    </div>
   );
 }
 

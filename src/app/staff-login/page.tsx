@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-import { LockKeyhole, LogIn, ShieldCheck } from "lucide-react";
+import { LockKeyhole, LogIn } from "lucide-react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { Button } from "@/ui/components/button";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
@@ -39,11 +39,10 @@ export default function StaffLoginPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Secure access" title="เข้าสู่ระบบ" description="ระบบเปิดให้เฉพาะผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่ — เข้าสู่ระบบเพื่อเข้าถึงข้อมูลการแข่งขัน" />
-      <Panel title="Staff authentication" description="ระบบใช้ server-side session, CSRF protection และไม่บันทึกรหัสผ่านไว้ใน browser storage">
+      <PageHeader eyebrow="ระบบจัดการแข่งขัน" title="เข้าสู่ระบบ" description="สำหรับผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่กรอกผลเท่านั้น" />
+      <Panel title="ยืนยันตัวตน" description="ใช้บัญชีที่ได้รับจากผู้ดูแลระบบหรือผู้อำนวยการของคุณ">
         <form onSubmit={submit} autoComplete="off" className="panel-padding" style={{ maxWidth: 520, display: "grid", gap: 16 }}>
           {error && <div className="notice notice--warning" role="alert"><p><strong>เข้าสู่ระบบไม่สำเร็จ</strong><span>{error}</span></p></div>}
-          <div className="notice notice--info"><ShieldCheck size={18} /><p><strong>ต้องเข้าสู่ระบบก่อนจึงจะดูข้อมูลได้</strong><span>ผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่ ใช้บัญชีของตนเพื่อเข้าถึงรายการแข่งขัน</span></p></div>
           <div className="form-field"><label className="form-label" htmlFor="login-account">ชื่อผู้ใช้</label><input className="input" id="login-account" name="login-account" autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} required /></div>
           <div className="form-field"><label className="form-label" htmlFor="login-secret">รหัสผ่าน</label><FreshSecretInput id="login-secret" name="login-secret-value" className="input" value={password} onChange={(event) => setPassword(event.target.value)} required /></div>
           <div className="form-actions"><Button type="submit" disabled={!auth.csrfToken || submitting}><LogIn size={16} />{submitting ? "กำลังตรวจสอบ…" : "เข้าสู่ระบบ"}</Button></div>

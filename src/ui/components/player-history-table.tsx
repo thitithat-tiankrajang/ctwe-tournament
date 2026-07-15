@@ -23,5 +23,5 @@ export function PlayerHistoryTable({ card, players, playerId }: { card: Tourname
     { key: "oppName", label: "ชื่อ-นามสกุลคู่แข่ง", min: 130, width: 200, render: (row) => <span title={opponentName(row.opponentId)}>{opponentName(row.opponentId)}</span> },
     { key: "oppSchool", label: "โรงเรียน/สถาบันคู่แข่ง", min: 130, width: 210, render: (row) => <span title={players.get(row.opponentId)?.school}>{players.get(row.opponentId)?.school}</span> },
   ];
-  return <DataGrid columns={columns} rows={history} getRowKey={(row) => `${row.game}`} storageKey={`${card.id}:history:detail`} unit="เกม" emptyText="ยังไม่มีประวัติการเล่นที่เผยแพร่" />;
+  return <DataGrid columns={columns} rows={history} getRowKey={(row) => `${row.game}`} storageKey={`${card.id}:history:detail`} emptyText="ยังไม่มีประวัติการเล่นที่เผยแพร่" />;
 }

@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ClipboardCheck, LockKeyhole, Trophy, X } from "lucide-react";
+import { ArrowRight, ClipboardCheck, Hourglass, LockKeyhole, Trophy, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
-import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
+import { canManageTournament, hasStaffAccess, isAdmin } from "@/domain/tournament/roles";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import { comparePlayerCodes } from "@/domain/tournament/player-code";
 import type { FinalSlot, Pairing, PairingSnapshot, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
@@ -15,22 +15,16 @@ import { CardNotFound } from "@/ui/components/card-not-found";
 import { DataGrid, type DataColumn } from "@/ui/components/data-grid";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
+import { PdfDownloadPanel } from "@/ui/components/pdf-download-panel";
 import { PlayerHistoryTable } from "@/ui/components/player-history-table";
 import { SelectMenu } from "@/ui/components/select-menu";
+import { stageLabels } from "@/ui/components/stage-info";
 import { OverviewRecordFilter, type OverviewRecordFilterValue } from "@/ui/components/overview-record-filter";
 
 type OverviewView = "ranking" | "pairing" | "result";
 
-const stageLabels: Record<RuntimeStage, string> = {
-  PLAYER_REGISTRATION: "ลงทะเบียนผู้เล่น",
-  TABLE_PAIRING: "รอสร้าง Pairing",
-  PAIRING_PREVIEW: "ตรวจและยืนยัน Pairing",
-  RESULT_COLLECTION: "กรอกผลการแข่งขัน",
-  RESULT_REVIEW: "Review ก่อน Publish",
-  FINAL_SEEDING: "ตรวจผู้เข้าชิงรอบชิง",
-  FINAL_COLLECTION: "กรอกผลรอบชิงชนะเลิศ",
-  FINAL_PUBLISHED: "ประกาศผลแล้ว",
-};
+const publishedAtText = (iso: string) =>
+  `เผยแพร่ผลเมื่อ ${new Date(iso).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}`;
 
 function workflowHref(cardId: string, stage: RuntimeStage) {
   if (stage === "PLAYER_REGISTRATION") return `/cards/${cardId}/players`;
@@ -91,7 +85,7 @@ function RankingTable({ players, rankingPositions, selectedId, onPlayerClick, re
     { key: "wp", label: "คะแนนสะสม", min: 76, width: 90, align: "center", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
     { key: "diff", label: "ผลต่างสะสม", min: 82, width: 96, align: "center", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
   ];
-  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" unit="คน" emptyText="ไม่พบผู้เล่นตามตัวกรอง" resizableColumns={resizableColumns} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
+  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" emptyText="ไม่พบผู้เล่นตามตัวกรอง" resizableColumns={resizableColumns} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
 }
 
 function PairingGrid({ pairings, players, resizableColumns }: { pairings: Pairing[]; players: Map<string, Player>; resizableColumns: boolean }) {
@@ -105,7 +99,7 @@ function PairingGrid({ pairings, players, resizableColumns }: { pairings: Pairin
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
     { key: "name2", label: "นักกีฬา", min: 150, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} gibsonized={pairing.playerTwoGibsonized} /> },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
+  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
 function ResultTable({ pairings, players, storageKey, resizableColumns }: { pairings: Pairing[]; players: Map<string, Player>; storageKey: string; resizableColumns: boolean }) {
@@ -130,7 +124,7 @@ function ResultTable({ pairings, players, storageKey, resizableColumns }: { pair
     { key: "score", label: "คะแนน", min: 36, width: 68, fitContent: true, align: "center", cellClassName: "cell-score", value: (pairing) => scoreText(pairing), filterable: false, render: (pairing) => scoreText(pairing) },
     { key: "diff", label: "ผลต่าง", min: 56, width: 68, align: "center", cellClassName: (pairing) => `cell-diff cell-diff--${pairing.resultType === "PENALTY" ? "penalty" : "win"}`, value: (pairing) => diffOf(pairing) ?? -1, filterable: false, render: (pairing) => diffText(pairing) },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" unit="คู่" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
+  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
 function FinalHistoryDialog({ slot, players, onClose }: { slot: FinalSlot; players: Map<string, Player>; onClose: () => void }) {
@@ -220,7 +214,6 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const [finalHistorySlot, setFinalHistorySlot] = useState<FinalSlot | null>(null);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [recordFilter, setRecordFilter] = useState<OverviewRecordFilterValue>({ mode: "player", playerIds: [], schools: [] });
-  const viewRefs = useRef<Record<OverviewView, HTMLDivElement | null>>({ ranking: null, pairing: null, result: null });
   const viewState = overviewViewState(card);
   const enteredCardRef = useRef<string | null>(null);
   const appliedForcedKeyRef = useRef<string | null>(null);
@@ -251,7 +244,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     if (!selectedRankingPlayerId) return;
     const clearSelectionOutsideTable = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && target.closest(".overview-ranking-table")) return;
+      if (target instanceof Element && target.closest(".overview-ranking-panel")) return;
       setSelectedRankingPlayerId(null);
     };
     document.addEventListener("pointerdown", clearSelectionOutsideTable);
@@ -310,7 +303,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
       return next;
     });
     if (opening && window.matchMedia("(max-width: 768px)").matches) {
-      window.setTimeout(() => viewRefs.current[view]?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      window.setTimeout(() => document.getElementById(`overview-view-${view}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     }
   };
   const selectRankingPlayer = (player: Player) => {
@@ -327,7 +320,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
       <PageHeader
         className={`overview-page-header${final ? " overview-page-header--complete" : ""}`}
         title={<>{card.name}{card.division && <span className="page-title-inline-subtitle"> {card.division}</span>}</>}
-        actions={(visibleSnapshots.length > 0 || canClose || final) ? (
+        actions={(visibleSnapshots.length > 0 || final) ? (
           <div className="overview-header-actions">
             {visibleSnapshots.length > 0 && (
               <div className="overview-header-controls">
@@ -346,7 +339,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
                       className={`overview-game-published${gameMenuOpen ? " overview-game-published--hidden" : ""}`}
                       aria-hidden={gameMenuOpen}
                     >
-                      {publishedGames.size} จาก {card.games.length} เกมเผยแพร่ผลแล้ว
+                      เผยแพร่แล้ว {publishedGames.size}/{card.games.length} เกม
                     </span>
                   </div>
                 </div>
@@ -362,10 +355,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
                 </div>}
               </div>
             )}
-            {final && <Badge tone="warning">complete</Badge>}
-            {canClose && <Button variant="danger" onClick={async () => {
-              if (await appDialog.confirm("การ์ดที่ปิดแล้วจะไม่สามารถแก้ไขได้อีก", { title: "ปิดการ์ดถาวรหรือไม่?", confirmLabel: "ปิดการ์ด", danger: true })) await closeCard(id);
-            }}><LockKeyhole size={16} />ปิดการ์ด</Button>}
+            {final && <Badge tone="warning">จบแล้ว</Badge>}
           </div>
         ) : undefined}
       />
@@ -376,43 +366,44 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
         <div className="notice notice--info workflow-notice"><ClipboardCheck size={20} /><p><strong>ขั้นตอนปัจจุบัน: {stageLabels[card.runtimeStage]}</strong><span>เกม {card.currentGame} จาก {card.games.length} · ทำงานต่อในหน้าที่ระบบกำหนด</span></p><Link prefetch={false} href={workflowHref(id, card.runtimeStage)}><Button size="sm">ทำงานต่อ <ArrowRight size={15} /></Button></Link></div>
       )}
 
+      {/* Spectators see why the latest game has nothing yet, instead of a silently stale screen. */}
+      {!canManage && !final && !selectedFinal && visibleSnapshots.length > 0
+        && latestVisibleGame < card.currentGame && card.currentGame <= card.games.length && (
+        <div className="notice notice--info"><Hourglass size={18} /><p>
+          <strong>{card.runtimeStage === "TABLE_PAIRING" || card.runtimeStage === "PAIRING_PREVIEW"
+            ? `กำลังจัดคู่เกม ${card.currentGame}`
+            : `เกม ${card.currentGame} กำลังแข่งขัน`}</strong>
+          <span>ข้อมูลจะอัปเดตที่นี่อัตโนมัติทันทีที่เผยแพร่</span>
+        </p></div>
+      )}
+
       {!selectedFinal && (visibleSnapshots.length === 0 ? (
         card.players.length > 0 ? <>
-          <Panel className="overview-data-panel" title="Ranking เริ่มต้น">
-            <div className="overview-ranking-table">
-              <RankingTable players={visibleRanking} rankingPositions={rankingPositions} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
-            </div>
+          <Panel className="overview-data-panel overview-ranking-panel" title="Ranking เริ่มต้น">
+            <RankingTable players={visibleRanking} rankingPositions={rankingPositions} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
           </Panel>
-          <Panel><EmptyState icon={<Trophy size={26} />} title="ยังไม่มี Pairing ที่เผยแพร่" description="เมื่อเจ้าหน้าที่ยืนยัน Pairing เกมแรก ตารางคู่แข่งขันจะปรากฏที่นี่ทันที" /></Panel>
-        </> : <Panel><EmptyState icon={<Trophy size={26} />} title="กำลังรอรายชื่อผู้เล่น" description="รายชื่อและ Ranking เริ่มต้นจะปรากฏหลังเจ้าหน้าที่ Finish การลงทะเบียน" /></Panel>
+          <Panel><EmptyState icon={<Trophy size={26} />} title="ยังไม่มี Pairing ที่เผยแพร่" description="เมื่อผู้อำนวยการยืนยัน Pairing เกมแรก ตารางคู่แข่งขันจะปรากฏที่นี่ทันที" /></Panel>
+        </> : <Panel><EmptyState icon={<Trophy size={26} />} title="กำลังรอรายชื่อผู้เล่น" description="รายชื่อและ Ranking เริ่มต้นจะปรากฏหลังผู้อำนวยการจบการลงทะเบียน" /></Panel>
       ) : (
         <>
-          {views.size === 0 && <Panel><EmptyState icon={<ClipboardCheck size={24} />} title="ยังไม่ได้เลือกมุมมอง" description="กดปุ่ม Ranking / Pairing / Result ด้านล่างเพื่อเลือกข้อมูลที่ต้องการดู" /></Panel>}
+          {views.size === 0 && <Panel><EmptyState icon={<ClipboardCheck size={24} />} title="ยังไม่ได้เลือกมุมมอง" description="เลือกมุมมอง Ranking / Pairing / Result เพื่อแสดงข้อมูลที่ต้องการ" /></Panel>}
 
           {views.has("ranking") && (
-            <div ref={(element) => { viewRefs.current.ranking = element; }} className="overview-view-section">
-              <Panel className="overview-data-panel" title={selectedResultsPublished ? `Ranking หลังจบเกม ${selectedGame}` : `Ranking ก่อนจบเกม ${selectedGame}`}>
-                <div className="overview-ranking-table">
-                  <RankingTable players={visibleRanking} rankingPositions={rankingPositions} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
-                </div>
-              </Panel>
-            </div>
+            <Panel id="overview-view-ranking" className="overview-data-panel overview-view-section overview-ranking-panel" title={selectedResultsPublished ? `Ranking หลังจบเกม ${selectedGame}` : `Ranking ก่อนจบเกม ${selectedGame}`} description={selectedResultsPublished && selectedSnapshot?.confirmedAt ? publishedAtText(selectedSnapshot.confirmedAt) : undefined}>
+              <RankingTable players={visibleRanking} rankingPositions={rankingPositions} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
+            </Panel>
           )}
 
           {views.has("pairing") && (
-            <div ref={(element) => { viewRefs.current.pairing = element; }} className="overview-view-section">
-              <Panel className="overview-data-panel" title={`Pairing เกม ${selectedGame}`}>
-                <PairingGrid pairings={visiblePairings} players={players} resizableColumns={resizableColumns} />
-              </Panel>
-            </div>
+            <Panel id="overview-view-pairing" className="overview-data-panel overview-view-section" title={`Pairing เกม ${selectedGame}`}>
+              <PairingGrid pairings={visiblePairings} players={players} resizableColumns={resizableColumns} />
+            </Panel>
           )}
 
           {views.has("result") && selectedResultsVisible && (
-            <div ref={(element) => { viewRefs.current.result = element; }} className="overview-view-section">
-              <Panel className="overview-data-panel" title={`ผลการแข่งขันเกม ${selectedGame}`}>
-                <ResultTable pairings={visiblePairings} players={players} storageKey={`${id}:overview:results`} resizableColumns={resizableColumns} />
-              </Panel>
-            </div>
+            <Panel id="overview-view-result" className="overview-data-panel overview-view-section" title={`ผลการแข่งขันเกม ${selectedGame}`} description={selectedSnapshot?.confirmedAt ? publishedAtText(selectedSnapshot.confirmedAt) : undefined}>
+              <ResultTable pairings={visiblePairings} players={players} storageKey={`${id}:overview:results`} resizableColumns={resizableColumns} />
+            </Panel>
           )}
 
           <nav className="overview-mobile-nav" aria-label="มุมมองข้อมูลการแข่งขัน">
@@ -428,6 +419,18 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
           </nav>
         </>
       ))}
+
+      {/* Back-office extras live below the spectator content: document export, then the danger zone. */}
+      {(isAdmin(auth) || canManage) && <PdfDownloadPanel card={card} />}
+      {canClose && (
+        <Panel className="panel--danger" title="ปิดการ์ดถาวร" description="การ์ดที่ปิดแล้วจะแก้ไขข้อมูลใด ๆ ไม่ได้อีก — ทำเมื่อการแข่งขันจบสมบูรณ์แล้วเท่านั้น">
+          <div className="panel-padding">
+            <Button variant="danger" onClick={async () => {
+              if (await appDialog.confirm("การ์ดที่ปิดแล้วจะไม่สามารถแก้ไขได้อีก", { title: "ปิดการ์ดถาวรหรือไม่?", confirmLabel: "ปิดการ์ด", danger: true })) await closeCard(id);
+            }}><LockKeyhole size={16} />ปิดการ์ดถาวร</Button>
+          </div>
+        </Panel>
+      )}
 
       {historyPlayer && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={() => setHistoryPlayerId(null)}>

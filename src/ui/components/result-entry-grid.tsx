@@ -4,6 +4,7 @@ import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Megaphone, Pencil, Sa
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { matchesPlayerCode, normalizePlayerCode } from "@/domain/tournament/player-code";
+import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { applyColumnControls, GridHead, uniqueColumnValues, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
@@ -358,6 +359,8 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const filtersActive = controls.active || status !== "all";
   const savedCount = rows.filter((row) => row.status === "saved").length;
   const dirtyCount = rows.filter((row) => row.status === "dirty").length;
+  // Scores typed but not yet saved must survive an accidental refresh/close.
+  useUnsavedChangesWarning(dirtyCount > 0);
   const filteredSavable = filtered.filter((row) => {
     if (!row.pairing || row.status !== "dirty") return false;
     const side = row.slot.isBye ? byeSide(row.pairing) : null;
@@ -705,10 +708,9 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
   );
 
   return (
-    <div className="entry-grid-wrap">
-      <div className="entry-grid-scroll" ref={scrollRef}>
-        <table className="entry-grid entry-grid--match" style={{ width: totalWidth }}>
-          <GridHead columns={viewColumns} colWidths={colWidths} startResize={startResize} excel={{
+    <div className="entry-grid-scroll" ref={scrollRef}>
+      <table className="entry-grid entry-grid--match" style={{ width: totalWidth }}>
+        <GridHead columns={viewColumns} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => VIEW_FILTER_KEYS.includes(key),
             filterable: (key) => VIEW_FILTER_KEYS.includes(key),
             sort: controls.sort,
@@ -752,10 +754,8 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
                 <td className={`egrid-td${recorded && !draw && !penalty ? " cell-id" : ""}`}>{!recorded ? "—" : penalty ? "ลงดาบ" : draw ? "เสมอ" : pairing.winnerId ?? "—"}</td>
               </tr>;
             })}
-          </tbody>
-        </table>
-      </div>
-
+        </tbody>
+      </table>
     </div>
   );
 }

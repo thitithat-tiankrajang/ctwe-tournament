@@ -58,7 +58,7 @@ export function ExcelPlayerImport({ onImport }: { onImport: (players: PlayerRow[
       if (incomplete >= 0) throw new Error(`มีแถวที่ข้อมูลไม่ครบ (แถวที่ ${incomplete + 1}) — แต่ละแถวต้องมีครบทั้ง ชื่อ/นามสกุล/โรงเรียน`);
 
       await onImport(nonEmpty);
-      setInfo(`เพิ่มผู้เล่นจากไฟล์ ${nonEmpty.length} คนแล้ว — ตรวจสอบในตารางด้านล่าง แล้วกด Finish registration เมื่อพร้อม (ระบบยังไม่ปิดรับ)`);
+      setInfo(`เพิ่มผู้เล่นจากไฟล์ ${nonEmpty.length} คนแล้ว — ตรวจสอบในตารางด้านล่าง แล้วกดจบการลงทะเบียนเมื่อพร้อม (ระบบยังไม่ปิดรับ)`);
       setFile(null); setFirstRange(""); setLastRange(""); setSchoolRange("");
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "นำเข้าไม่สำเร็จ");

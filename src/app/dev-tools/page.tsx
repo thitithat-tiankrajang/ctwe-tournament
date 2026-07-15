@@ -6,9 +6,11 @@ import { useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { toast } from "@/application/ui/toast";
 import { isAdmin } from "@/domain/tournament/roles";
-import { Badge } from "@/ui/components/badge";
+import { Badge, type BadgeTone } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+
+const statusTone: Record<string, BadgeTone> = { READY: "info", RUNNING: "warning", FINISHED: "success", CLOSED: "danger" };
 
 export default function DevToolsPage() {
   const cards = useTournamentStore((state) => state.cards);
@@ -35,13 +37,13 @@ export default function DevToolsPage() {
   };
   if (loading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
   if (!isAdmin(auth)) {
-    return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="บุคคลทั่วไปสามารถดูข้อมูลการแข่งขันได้ แต่ไม่สามารถใช้เครื่องมือที่เปลี่ยนแปลงข้อมูล" /></div>;
+    return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับผู้ดูแลระบบเท่านั้น" description="เครื่องมือนักพัฒนาเปลี่ยนแปลงข้อมูลการแข่งขันโดยตรง จึงเปิดให้เฉพาะผู้ดูแลระบบ" /></div>;
   }
   return (
     <>
-      <PageHeader eyebrow="Developer utilities" title="เครื่องมือนักพัฒนา" description="สร้างข้อมูลจำนวนมากและจำลอง workflow เพื่อทดสอบ pairing และ ranking โดยไม่ต้องกรอกข้อมูลด้วยตนเอง" actions={<Badge tone="warning">POSTGRESQL · STAFF ONLY</Badge>} />
+      <PageHeader eyebrow="เครื่องมือนักพัฒนา" title="เครื่องมือนักพัฒนา" description="สร้างข้อมูลจำนวนมากและจำลอง workflow เพื่อทดสอบ pairing และ ranking โดยไม่ต้องกรอกข้อมูลด้วยตนเอง" actions={<Badge tone="warning">ADMIN ONLY</Badge>} />
       <div className="notice notice--warning"><Beaker size={19} /><p><strong>พื้นที่สำหรับการทดสอบเท่านั้น</strong><span>การทำงานในหน้านี้เปลี่ยนข้อมูลของการ์ดทันที และจะสร้าง audit log ตามปกติ</span></p></div>
-      <Panel title="การ์ดเป้าหมาย" description="เลือกการ์ดก่อนเรียกใช้เครื่องมือ"><div className="panel-padding form-grid"><div className="form-field"><label className="form-label">การ์ดการแข่งขัน</label><select className="select" value={cardId} onChange={(event) => setCardId(event.target.value)}>{cards.map((item) => <option key={item.id} value={item.id}>{item.name} — {item.division}</option>)}</select></div><div className="form-field"><label className="form-label">สถานะปัจจุบัน</label><div className="input" style={{ display: "flex", alignItems: "center", gap: 10 }}><Badge>{card?.status ?? "—"}</Badge><span>{card?.players.length ?? 0} ผู้เล่น · {card?.games.length ?? 0} เกม</span></div></div></div></Panel>
+      <Panel title="การ์ดเป้าหมาย" description="เลือกการ์ดก่อนเรียกใช้เครื่องมือ"><div className="panel-padding form-grid"><div className="form-field"><label className="form-label">การ์ดการแข่งขัน</label><select className="select" value={cardId} onChange={(event) => setCardId(event.target.value)}>{cards.map((item) => <option key={item.id} value={item.id}>{item.name} — {item.division}</option>)}</select></div><div className="form-field"><label className="form-label">สถานะปัจจุบัน</label><div className="input" style={{ display: "flex", alignItems: "center", gap: 10 }}><Badge tone={statusTone[card?.status ?? ""] ?? "neutral"}>{card?.status ?? "—"}</Badge><span>{card?.players.length ?? 0} ผู้เล่น · {card?.games.length ?? 0} เกม</span></div></div></div></Panel>
       <div className="dev-grid">
         <section className="dev-action"><h2><Users size={19} />สร้าง Mock Players</h2><p>แทนที่รายชื่อปัจจุบันด้วยข้อมูลผู้เล่นที่กระจายหลายโรงเรียน</p><div className="page-actions" style={{ justifyContent: "flex-start" }}><Button variant="secondary" disabled={!cardId || locked} onClick={() => run(() => generatePlayers(cardId, 300), "สร้างผู้เล่น 300 คนแล้ว")}>300 คน</Button><Button variant="secondary" disabled={!cardId || locked} onClick={() => run(() => generatePlayers(cardId, 400), "สร้างผู้เล่น 400 คนแล้ว")}>400 คน</Button><Button disabled={!cardId || locked} onClick={() => run(() => generatePlayers(cardId, 1000), "สร้างผู้เล่น 1,000 คนแล้ว")}>1,000 คน</Button></div></section>
         <section className="dev-action"><h2><School size={19} />เตรียม Pairing</h2><p>จบการลงทะเบียนและสร้าง pairing preview ตาม workflow</p><Button disabled={!cardId || locked || !card?.players.length || !["PLAYER_REGISTRATION", "TABLE_PAIRING"].includes(card?.runtimeStage ?? "")} onClick={() => run(preparePairing, "สร้าง pairing preview แล้ว")}>สร้างโต๊ะ/Pairing</Button></section>

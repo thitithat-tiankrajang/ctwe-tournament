@@ -187,13 +187,13 @@ export interface ExcelHeadControls {
   onClose: () => void;
 }
 
-export function GridHead({ columns, colWidths, startResize, columnFilters, excel }: { columns: GridColumnBase[]; colWidths: number[]; startResize: (index: number, clientX: number) => void; columnFilters?: Partial<Record<string, ReactNode>>; excel?: ExcelHeadControls }) {
+export function GridHead({ columns, colWidths, startResize, columnFilters, excel, resizable = true }: { columns: GridColumnBase[]; colWidths: number[]; startResize: (index: number, clientX: number) => void; columnFilters?: Partial<Record<string, ReactNode>>; excel?: ExcelHeadControls; resizable?: boolean }) {
   return (
     <>
       <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
       <thead>
         <tr>{columns.map((column, index) => {
-          const resizer = <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />;
+          const resizer = resizable ? <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} /> : null;
           if (excel) {
             const sortable = excel.sortable(column.key);
             const filterable = excel.filterable(column.key);
@@ -448,189 +448,102 @@ export function ColumnFilterDropdown({ label, values, selected, anchor, filterab
 }
 
 /** Generic Excel-style grid: responsive columns, optional resizing, and multi-field filters. */
-export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, onRowClick, onFilterActiveChange }: {
+export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, resetKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, onRowClick, onFilterActiveChange }: {
   columns: DataColumn<T>[];
   rows: T[];
   getRowKey: (row: T) => string;
   getRowElementId?: (row: T) => string | undefined;
   storageKey: string;
+  /** Clears sort + all filters whenever this changes (e.g. the selected game) — stale filters must not follow a new dataset. */
   resetKey?: string;
   filterResetKey?: number;
   rowClassName?: (row: T) => string | undefined;
   tableClassName?: string;
   emptyText?: string;
-  pageSize?: number;
-  unit?: string;
   inlineClear?: boolean;
   resizableColumns?: boolean;
   onRowClick?: (row: T) => void;
   onFilterActiveChange?: (active: boolean) => void;
 }) {
   const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(columns, storageKey, resizableColumns);
-  const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(null);
-  const [filters, setFilters] = useState<Record<string, string[]>>({});
-  const [textFilters, setTextFilters] = useState<Record<string, string>>({});
-  const [openKey, setOpenKey] = useState<string | null>(null);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [openAnchor, setOpenAnchor] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  // One shared implementation of the Excel column controls — the same hook the entry grids use.
+  const controls = useColumnControls();
+  const clearAllRef = useRef(controls.clearAll);
+  clearAllRef.current = controls.clearAll;
+  const lastResetKeyRef = useRef(resetKey);
 
   useEffect(() => {
     if (filterResetKey === undefined) return;
-    setSort(null);
-    setFilters({});
-    setTextFilters({});
-    setOpenKey(null);
-    setEditingKey(null);
+    clearAllRef.current();
   }, [filterResetKey]);
 
+  // Guarded by a ref so the reset fires only on a real change, never on mount.
+  useEffect(() => {
+    if (lastResetKeyRef.current === resetKey) return;
+    lastResetKeyRef.current = resetKey;
+    clearAllRef.current();
+  }, [resetKey]);
+
   const colByKey = useMemo(() => new Map(columns.map((column) => [column.key, column])), [columns]);
+  const accessors = useMemo(() => {
+    const result: Record<string, (row: T) => string | number> = {};
+    for (const column of columns) if (column.value) result[column.key] = column.value;
+    return result;
+  }, [columns]);
+  const filterableKeys = useMemo(
+    () => columns.filter((column) => column.value && (column.filterable ?? true)).map((column) => column.key),
+    [columns],
+  );
+  const playerCodeKeys = useMemo(
+    () => columns.filter((column) => column.filterKind === "playerCode").map((column) => column.key),
+    [columns],
+  );
   // Unique values per filterable column (Excel checkbox list); memoised, so large datasets stay cheap.
-  const uniqueValues = useMemo(() => {
-    const result: Record<string, string[]> = {};
-    for (const column of columns) {
-      if (column.value && (column.filterable ?? true)) {
-        const set = new Set<string>();
-        for (const row of rows) set.add(String(column.value(row)));
-        result[column.key] = [...set].sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
-      }
-    }
-    return result;
-  }, [columns, rows]);
+  const uniqueValues = useMemo(() => uniqueColumnValues(rows, accessors, filterableKeys), [rows, accessors, filterableKeys]);
+  const visibleRows = useMemo(
+    () => applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys),
+    [rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys],
+  );
 
-  const visibleRows = useMemo(() => {
-    const activeKeys = Object.keys(filters).filter((key) => filters[key]?.length);
-    const textKeys = Object.keys(textFilters).filter((key) => textFilters[key]?.trim());
-    let result = activeKeys.length === 0 && textKeys.length === 0 ? rows : rows.filter((row) =>
-      activeKeys.every((key) => {
-        const column = colByKey.get(key);
-        return !column?.value || filters[key].includes(String(column.value(row)));
-      }) && textKeys.every((key) => {
-        const column = colByKey.get(key);
-        if (!column?.value) return true;
-        return column.filterKind === "playerCode"
-          ? matchesPlayerCode(column.value(row), textFilters[key])
-          : String(column.value(row)).toLocaleLowerCase("th")
-            .includes(textFilters[key].trim().toLocaleLowerCase("th"));
-      }));
-    if (sort) {
-      const column = colByKey.get(sort.key);
-      if (column?.value) {
-        const accessor = column.value;
-        result = [...result].sort((a, b) => {
-          const av = accessor(a); const bv = accessor(b);
-          const cmp = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv), "th", { numeric: true });
-          return sort.dir === "asc" ? cmp : -cmp;
-        });
-      }
-    }
-    return result;
-  }, [rows, filters, textFilters, sort, colByKey]);
-
-  const activeFilterKeys = Object.keys(filters).filter((key) => filters[key]?.length);
-  const activeTextKeys = Object.keys(textFilters).filter((key) => textFilters[key]?.trim());
-  const anyActive = sort !== null || activeFilterKeys.length > 0 || activeTextKeys.length > 0;
+  const anyActive = controls.active;
   const filterActiveCallback = useRef(onFilterActiveChange);
   filterActiveCallback.current = onFilterActiveChange;
   useEffect(() => { filterActiveCallback.current?.(anyActive); }, [anyActive]);
 
-  const applyFilter = (key: string, values: string[]) => setFilters((prev) => {
-    const next = { ...prev };
-    if (values.length === 0 || values.length >= (uniqueValues[key]?.length ?? 0)) delete next[key]; else next[key] = values;
-    return next;
-  });
-
   return (
     <div className="entry-grid-wrap">
+      {/* meta-shell stays mounted (not conditionally rendered) so the chip bar can animate open/closed. */}
       <div className={`entry-grid-meta-shell${anyActive ? " entry-grid-meta-shell--open" : ""}`} aria-hidden={!anyActive}>
         <div className="entry-grid-meta">
           <span className="entry-grid-meta__tags">
-            {sort && <span className="grid-chip">เรียง: {labelText(colByKey.get(sort.key)?.label)} {sort.dir === "asc" ? "↑" : "↓"}</span>}
-            {activeFilterKeys.map((key) => <span key={key} className="grid-chip">กรอง: {labelText(colByKey.get(key)?.label)} ({filters[key].length})</span>)}
-            {activeTextKeys.map((key) => <span key={`text-${key}`} className="grid-chip">{labelText(colByKey.get(key)?.label)}: {textFilters[key]}</span>)}
+            {controls.sort && <span className="grid-chip">เรียง: {labelText(colByKey.get(controls.sort.key)?.label)} {controls.sort.dir === "asc" ? "↑" : "↓"}</span>}
+            {controls.activeFilterKeys.map((key) => <span key={key} className="grid-chip">กรอง: {labelText(colByKey.get(key)?.label)} ({controls.filters[key].length})</span>)}
+            {controls.activeTextKeys.map((key) => <span key={`text-${key}`} className="grid-chip">{labelText(colByKey.get(key)?.label)}: {controls.textFilters[key]}</span>)}
           </span>
-          {inlineClear && <Button className="entry-grid-meta__clear" variant="secondary" size="sm" tabIndex={anyActive ? 0 : -1} onClick={() => { setSort(null); setFilters({}); setTextFilters({}); setEditingKey(null); }}><X size={14} />ล้างทั้งหมด</Button>}
+          {inlineClear && <Button className="entry-grid-meta__clear" variant="secondary" size="sm" tabIndex={anyActive ? 0 : -1} onClick={controls.clearAll}><X size={14} />ล้างทั้งหมด</Button>}
         </div>
       </div>
       <div className="entry-grid-scroll" ref={scrollRef}>
         <table className={`entry-grid${tableClassName ? ` ${tableClassName}` : ""}`} style={{ width: totalWidth }}>
-          <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
-          <thead>
-            <tr>{columns.map((column, index) => {
-              const sortable = Boolean(column.value) && (column.sortable ?? true);
-              const filterable = Boolean(column.value) && (column.filterable ?? true);
-              const textFilterable = Boolean(column.value);
-              const popupable = sortable || filterable;
-              const sorted = sort?.key === column.key ? sort.dir : null;
-              const filterActive = (filters[column.key]?.length ?? 0) > 0 || Boolean(textFilters[column.key]);
-              return (
-                <th key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}${filterActive ? " egrid-th--filtered" : ""}${sorted ? " egrid-th--sorted" : ""}${openKey === column.key ? " egrid-th--popup" : ""}`}>
-                  <div className="egrid-th-bar">
-                    {editingKey === column.key ? (
-                      <input
-                        autoFocus
-                        className="egrid-th__inline-filter"
-                        aria-label={`ค้นหา ${labelText(column.label)}`}
-                        placeholder={labelText(column.label)}
-                        value={textFilters[column.key] ?? ""}
-                        onChange={(event) => setTextFilters((prev) => ({ ...prev, [column.key]: event.target.value }))}
-                        onBlur={() => setEditingKey(null)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") setEditingKey(null);
-                          if (event.key === "Escape") {
-                            setTextFilters((prev) => { const next = { ...prev }; delete next[column.key]; return next; });
-                            setEditingKey(null);
-                          }
-                        }}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        className={`egrid-th__label egrid-th__label--btn${sortable ? "" : " egrid-th__label--plain"}`}
-                        disabled={!popupable}
-                        title={popupable ? "คลิกเพื่อเปิดเมนู · คลิกช่องเดิมอีกครั้งเพื่อพิมพ์ค้นหา" : undefined}
-                        onMouseDown={(event) => {
-                          event.stopPropagation();
-                          if (openKey === column.key) {
-                            event.preventDefault();
-                            setOpenKey(null);
-                            if (textFilterable) setEditingKey(column.key);
-                          }
-                        }}
-                        onClick={(event) => {
-                          if (!popupable) return;
-                          event.stopPropagation();
-                          if (openKey === column.key) return;
-                          const anchor = event.currentTarget.closest("th")?.getBoundingClientRect()
-                            ?? event.currentTarget.getBoundingClientRect();
-                          setOpenAnchor({ top: anchor.bottom + 4, left: anchor.left });
-                          setOpenKey(column.key);
-                        }}
-                      >
-                        <span className="egrid-th__text">{column.label}</span>
-                      </button>
-                    )}
-                  </div>
-                  {openKey === column.key && popupable && (
-                    <ColumnFilterDropdown
-                      label={labelText(column.label) || column.key}
-                      values={uniqueValues[column.key] ?? []}
-                      selected={filters[column.key]}
-                      anchor={openAnchor}
-                      filterable={filterable}
-                      sortable={sortable}
-                      sortDirection={sorted}
-                      filterKind={column.filterKind}
-                      onSort={(direction) => setSort(direction ? { key: column.key, dir: direction } : null)}
-                      onApply={(values) => { applyFilter(column.key, values); setOpenKey(null); }}
-                      onClear={() => { setFilters((prev) => { const next = { ...prev }; delete next[column.key]; return next; }); setOpenKey(null); }}
-                      onClose={() => setOpenKey(null)}
-                    />
-                  )}
-                  {resizableColumns && <span className="egrid-resizer" role="separator" aria-orientation="vertical" aria-label="ปรับความกว้างคอลัมน์" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); document.body.classList.add("col-resizing"); startResize(index, event.clientX); }} />}
-                </th>
-              );
-            })}</tr>
-          </thead>
+          <GridHead columns={columns} colWidths={colWidths} startResize={startResize} resizable={resizableColumns} excel={{
+            sortable: (key) => { const column = colByKey.get(key); return Boolean(column?.value) && (column?.sortable ?? true); },
+            filterable: (key) => { const column = colByKey.get(key); return Boolean(column?.value) && (column?.filterable ?? true); },
+            sort: controls.sort,
+            filters: controls.filters,
+            textFilters: controls.textFilters,
+            editingKey: controls.editingKey,
+            uniqueValues,
+            openKey: controls.openKey,
+            openAnchor: controls.openAnchor,
+            onSetSort: controls.setColumnSort,
+            onStartTextFilter: controls.startTextFilter,
+            onTextFilter: controls.setTextFilter,
+            onStopTextFilter: () => controls.setEditingKey(null),
+            onOpenFilter: controls.openFilter,
+            onApply: (key, values) => { controls.applyFilter(key, values, uniqueValues[key]?.length ?? 0); controls.setOpenKey(null); },
+            onClear: (key) => { controls.clearFilter(key); controls.setOpenKey(null); },
+            onClose: () => controls.setOpenKey(null),
+          }} />
           <tbody>
             {visibleRows.length === 0
               ? <tr><td className="egrid-empty" colSpan={columns.length}><strong>{emptyText}</strong></td></tr>

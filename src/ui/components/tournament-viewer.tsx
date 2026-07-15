@@ -1,14 +1,14 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, ChevronRight, LinkIcon, LockKeyhole, Trophy } from "lucide-react";
+import { ArrowLeft, ChevronRight, LockKeyhole, Trophy } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
 import type { TournamentCard } from "@/domain/tournament/types";
-import { Button } from "@/ui/components/button";
+import { Badge } from "@/ui/components/badge";
 import { CardOverview } from "@/ui/components/card-overview";
 import { EmptyState, PageHeader } from "@/ui/components/page";
+import { cardStageInfo } from "@/ui/components/stage-info";
 
 function cardFromHash(): string | null {
   if (typeof window === "undefined") return null;
@@ -75,8 +75,7 @@ export function TournamentViewer({ token }: { token: string }) {
         <EmptyState
           icon={<LockKeyhole size={25} />}
           title="ลิงก์นี้ใช้ไม่ได้"
-          description="การแข่งขันนี้อาจยังไม่เปิดให้เข้าชม หรือถูกปิดไปแล้ว — โปรดติดต่อผู้จัดการแข่งขัน"
-          action={<Link prefetch={false} href="/"><Button variant="secondary"><LinkIcon size={16} />ไปหน้ารวมการแข่งขัน</Button></Link>}
+          description="การแข่งขันนี้อาจยังไม่เปิดให้เข้าชม หรือถูกปิดไปแล้ว — โปรดติดต่อผู้จัดการแข่งขันเพื่อขอลิงก์ใหม่"
         />
       </div>
     );
@@ -90,18 +89,12 @@ export function TournamentViewer({ token }: { token: string }) {
     };
     return (
       <>
-        <button type="button" className={`tour-mobile-card-back${auth.authenticated ? " tour-mobile-card-back--authenticated" : ""}`} onClick={leaveCard} aria-label={`กลับไปเลือก Card ของ ${tournament.name}`}>
+        {/* One back control for every viewport: a link-style row on desktop, the fixed top bar on phones. */}
+        <button type="button" className={`tour-card-back${auth.authenticated ? " tour-card-back--authenticated" : ""}`} onClick={leaveCard} aria-label={`กลับไปเลือกรุ่นของ ${tournament.name}`}>
           <ArrowLeft size={18} aria-hidden="true" />
-          <Trophy size={19} aria-hidden="true" />
-          <span>{tournament.name}</span>
+          <Trophy className="tour-card-back__trophy" size={19} aria-hidden="true" />
+          <span className="tour-card-back__text"><span className="tour-card-back__prefix">รุ่นทั้งหมดของ </span>{tournament.name}</span>
         </button>
-        <a
-          className="tour-back-link"
-          href={window.location.pathname + window.location.search}
-          onClick={(event) => { event.preventDefault(); leaveCard(); }}
-        >
-          <ArrowLeft size={16} aria-hidden="true" /> รุ่นทั้งหมดของ {tournament.name}
-        </a>
         <CardOverview cardId={selectedCard.id} />
       </>
     );
@@ -133,16 +126,19 @@ export function TournamentViewer({ token }: { token: string }) {
             <section className="card-group" key={name}>
               <h2 className="card-group__title">{name}</h2>
               <div className="card-group__rows">
-                {group.map((card) => (
-                  <article className="card-select-row" key={card.id}>
-                    {/* Hash link: selecting a card is a zero-request, back-button-friendly transition. */}
-                    <a href={`#card=${card.id}`} className="card-select-row__link">
-                      <span className="card-select-row__name">{card.name}</span>
-                      <span className="card-select-row__division">{card.division}</span>
-                      <ChevronRight size={19} aria-hidden />
-                    </a>
-                  </article>
-                ))}
+                {group.map((card) => {
+                  const stage = cardStageInfo(card, "viewer");
+                  return (
+                    <article className="card-select-row" key={card.id}>
+                      {/* Hash link: selecting a card is a zero-request, back-button-friendly transition. */}
+                      <a href={`#card=${card.id}`} className="card-select-row__link">
+                        <span className="card-select-row__name">{card.division}</span>
+                        <span className="card-select-row__stage"><Badge tone={stage.tone}>{stage.label}</Badge></span>
+                        <ChevronRight size={19} aria-hidden />
+                      </a>
+                    </article>
+                  );
+                })}
               </div>
             </section>
           ))}

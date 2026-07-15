@@ -83,20 +83,20 @@ export default function DirectorConsolePage() {
 
   return (
     <>
-      <PageHeader eyebrow="Director console" title="ผู้อำนวยการ" description="จัดการบัญชีเจ้าหน้าที่กรอกผลของคุณ — staff ทำได้เฉพาะกรอกผลและลงทะเบียนผู้เล่นตามขั้นตอน" actions={<Badge tone="info">DIRECTOR</Badge>} />
+      <PageHeader eyebrow="คอนโซลผู้อำนวยการ" title="ผู้อำนวยการ" description="สร้างการ์ดการแข่งขัน และจัดการบัญชีเจ้าหน้าที่กรอกผลของคุณ" actions={<Badge tone="info">DIRECTOR</Badge>} />
 
       <Panel title="รายการแข่งขันของคุณ" description="รายการที่ผู้ดูแลระบบมอบหมายให้คุณ">
-        <div className="panel-padding" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div className="panel-padding console-flex">
           {tournaments.length === 0 && <p className="muted">ยังไม่ได้รับมอบหมายรายการแข่งขัน — ติดต่อผู้ดูแลระบบ</p>}
           {tournaments.map((t) => <Badge key={t.id} tone="info"><Trophy size={13} /> {t.name} · {t.cardCount} การ์ด</Badge>)}
         </div>
       </Panel>
 
-      <div style={{ marginTop: 18 }}>
-        <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>สร้างการ์ดการแข่งขัน (Card)</h2>
-        <p className="muted" style={{ margin: "0 0 10px", fontSize: 14 }}>ผู้อำนวยการสร้างการ์ดได้ที่นี่ — เลือกรายการแข่งขัน (tournament) ที่จะสร้างการ์ดเข้าไป</p>
-        <CardCreateForm tournaments={tournaments} onCreated={(id, tour) => { setActiveTournament(tour); router.push(`/cards/${id}/players`); }} />
-      </div>
+      <section className="console-section" aria-labelledby="create-card-title">
+        <h2 id="create-card-title">สร้างการ์ดการแข่งขัน (Card)</h2>
+        <p>เลือกรายการแข่งขัน (tournament) ที่จะสร้างการ์ดเข้าไป — สร้างเสร็จระบบจะพาไปหน้าลงทะเบียนผู้เล่นทันที</p>
+      </section>
+      <CardCreateForm tournaments={tournaments} onCreated={(id, tour) => { setActiveTournament(tour); router.push(`/cards/${id}/players`); }} />
 
       <Panel title="เพิ่มเจ้าหน้าที่ (Staff)" description="staff จะกรอกผลได้ทุกการ์ดในรายการแข่งขันของคุณ">
         <div className="panel-padding form-grid">
@@ -117,33 +117,33 @@ export default function DirectorConsolePage() {
         </div>
       </Panel>
 
-      <Panel title="เจ้าหน้าที่ของคุณ" description="">
-        <div className="panel-padding" style={{ display: "grid", gap: 8 }}>
+      <Panel title="เจ้าหน้าที่ของคุณ">
+        <div className="panel-padding console-stack">
           {staff.length === 0 && <p className="muted">ยังไม่มีเจ้าหน้าที่</p>}
           {staff.map((s) => (
-            <div key={s.username} className="notice" style={{ display: "block" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Users size={15} />{s.username} {!s.enabled && <Badge tone="warning">ปิดใช้งาน</Badge>}</strong>
-                <span style={{ display: "flex", gap: 6 }}>
+            <div key={s.username} className="console-row">
+              <div className="console-row__head">
+                <strong className="console-row__title"><Users size={15} />{s.username} {!s.enabled && <Badge tone="warning">ปิดใช้งาน</Badge>}</strong>
+                <span className="console-row__actions">
                   <Button variant="secondary" size="sm" disabled={busy} onClick={() => act(() => setAccountEnabled("staff", s.username, !s.enabled))}>{s.enabled ? "ปิดใช้งาน" : "เปิดใช้งาน"}</Button>
                   <Button variant="secondary" size="sm" disabled={busy} title="ตั้งรหัสผ่านใหม่" onClick={() => { setDialogError(""); setPrompt({ title: `ตั้งรหัสผ่านใหม่ · ${s.username}`, label: "รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)", type: "password", placeholder: "อย่างน้อย 8 ตัวอักษร", minLength: 8, confirmLabel: "บันทึกรหัสผ่าน", run: (p) => resetAccountPassword("staff", s.username, p) }); }}><KeyRound size={14} /></Button>
                   <Button variant="danger" size="sm" disabled={busy} onClick={() => setConfirm({ title: `ลบเจ้าหน้าที่ ${s.username}?`, description: "บัญชีเจ้าหน้าที่นี้จะถูกลบอย่างถาวร", confirmLabel: "ลบถาวร", danger: true, run: () => deleteStaff(s.username) })}><Trash2 size={14} /></Button>
                 </span>
               </div>
-              <div style={{ marginTop: 10 }}>
-                <span className="muted" style={{ fontSize: 13 }}>รายการแข่งขันของเจ้าหน้าที่ (เลือกได้ 1 รายการ — เห็นทุก card ในรายการนั้น):</span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 6 }}>
-                  {tournaments.length === 0 && <span className="muted" style={{ fontSize: 13 }}>คุณยังไม่ได้รับมอบหมายรายการแข่งขัน</span>}
+              <div className="console-row__meta console-row__meta--block">
+                <span className="console-hint">รายการแข่งขันของเจ้าหน้าที่ (เลือกได้ 1 รายการ — เห็นทุก card ในรายการนั้น):</span>
+                <div className="chip-list">
+                  {tournaments.length === 0 && <span className="console-hint">คุณยังไม่ได้รับมอบหมายรายการแข่งขัน</span>}
                   {tournaments.map((t) => {
                     const granted = s.tournamentIds.includes(t.id);
                     return (
-                      <label key={t.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <label key={t.id} className="checkbox-chip">
                         <input type="radio" name={`staff-tour-${s.username}`} checked={granted} disabled={busy} onChange={() => act(() => grantStaffTournament(s.username, t.id))} />{t.name}
                       </label>
                     );
                   })}
                   {tournaments.length > 0 && (
-                    <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <label className="checkbox-chip">
                       <input type="radio" name={`staff-tour-${s.username}`} checked={s.tournamentIds.length === 0} disabled={busy} onChange={() => { const current = s.tournamentIds[0]; if (current) void act(() => revokeStaffTournament(s.username, current)); }} />ไม่กำหนด
                     </label>
                   )}

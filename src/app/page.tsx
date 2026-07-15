@@ -105,11 +105,10 @@ export default function Home() {
         <PageHeader
           eyebrow="Tournament Control"
           title="เข้าสู่ระบบเพื่อดำเนินการต่อ"
-          description="ระบบจัดการแข่งขันสำหรับผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่ — เข้าสู่ระบบเพื่อเข้าถึงข้อมูลการแข่งขัน"
+          description="ระบบจัดการแข่งขันสำหรับผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่ — ผู้ชมทั่วไปเข้าชมผ่านลิงก์ของรายการแข่งขัน"
         />
-        <Panel title="เข้าสู่ระบบ" description="ต้องเข้าสู่ระบบด้วยบัญชีผู้ดูแลระบบ ผู้อำนวยการ หรือเจ้าหน้าที่ก่อนจึงจะดูข้อมูลได้">
+        <Panel title="เข้าสู่ระบบ" description="ใช้บัญชีผู้ดูแลระบบ ผู้อำนวยการ หรือเจ้าหน้าที่ของคุณ">
           <div className="panel-padding" style={{ display: "grid", gap: 16, maxWidth: 460 }}>
-            <div className="notice notice--info"><ShieldCheck size={18} /><p><strong>จำเป็นต้องเข้าสู่ระบบ</strong><span>ข้อมูลการแข่งขันเปิดให้เฉพาะผู้ที่เข้าสู่ระบบเท่านั้น</span></p></div>
             <div className="form-actions" style={{ paddingLeft: 0 }}>
               <Link prefetch={false} href="/staff-login"><Button><LogIn size={16} />เข้าสู่ระบบ</Button></Link>
             </div>
@@ -154,7 +153,7 @@ export default function Home() {
                 <article className={`competition-card${admin ? "" : " competition-card--manage"}`} key={t.id}>
                   <div className="competition-card__header">
                     <div><h2>{t.name}</h2><span className="competition-card__division">{t.cardCount} รุ่นการแข่งขัน</span></div>
-                    <Badge tone={t.status === "OPEN" ? "success" : "danger"}>{t.status === "OPEN" ? "เปิด" : "ปิด"}</Badge>
+                    <Badge tone={t.status === "OPEN" ? "success" : "danger"}>{t.status === "OPEN" ? "ลิงก์เปิด" : "ลิงก์ปิด"}</Badge>
                   </div>
                   <div className="competition-card__footer">
                     <small>{t.directors.length > 0 ? `ผู้อำนวยการ ${t.directors.length} คน` : (admin ? "รายการแข่งขัน" : "รายการที่คุณดูแล")}</small>

@@ -16,6 +16,7 @@ import { CustomCombobox } from "@/ui/components/institution-combobox";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
+import { stageLabels } from "@/ui/components/stage-info";
 
 export default function TablesPage() {
   const { id } = useParams<{ id: string }>();
@@ -166,11 +167,11 @@ export default function TablesPage() {
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${card.runtimeStage}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing <ArrowRight size={16} /></Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
+      <PageHeader eyebrow={`${card.name} · ${stageLabels[card.runtimeStage]}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing <ArrowRight size={16} /></Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
 
       {!pairingActive ? (
         browseGames.length === 0 ? (
-          <Panel><EmptyState icon={<Shuffle size={25} />} title="ยังไม่มีเกมที่เผยแพร่" description="Pairing และอันดับแต่ละเกมจะปรากฏที่นี่หลังเจ้าหน้าที่ Publish ผล" /></Panel>
+          <Panel><EmptyState icon={<Shuffle size={25} />} title="ยังไม่มีเกมที่เผยแพร่" description="Pairing และอันดับแต่ละเกมจะปรากฏที่นี่หลังผู้อำนวยการ Publish ผล" /></Panel>
         ) : (
           <Panel
             title={`Pairing เกม ${selectedBrowseGame}`}

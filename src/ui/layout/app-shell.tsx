@@ -14,10 +14,9 @@ import {
   Folder,
   FolderOpen,
   Gamepad2,
-  Lock,
-  LockOpen,
-  LoaderCircle,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
   TableProperties,
   Trophy,
   Users,
@@ -35,11 +34,13 @@ import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tourna
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
 import { Button } from "@/ui/components/button";
+import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { Toaster } from "@/ui/components/toaster";
 import { GlobalDialogHost } from "@/ui/components/global-dialog-host";
 
 const OPENED_KEY = "ctwe.openedCards";
-const LOCKED_KEY = "ctwe.sidebarLocked";
+/** Historical key name; the stored "1" now simply means "sidebar expanded". */
+const EXPANDED_KEY = "ctwe.sidebarLocked";
 
 /** The page a staff member should work on next for a card at the given stage. */
 function stageHref(id: string, stage: RuntimeStage) {
@@ -121,8 +122,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [openedIds, setOpenedIds] = useState<string[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [locked, setLocked] = useState(true);   // sidebar pinned open; when unlocked it expands on hover
-  const [hovering, setHovering] = useState(false);
+  const [expanded, setExpanded] = useState(true);   // sidebar shows the full menu; collapsed = icon rail
   const [hydrated, setHydrated] = useState(false);
   const [notificationConfirm, setNotificationConfirm] = useState(false);
   const isStaff = hasStaffAccess(auth);
@@ -187,7 +187,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const generalLinks = [
     ...((director || admin) ? [{ href: "/", label: "รายการแข่งขันทั้งหมด", icon: Trophy }] : []),
     ...(isAdmin(auth) ? [{ href: "/admin", label: "ผู้ดูแลระบบ", icon: ShieldCheck }] : []),
-    ...(isDirector(auth) ? [{ href: "/director", label: "จัดการเจ้าหน้าที่", icon: UserCog }] : []),
+    ...(isDirector(auth) ? [{ href: "/director", label: "คอนโซลผู้อำนวยการ", icon: UserCog }] : []),
     ...(isAdmin(auth) ? [{ href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : []),
   ];
   const tournamentCards = activeTournament ? cards.filter((card) => card.tournamentId === activeTournament.id) : [];
@@ -197,8 +197,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       const saved = JSON.parse(sessionStorage.getItem(OPENED_KEY) ?? "[]");
       if (Array.isArray(saved)) setOpenedIds(saved.filter((value): value is string => typeof value === "string"));
-      const savedLock = sessionStorage.getItem(LOCKED_KEY);
-      if (savedLock !== null) setLocked(savedLock === "1");
+      const savedExpanded = sessionStorage.getItem(EXPANDED_KEY);
+      if (savedExpanded !== null) setExpanded(savedExpanded === "1");
     } catch { /* ignore malformed storage */ }
     setActiveTournament(readActiveTournament());
     setHydrated(true);
@@ -223,7 +223,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [currentCard?.runtimeStage, id, isStaff, pathname, router]);
 
   useEffect(() => { if (hydrated) try { sessionStorage.setItem(OPENED_KEY, JSON.stringify(openedIds)); } catch { /* ignore */ } }, [openedIds, hydrated]);
-  useEffect(() => { if (hydrated) try { sessionStorage.setItem(LOCKED_KEY, locked ? "1" : "0"); } catch { /* ignore */ } }, [locked, hydrated]);
+  useEffect(() => { if (hydrated) try { sessionStorage.setItem(EXPANDED_KEY, expanded ? "1" : "0"); } catch { /* ignore */ } }, [expanded, hydrated]);
 
   const toggleFolder = (cardId: string) => setExpandedIds((prev) => {
     const next = new Set(prev);
@@ -256,16 +256,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     const card = selectCard(cards, cardId);
     return operator && card ? stageHref(cardId, card.runtimeStage) : undefined;
   };
-  // Expanded when pinned (locked) OR temporarily hovered; otherwise a narrow rail.
-  const collapsed = !(locked || hovering);
+  const collapsed = !expanded;
 
   return (
-    <div className={`app-shell${locked ? "" : " app-shell--collapsed"}`}>
-      <aside
-        className={`sidebar${collapsed ? " sidebar--collapsed" : ""}${!locked && hovering ? " sidebar--floating" : ""}`}
-        onMouseEnter={() => setHovering(true)}
-        onMouseLeave={() => setHovering(false)}
-      >
+    <div className={`app-shell${expanded ? "" : " app-shell--collapsed"}`}>
+      <aside className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}>
         <div className="sidebar__head">
           {scopeLocked ? (
             <span className="brand" aria-label="Tournament Control">
@@ -278,19 +273,19 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="brand__text" aria-hidden={collapsed}><strong>Tournament Control</strong><small>ระบบจัดการแข่งขัน</small></span>
             </Link>
           )}
-          <button type="button" className={`sidebar__toggle${locked ? " sidebar__toggle--locked" : ""}`} onClick={() => setLocked((value) => !value)} aria-pressed={locked} aria-label={locked ? "ปลดล็อกเมนู (เลื่อนเมาส์เพื่อเปิด/หุบ)" : "ล็อกเมนูให้เปิดค้าง"} title={locked ? "ล็อกอยู่: เปิดค้างตลอด — กดเพื่อใช้โหมดเลื่อนเมาส์ชี้" : "โหมดเลื่อนเมาส์: ชี้เพื่อเปิด หุบเมื่อเอาเมาส์ออก — กดเพื่อล็อกเปิดค้าง"}>
-            {locked ? <Lock size={16} /> : <LockOpen size={16} />}
+          <button type="button" className="sidebar__toggle" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-label={expanded ? "หุบเมนูเป็นแถบไอคอน" : "ขยายเมนู"} title={expanded ? "หุบเมนูเป็นแถบไอคอน" : "ขยายเมนู"}>
+            {expanded ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
           </button>
         </div>
 
+        {/* One menu, two densities: an icon rail when collapsed, the full tree when expanded. */}
         <nav className="sidebar__nav" aria-label="เมนูหลัก">
-          <div className={`sidebar__nav-layer sidebar__nav-layer--rail${collapsed ? " sidebar__nav-layer--active" : ""}`} aria-hidden={!collapsed}>
+          {collapsed ? (
             <div className="sidebar__rail">
               {railLinks.map((link) => <NavigationLink key={link.href} {...link} collapsed active={pathname === link.href} workflow={id ? link.href === workflowHrefFor(id) : false} />)}
               {id && <NavigationLink href="/cards" label="การ์ดทั้งหมด" icon={ClipboardList} active={pathname === "/cards"} collapsed />}
             </div>
-          </div>
-          <div className={`sidebar__nav-layer sidebar__nav-layer--expanded${collapsed ? "" : " sidebar__nav-layer--active"}`} aria-hidden={collapsed}>
+          ) : (
             <>
               {generalLinks.length > 0 && <p className="nav-label">ระบบ</p>}
               {generalLinks.map((link) => <NavigationLink key={link.href} {...link} active={pathname === link.href} />)}
@@ -347,7 +342,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </>
               )}
             </>
-          </div>
+          )}
         </nav>
 
         <div className="sidebar__footer">
@@ -409,26 +404,37 @@ export function AppShell({ children }: { children: ReactNode }) {
         )}
       </div>
 
-      {logoutConfirm && (
-        <div className="dialog-backdrop" role="presentation" onMouseDown={() => !loggingOut && setLogoutConfirm(false)}>
-          <section className="confirm-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-            <header><div className="confirm-dialog__icon"><LogOut size={20} /></div><div><span>ยืนยันการออกจากระบบ</span><h2>ออกจากระบบ?</h2></div><button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={loggingOut} onClick={() => setLogoutConfirm(false)}><X size={18} /></button></header>
-            <p>คุณกำลังจะออกจากบัญชี <strong>{auth.username}</strong> — ยืนยันหรือไม่?</p>
-            <footer>
-              <Button variant="secondary" disabled={loggingOut} onClick={() => setLogoutConfirm(false)}>ยกเลิก</Button>
-              <Button disabled={loggingOut} onClick={() => void confirmLogout()}>{loggingOut ? <LoaderCircle className="loading-spinner" size={16} /> : <LogOut size={16} />}{loggingOut ? "กำลังออก…" : "ออกจากระบบ"}</Button>
-            </footer>
-          </section>
-        </div>
-      )}
-      {notificationConfirm && notificationScope && (
-        <div className="dialog-backdrop" role="presentation" onMouseDown={() => !notificationPending && setNotificationConfirm(false)}>
-          <section className="confirm-dialog notification-consent" role="dialog" aria-modal="true" aria-labelledby="notification-consent-title" onMouseDown={(event) => event.stopPropagation()}>
-            <header>
-              <div className="confirm-dialog__icon"><BellRing size={20} /></div>
-              <div><span>การแจ้งเตือนบนอุปกรณ์</span><h2 id="notification-consent-title">เปิดแจ้งเตือน{notificationScope.type === "CARD" ? "เฉพาะรุ่นนี้" : "ทั้งรายการ"}?</h2></div>
-              <button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={notificationPending} onClick={() => setNotificationConfirm(false)}><X size={18} /></button>
-            </header>
+      <ConfirmDialog
+        open={logoutConfirm}
+        eyebrow="ยืนยันการออกจากระบบ"
+        icon={<LogOut size={20} />}
+        title="ออกจากระบบ?"
+        confirmLabel="ออกจากระบบ"
+        busyLabel="กำลังออก…"
+        busy={loggingOut}
+        onConfirm={() => void confirmLogout()}
+        onCancel={() => { if (!loggingOut) setLogoutConfirm(false); }}
+      >
+        <p>คุณกำลังจะออกจากบัญชี <strong>{auth.username}</strong> — ยืนยันหรือไม่?</p>
+      </ConfirmDialog>
+
+      {notificationScope && (() => {
+        const iosNeedsInstall = notificationSupport === "ios-needs-install";
+        return (
+          <ConfirmDialog
+            open={notificationConfirm}
+            eyebrow="การแจ้งเตือนบนอุปกรณ์"
+            icon={<BellRing size={20} />}
+            title={`เปิดแจ้งเตือน${notificationScope.type === "CARD" ? "เฉพาะรุ่นนี้" : "ทั้งรายการ"}?`}
+            className="notification-consent"
+            confirmLabel={iosNeedsInstall ? "เข้าใจแล้ว" : "อนุญาตแจ้งเตือน"}
+            busyLabel="กำลังเปิด…"
+            hideCancel={iosNeedsInstall}
+            cancelLabel="ไว้ภายหลัง"
+            busy={notificationPending}
+            onConfirm={iosNeedsInstall ? () => setNotificationConfirm(false) : () => void confirmEnableNotifications()}
+            onCancel={() => { if (!notificationPending) setNotificationConfirm(false); }}
+          >
             <p>
               {notificationScope.type === "CARD"
                 ? <>คุณจะได้รับแจ้งเตือนเฉพาะ <strong>{notificationScope.label}</strong></>
@@ -441,7 +447,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <li>การแข่งขันจบ พร้อมชื่อผู้ชนะอันดับ 1</li>
             </ul>
             <p className="notification-consent__privacy">แจ้งเตือนจะเด้งบนอุปกรณ์แม้ปิดหน้าเว็บหรือล็อกหน้าจอ · ระบบเก็บเฉพาะรหัสส่งข้อความที่เบราว์เซอร์สร้างให้ ไม่ขอชื่อ ตำแหน่ง หรือข้อมูลส่วนตัวของผู้ชม คุณปิดขอบเขตนี้ได้จากปุ่มเดิมทุกเมื่อ</p>
-            {notificationSupport === "ios-needs-install" ? (
+            {iosNeedsInstall && (
               <>
                 <div className="notice notice--info"><p><strong>บน iPhone/iPad ต้องติดตั้งเว็บก่อน</strong><span>iOS จะส่งแจ้งเตือนได้เฉพาะเมื่อเพิ่มเว็บนี้ไว้ที่หน้าจอโฮม แล้วเปิดจากไอคอนนั้น</span></p></div>
                 <ol className="notification-consent__events">
@@ -449,22 +455,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <li>เลือก <strong>เพิ่มไปยังหน้าจอโฮม (Add to Home Screen)</strong></li>
                   <li>เปิดแอปจากไอคอนบนหน้าจอโฮม แล้วกดเปิดแจ้งเตือนอีกครั้ง</li>
                 </ol>
-                <footer>
-                  <Button disabled={notificationPending} onClick={() => setNotificationConfirm(false)}>เข้าใจแล้ว</Button>
-                </footer>
               </>
-            ) : (
-              <footer>
-                <Button variant="secondary" disabled={notificationPending} onClick={() => setNotificationConfirm(false)}>ไว้ภายหลัง</Button>
-                <Button disabled={notificationPending} onClick={() => void confirmEnableNotifications()}>
-                  {notificationPending ? <LoaderCircle className="loading-spinner" size={16} /> : <BellRing size={16} />}
-                  {notificationPending ? "กำลังเปิด…" : "อนุญาตแจ้งเตือน"}
-                </Button>
-              </footer>
             )}
-          </section>
-        </div>
-      )}
+          </ConfirmDialog>
+        );
+      })()}
       <Toaster />
       <GlobalDialogHost />
     </div>
