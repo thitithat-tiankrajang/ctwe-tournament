@@ -1,7 +1,7 @@
 "use client";
 
 import { Building2, Check, ChevronDown, Hash, Search, X } from "lucide-react";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { matchesPlayerCode, PLAYER_CODE_QUERY } from "@/domain/tournament/player-code";
 import type { Player } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
@@ -17,6 +17,8 @@ export interface OverviewRecordFilterValue {
  * button on each keystroke is what made the mobile keyboard stutter on large cards.
  */
 const MAX_VISIBLE_OPTIONS = 80;
+const MOBILE_PICKER_QUERY = "(max-width: 768px)";
+const SHEET_CLOSE_FALLBACK_MS = 280;
 
 function codeTokens(query: string): string[] | null {
   const tokens = query.split(/[\s,;]+/).filter(Boolean);
@@ -97,7 +99,13 @@ export function OverviewRecordFilter({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const sheetRef = useRef<HTMLElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const dragRef = useRef({ pointerId: -1, startY: 0, lastY: 0, lastTime: 0, velocity: 0 });
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [dragY, setDragY] = useState(0);
   const [query, setQuery] = useState("");
   // Typing updates the input at full speed; the (heavier) list below follows at deferred priority.
   const deferredQuery = useDeferredValue(query);
@@ -110,9 +118,36 @@ export function OverviewRecordFilter({
     ? [...value.playerIds].sort((a, b) => a.localeCompare(b, "th", { numeric: true }))
     : [...value.schools].sort((a, b) => a.localeCompare(b, "th", { numeric: true }));
 
-  const close = useCallback(() => {
+  const finishClose = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
     setOpen(false);
+    setClosing(false);
+    setDragging(false);
+    setDragY(0);
     setQuery("");
+  }, []);
+
+  const close = useCallback(() => {
+    if (closing) return;
+    const mobile = window.matchMedia(MOBILE_PICKER_QUERY).matches;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!mobile || reduceMotion) {
+      finishClose();
+      return;
+    }
+
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    setDragging(false);
+    setDragY(0);
+    setClosing(true);
+    closeTimerRef.current = window.setTimeout(finishClose, SHEET_CLOSE_FALLBACK_MS);
+  }, [closing, finishClose]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
   }, []);
 
   // Desktop dropdown: close when clicking anywhere else. The mobile sheet closes via its backdrop,
@@ -142,11 +177,56 @@ export function OverviewRecordFilter({
   }, [open]);
 
   const openPicker = () => {
+    if (closing) return;
+    setDragY(0);
+    setDragging(false);
     setOpen(true);
     // Auto-focus only where a keyboard doesn't cover half the screen.
-    if (!window.matchMedia("(max-width: 768px)").matches) {
+    if (!window.matchMedia(MOBILE_PICKER_QUERY).matches) {
       window.setTimeout(() => inputRef.current?.focus(), 0);
     }
+  };
+
+  const startSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!open || closing || !event.isPrimary || event.button !== 0 || !window.matchMedia(MOBILE_PICKER_QUERY).matches) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      lastY: event.clientY,
+      lastTime: event.timeStamp,
+      velocity: 0,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+  };
+  const moveSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (drag.pointerId !== event.pointerId) return;
+    const elapsed = Math.max(1, event.timeStamp - drag.lastTime);
+    const instantVelocity = (event.clientY - drag.lastY) / elapsed;
+    drag.velocity = (drag.velocity * 0.35) + (instantVelocity * 0.65);
+    drag.lastY = event.clientY;
+    drag.lastTime = event.timeStamp;
+    setDragY(Math.max(0, event.clientY - drag.startY));
+  };
+  const endSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (drag.pointerId !== event.pointerId) return;
+    const distance = Math.max(0, event.clientY - drag.startY);
+    const sheetHeight = sheetRef.current?.offsetHeight ?? 0;
+    const farEnough = distance >= Math.min(140, sheetHeight * 0.2);
+    const fastEnough = distance >= 28 && drag.velocity >= 0.5;
+    drag.pointerId = -1;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setDragging(false);
+    if (farEnough || fastEnough) close();
+    else setDragY(0);
+  };
+  const cancelSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (dragRef.current.pointerId !== event.pointerId) return;
+    dragRef.current.pointerId = -1;
+    setDragging(false);
+    setDragY(0);
   };
   const changeMode = (mode: OverviewRecordFilterValue["mode"]) => {
     onChange({ ...value, mode });
@@ -192,7 +272,10 @@ export function OverviewRecordFilter({
   const clear = () => onChange({ mode: value.mode, playerIds: [], schools: [] });
 
   return (
-    <div ref={rootRef} className={`overview-record-filter${open ? " overview-record-filter--open" : ""}`}>
+    <div
+      ref={rootRef}
+      className={`overview-record-filter${open ? " overview-record-filter--open" : ""}${closing ? " overview-record-filter--closing" : ""}${dragging ? " overview-record-filter--dragging" : ""}`}
+    >
       <button
         type="button"
         className="overview-record-filter__trigger"
@@ -213,14 +296,37 @@ export function OverviewRecordFilter({
       {open && (
         <>
           <div className="overview-record-filter__backdrop" aria-hidden="true" onClick={close} />
-          <section className="overview-record-filter__popup" role="dialog" aria-modal="true" aria-label="เลือกตัวกรองข้อมูลภาพรวม">
-            <span className="overview-record-filter__grip" aria-hidden="true" />
-            <header>
+          <section
+            ref={sheetRef}
+            className="overview-record-filter__popup"
+            role="dialog"
+            aria-modal="true"
+            aria-label="เลือกตัวกรองข้อมูลภาพรวม"
+            style={dragY > 0 && !closing ? { transform: `translateY(${dragY}px)` } : undefined}
+            onTransitionEnd={(event) => {
+              if (closing && event.currentTarget === event.target && event.propertyName === "transform") finishClose();
+            }}
+          >
+            <span
+              className="overview-record-filter__grip"
+              aria-hidden="true"
+              onPointerDown={startSheetDrag}
+              onPointerMove={moveSheetDrag}
+              onPointerUp={endSheetDrag}
+              onPointerCancel={cancelSheetDrag}
+            />
+            <header
+              onPointerDown={startSheetDrag}
+              onPointerMove={moveSheetDrag}
+              onPointerUp={endSheetDrag}
+              onPointerCancel={cancelSheetDrag}
+            >
               <div>
                 <strong>ค้นหาและกรองข้อมูล</strong>
-                <span>Ranking, Pairing และ Result ใช้ตัวกรองชุดเดียวกัน</span>
+                <span className="overview-record-filter__scope-hint">Ranking, Pairing และ Result ใช้ตัวกรองชุดเดียวกัน</span>
+                <span className="overview-record-filter__dismiss-hint">แตะพื้นที่ด้านนอกหรือปัดลงเพื่อปิด</span>
               </div>
-              <button type="button" aria-label="ปิดตัวกรอง" onClick={close}><X size={19} /></button>
+              <button type="button" className="overview-record-filter__close" aria-label="ปิดตัวกรอง" onClick={close}><X size={19} /></button>
             </header>
             <div className="overview-record-filter__modes" role="group" aria-label="ประเภทตัวกรอง">
               <button type="button" className={value.mode === "player" ? "is-active" : ""} aria-pressed={value.mode === "player"} onClick={() => changeMode("player")}><Hash size={15} />รหัสนักกีฬา</button>
