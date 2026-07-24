@@ -97,11 +97,14 @@ public class CardController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        UUID tournamentId = authz.tournamentOfCard(cardId);
         long publicVersionBefore = publicCards.version(cardId);
         service.delete(cardId);
         events.publish(cardId, -1);
         // Viewers resync, hit 404, and drop the card instead of watching a frozen page.
         events.publishPublic(cardId, publicVersionBefore + 1);
+        // List viewers drop the row immediately.
+        events.publishTournamentCardRemoved(tournamentId, cardId);
     }
 
     @PostMapping("/{cardId}/players")
@@ -359,7 +362,7 @@ public class CardController {
         long publicVersionBefore = publicCards.version(cardId);
         CardDtos.CardResponse card = action.get();
         events.publish(card);
-        publishPublicIfBumped(cardId, publicVersionBefore);
+        if (publishPublicIfBumped(cardId, publicVersionBefore)) publishTournamentCatalog(cardId);
         return card;
     }
 
@@ -384,6 +387,7 @@ public class CardController {
             } catch (RuntimeException deltaFailed) {
                 events.publishPublic(cardId, current);
             }
+            publishTournamentCatalog(cardId);
         }
         return card;
     }
@@ -413,9 +417,10 @@ public class CardController {
         reauthentication.requireCurrentPassword(authentication, password);
     }
 
-    /** Create has no prior public version to compare; new cards appear via the (SSE-less) catalog. */
+    /** A new card is announced on the tournament's list stream so viewers see it instantly. */
     private CardDtos.CardResponse created(CardDtos.CardResponse card) {
         events.publish(card);
+        publishTournamentCatalog(card.id());
         return card;
     }
 
@@ -424,6 +429,16 @@ public class CardController {
         if (current <= publicVersionBefore) return false;
         events.publishPublic(cardId, current);
         return true;
+    }
+
+    /** Best-effort fan-out of the card's fresh public summary to its tournament's list viewers. */
+    private void publishTournamentCatalog(UUID cardId) {
+        try {
+            publicCards.summaryOf(cardId).ifPresent(summary ->
+                events.publishTournamentCard(summary.tournamentId(), summary));
+        } catch (RuntimeException ignored) {
+            // The list stream is a convenience channel; a failed lookup must never fail the mutation.
+        }
     }
 
     /** Any authenticated back-office principal (admin/director/staff) sees the internal staff view. */

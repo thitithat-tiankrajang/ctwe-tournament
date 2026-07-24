@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { Pairing, PublicCardVersion, TournamentCard } from "@/domain/tournament/types";
+import type { Pairing, PublicCardSummary, PublicCardVersion, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { useTournamentStore } from "./store";
 import { useRealtimeConfig } from "./use-realtime-config";
@@ -36,6 +36,20 @@ const REFETCH_JITTER_MS = 4_000;
 /** Ceiling for the re-subscribe backoff after a fatal SSE refusal (e.g. 503 over capacity). */
 const MAX_RESUBSCRIBE_DELAY_MS = 60_000;
 
+/** A card's fresh public summary pushed on the tournament stream (created or updated). */
+interface TournamentCardEvent {
+  tournamentId: string;
+  cardId: string;
+  version: number;
+  summary: PublicCardSummary;
+}
+
+/** A card deletion pushed on the tournament stream. */
+interface TournamentCardRemovedEvent {
+  tournamentId: string;
+  cardId: string;
+}
+
 /**
  * An open public card uses one isolated SSE stream for live results, connected straight to the
  * public API origin (bypassing the Worker proxy). There is intentionally no routine polling:
@@ -47,6 +61,98 @@ const MAX_RESUBSCRIBE_DELAY_MS = 60_000;
  * backoff, and while disconnected it falls back to polling the tiny versions endpoint so viewers
  * keep receiving published data instead of a silently frozen page.
  */
+/**
+ * Keeps the /tour card LIST live over SSE — no polling. The per-card stream (usePublicSync)
+ * only exists while a card is open, so a viewer parked on the tournament's card list —
+ * including one who arrived before the director created any card — would otherwise never see
+ * new cards, stage changes, or deletions without a manual refresh.
+ *
+ * While the list is what the viewer sees, this holds one tournament-scoped EventSource:
+ * `card-summary` / `card-removed` events arrive as DATA and are spliced into the store with
+ * zero follow-up requests. The only bundle refetches are one jittered, ETag-revalidated call
+ * per (re)connect — healing whatever a disconnection window missed — and one when the tab
+ * becomes visible again after the OS froze the page (a single request per wake, not a poll).
+ */
+export function usePublicBundleSync(token: string | undefined, enabled: boolean) {
+  const enterPublicTournament = useTournamentStore((state) => state.enterPublicTournament);
+  const applyPublicSummary = useTournamentStore((state) => state.applyPublicSummary);
+  const removePublicCard = useTournamentStore((state) => state.removePublicCard);
+  const config = useRealtimeConfig();
+
+  useEffect(() => {
+    if (!token || !enabled || !config.realtimeEnabled) return;
+
+    let disposed = false;
+    let source: EventSource | null = null;
+    let resubscribeDelay = Math.max(config.reconnectDelayMs, 2_000);
+    const timers = new Set<number>();
+
+    const later = (run: () => void, delay: number) => {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        if (!disposed) run();
+      }, delay);
+      timers.add(timer);
+    };
+    const jitter = (max: number) => Math.random() * max;
+    const refetch = () => void enterPublicTournament(token).catch(() => { /* transient — SSE keeps flowing */ });
+    const refetchSoon = () => later(refetch, jitter(REFETCH_JITTER_MS));
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refetch();
+    };
+
+    const connect = () => {
+      // Push-only channel by design: with SSE off (admin switch / unsupported browser) the list
+      // simply stays as loaded — there is intentionally no polling fallback here.
+      if (!config.sseEnabled || !("EventSource" in window)) return;
+      const stream = new EventSource(publicApiUrl(`/api/public/tournaments/${encodeURIComponent(token)}/events`));
+      source = stream;
+      stream.onopen = () => {
+        resubscribeDelay = Math.max(config.reconnectDelayMs, 2_000);
+      };
+      // Whatever changed while we were not connected (initial attach, reconnect after a drop) is
+      // healed by one ETag-revalidated bundle request; from here on events carry the data itself.
+      stream.addEventListener("connected", refetchSoon);
+      stream.addEventListener("card-summary", (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as TournamentCardEvent;
+          if (!payload.summary) throw new Error("Malformed tournament card event");
+          applyPublicSummary(payload.summary);
+        } catch {
+          refetchSoon();
+        }
+      });
+      stream.addEventListener("card-removed", (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as TournamentCardRemovedEvent;
+          if (!payload.cardId) throw new Error("Malformed tournament card removal event");
+          removePublicCard(payload.cardId);
+        } catch {
+          refetchSoon();
+        }
+      });
+      stream.onerror = () => {
+        // CONNECTING means the browser is retrying on its own; CLOSED (server refusal) needs a
+        // manual re-subscribe with backoff, exactly like the per-card stream below.
+        if (stream.readyState !== EventSource.CLOSED || disposed) return;
+        stream.close();
+        if (source === stream) source = null;
+        later(connect, resubscribeDelay + jitter(resubscribeDelay));
+        resubscribeDelay = Math.min(resubscribeDelay * 2, MAX_RESUBSCRIBE_DELAY_MS);
+      };
+    };
+
+    connect();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      disposed = true;
+      timers.forEach((timer) => window.clearTimeout(timer));
+      document.removeEventListener("visibilitychange", onVisible);
+      source?.close();
+    };
+  }, [token, enabled, config.realtimeEnabled, config.sseEnabled, config.reconnectDelayMs, enterPublicTournament, applyPublicSummary, removePublicCard]);
+}
+
 export function usePublicSync(cardId: string | undefined, enabled: boolean) {
   const cards = useTournamentStore((state) => state.cards);
   const syncCard = useTournamentStore((state) => state.syncCard);

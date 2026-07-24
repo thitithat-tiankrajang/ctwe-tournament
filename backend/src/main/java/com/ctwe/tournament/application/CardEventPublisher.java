@@ -1,6 +1,7 @@
 package com.ctwe.tournament.application;
 
 import com.ctwe.tournament.web.dto.CardDtos;
+import com.ctwe.tournament.web.dto.PublicCardDtos;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -50,6 +51,8 @@ public class CardEventPublisher {
 
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> publicEmitters = new ConcurrentHashMap<>();
+    /** Keyed by tournament id: the viewer card LIST channel (card created/updated/removed facts). */
+    private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> tournamentEmitters = new ConcurrentHashMap<>();
     private final AtomicInteger staffStreams = new AtomicInteger();
     private final AtomicInteger publicStreams = new AtomicInteger();
     private final Supplier<RuntimeSettings> settings;
@@ -95,6 +98,15 @@ public class CardEventPublisher {
     /** Public stream carries only public-safe invalidation signals and changed result rows. */
     public SseEmitter subscribePublic(UUID cardId, LongSupplier currentVersion) {
         return subscribe(publicEmitters, cardId, currentVersion);
+    }
+
+    /**
+     * Tournament-scoped viewer stream (counts against the public cap): the card LIST's live
+     * channel. Without it a viewer parked on the /tour card list — e.g. one who arrived before
+     * the director created any card — had no way to learn about new cards short of refreshing.
+     */
+    public SseEmitter subscribeTournament(UUID tournamentId, LongSupplier catalogVersion) {
+        return subscribe(tournamentEmitters, tournamentId, catalogVersion);
     }
 
     private SseEmitter subscribe(
@@ -226,6 +238,29 @@ public class CardEventPublisher {
     }
 
     /**
+     * A card was created or its public summary changed: push the fresh summary as DATA to the
+     * tournament's list viewers — they splice it in with zero follow-up requests.
+     */
+    public void publishTournamentCard(UUID tournamentId, PublicCardDtos.CardSummary summary) {
+        List<SseEmitter> streams = tournamentEmitters.get(tournamentId);
+        if (streams == null || streams.isEmpty()) return;
+
+        TournamentCardEvent event = new TournamentCardEvent(tournamentId, summary.id(), summary.version(), Instant.now(), summary);
+        for (SseEmitter emitter : streams)
+            send(tournamentEmitters, tournamentId, emitter, "card-summary", summary.version(), event);
+    }
+
+    /** A card was deleted: list viewers drop the row immediately. */
+    public void publishTournamentCardRemoved(UUID tournamentId, UUID cardId) {
+        List<SseEmitter> streams = tournamentEmitters.get(tournamentId);
+        if (streams == null || streams.isEmpty()) return;
+
+        TournamentCardRemovedEvent event = new TournamentCardRemovedEvent(tournamentId, cardId, Instant.now());
+        for (SseEmitter emitter : streams)
+            send(tournamentEmitters, tournamentId, emitter, "card-removed", 0L, event);
+    }
+
+    /**
      * Detects and prunes dead connections; comments are invisible to EventSource handlers.
      * The scheduler ticks fast so the runtime-configured interval applies without a restart.
      */
@@ -236,6 +271,7 @@ public class CardEventPublisher {
         lastHeartbeatAt = now;
         heartbeat(emitters);
         heartbeat(publicEmitters);
+        heartbeat(tournamentEmitters);
     }
 
     public int activeStaffStreams() { return staffStreams.get(); }
@@ -305,6 +341,7 @@ public class CardEventPublisher {
         // Close streams first so browsers reconnect promptly to the replacement instance.
         completeAll(emitters);
         completeAll(publicEmitters);
+        completeAll(tournamentEmitters);
         if (ownedExecutor != null) ownedExecutor.shutdownNow();
     }
 
@@ -324,4 +361,7 @@ public class CardEventPublisher {
     public record SnapshotPublishEvent(UUID cardId, long version, Instant updatedAt, String snapshotId,
                                        List<Integer> gameNumbers, String confirmedAt,
                                        com.ctwe.tournament.domain.model.RuntimeStage runtimeStage, int currentGame) {}
+    public record TournamentCardEvent(UUID tournamentId, UUID cardId, long version, Instant updatedAt,
+                                      PublicCardDtos.CardSummary summary) {}
+    public record TournamentCardRemovedEvent(UUID tournamentId, UUID cardId, Instant updatedAt) {}
 }

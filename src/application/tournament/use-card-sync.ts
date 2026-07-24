@@ -29,6 +29,7 @@ export function useCardSync(cardId: string | undefined) {
   const syncCard = useTournamentStore((state) => state.syncCard);
   const applyCardState = useTournamentStore((state) => state.applyCardState);
   const applyResultPatch = useTournamentStore((state) => state.applyResultPatch);
+  const ensureSessionAlive = useTournamentStore((state) => state.ensureSessionAlive);
   const config = useRealtimeConfig();
   const sseAllowed = config.realtimeEnabled && config.sseEnabled;
   const currentVersion = useTournamentStore((state) => cardId ? state.cards.find((card) => card.id === cardId)?.version : undefined);
@@ -85,10 +86,16 @@ export function useCardSync(cardId: string | undefined) {
           void syncCard(cardId);
         }
       });
+      source.onerror = () => {
+        // CONNECTING = browser is retrying on its own. CLOSED = the server refused the stream —
+        // often an expired session (401): verify it and route to login if it is really gone.
+        if (!active || source?.readyState !== EventSource.CLOSED) return;
+        void ensureSessionAlive();
+      };
     }
     return () => {
       active = false;
       source?.close();
     };
-  }, [applyCardState, applyResultPatch, cardId, sseAllowed, syncCard]);
+  }, [applyCardState, applyResultPatch, cardId, ensureSessionAlive, sseAllowed, syncCard]);
 }

@@ -4,6 +4,7 @@ import { create } from "zustand";
 import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicTournamentBundle, PublicTournamentSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { comparePlayerCodes } from "@/domain/tournament/player-code";
+import { hasStaffAccess } from "@/domain/tournament/roles";
 
 export interface AuthState {
   authenticated: boolean;
@@ -71,6 +72,12 @@ interface TournamentState {
   applyResultPatch: (cardId: string, version: number, changedPairings: Pairing[]) => boolean;
   applyPairingsPatch: (cardId: string, version: number, gameNumber: number, pairings: Pairing[]) => boolean;
   applySnapshotPublish: (cardId: string, version: number, publish: SnapshotPublishPatch) => boolean;
+  /** Re-check a staff/director/admin session; redirects to login if it is gone. */
+  ensureSessionAlive: () => Promise<void>;
+  /** Tournament list stream: splice in a card's fresh public summary (created or updated). */
+  applyPublicSummary: (summary: PublicCardSummary) => void;
+  /** Tournament list stream: a card was deleted — drop it from the viewer's list. */
+  removePublicCard: (cardId: string) => void;
   loadAudit: (cardId: string) => Promise<AuditEntry[]>;
   refreshAuth: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
@@ -140,21 +147,47 @@ interface TournamentState {
 const anonymous: AuthState = { authenticated: false, username: null, roles: [], csrfToken: "" };
 const ACTIVE_TOURNAMENT_KEY = "ctwe.activeTournament";
 const STAFF_SESSION_MARKER = "CTWE_STAFF";
+const STAFF_SESSION_TAB_MARKER = "ctwe.backOfficeSession";
 const CSRF_COOKIE = "XSRF-TOKEN";
 
 function hasStaffSessionHint() {
-  return typeof document !== "undefined"
+  const cookieHint = typeof document !== "undefined"
     && document.cookie.split(";").some((item) => item.trim() === `${STAFF_SESSION_MARKER}=1`);
+  if (cookieHint) return true;
+  try {
+    return typeof window !== "undefined" && window.sessionStorage?.getItem(STAFF_SESSION_TAB_MARKER) === "1";
+  } catch { return false; }
+}
+
+function rememberStaffSessionHint() {
+  try {
+    if (typeof window !== "undefined") window.sessionStorage?.setItem(STAFF_SESSION_TAB_MARKER, "1");
+  } catch { /* storage can be unavailable in restricted browsing modes */ }
 }
 
 function clearStaffSessionHint() {
   if (typeof document !== "undefined")
     document.cookie = `${STAFF_SESSION_MARKER}=; Path=/; Max-Age=0; SameSite=Strict`;
+  try {
+    if (typeof window !== "undefined") window.sessionStorage?.removeItem(STAFF_SESSION_TAB_MARKER);
+  } catch { /* ignore unavailable storage */ }
 }
 
 function clearCsrfCookie() {
   if (typeof document !== "undefined")
     document.cookie = `${CSRF_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict`;
+}
+
+/**
+ * A back-office session that vanished (expired, server restart, logged out elsewhere) must land
+ * the user on the login page — never a frozen console full of failing requests. Anonymous public
+ * viewers never invoke this path; the login page itself is the only route that must not loop.
+ */
+function redirectToLoginOnSessionLoss() {
+  if (typeof window === "undefined") return;
+  const path = window.location.pathname;
+  if (path === "/staff-login" || path === "/staff-login/") return;
+  window.location.replace("/staff-login?expired=1");
 }
 
 export function readActiveTournament(): ActiveTournament | null {
@@ -205,6 +238,26 @@ async function readError(response: Response) {
 }
 
 export const useTournamentStore = create<TournamentState>((set, get) => {
+  /**
+   * Clear privileged data before leaving the page. A full navigation follows immediately, but
+   * clearing first prevents a dead staff/admin/director screen from remaining interactive while
+   * the new document is loading and avoids restoring another user's tournament after login.
+   */
+  const expireBackOfficeSession = () => {
+    clearStaffSessionHint();
+    clearCsrfCookie();
+    publicScopeToken = null;
+    if (typeof window !== "undefined") window.localStorage.removeItem(ACTIVE_TOURNAMENT_KEY);
+    set({ auth: anonymous, cards: [], activeTournament: null, loading: false, error: null });
+    redirectToLoginOnSessionLoss();
+  };
+
+  const fetchAuthState = async () => {
+    const response = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) throw new Error(await readError(response));
+    return response.json() as Promise<AuthState>;
+  };
+
   const request = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
     const method = init.method?.toUpperCase() ?? "GET";
     const headers = new Headers(init.headers);
@@ -215,7 +268,19 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     }
     const response = await fetch(path, { ...init, headers, credentials: "same-origin", cache: "no-store" });
     if (!response.ok) {
-      if (response.status === 401) await get().refreshAuth();
+      if (response.status === 401 && (hasStaffAccess(get().auth) || hasStaffSessionHint())) {
+        // Several sensitive mutations intentionally return 401 for a wrong confirmation password,
+        // so confirm the actual session separately before deciding to redirect.
+        let confirmedAuth: AuthState | null = null;
+        try {
+          confirmedAuth = await fetchAuthState();
+        } catch { /* an offline auth check is not evidence of logout */ }
+        if (confirmedAuth && !hasStaffAccess(confirmedAuth)) {
+          expireBackOfficeSession();
+          throw new Error("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่");
+        }
+        if (confirmedAuth) set({ auth: confirmedAuth });
+      }
       const message = await readError(response);
       set({ error: message });
       throw new Error(message);
@@ -279,7 +344,19 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         // public projection. Anonymous viewers get the full bundle in one shot.
         if (publicScopeToken === token && !get().auth.authenticated && !hasStaffSessionHint()) {
           get().setActiveTournament({ id: bundle.id, name: bundle.name, accessToken: bundle.accessToken });
-          set({ cards: bundle.cards, error: null });
+          // The bundle is also revalidated periodically while the viewer sits on the card list,
+          // and a CDN copy can lag a few seconds behind SSE — keep whichever card is newer so a
+          // stale bundle never rolls back live data. New cards appear, deleted cards drop out.
+          set((state) => {
+            const existing = new Map(state.cards.map((card) => [card.id, card]));
+            return {
+              cards: bundle.cards.map((card) => {
+                const current = existing.get(card.id);
+                return current && !current.summaryOnly && current.version >= card.version ? current : card;
+              }),
+              error: null,
+            };
+          });
         }
         return bundle;
       })
@@ -453,41 +530,104 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         );
         if (response.ok) replaceCard(await response.json() as TournamentCard);
         else if (response.status === 404) set((state) => ({ cards: state.cards.filter((card) => card.id !== cardId), error: null }));
+        else if (response.status === 401 && backOffice) {
+          // Background sync noticed the session died — same exit as a foreground request.
+          expireBackOfficeSession();
+        }
       } catch { /* transient network/poll error — keep current state */ }
+    },
+    async ensureSessionAlive() {
+      // Used by the global back-office guard and after a refused staff live stream. Only a
+      // successful /auth/me response may declare the session dead; an offline/transient failure
+      // must leave the current screen intact so reconnecting does not force a fresh login.
+      if (!hasStaffAccess(get().auth)) return;
+      try {
+        const auth = await fetchAuthState();
+        if (!hasStaffAccess(auth)) {
+          expireBackOfficeSession();
+          return;
+        }
+        rememberStaffSessionHint();
+        set({ auth });
+      } catch { /* connectivity failure is not proof that the session expired */ }
     },
     applyCardState: replaceCard,
     applyResultPatch,
     applyPairingsPatch,
     applySnapshotPublish,
+    applyPublicSummary(summary) {
+      // Staff/directors hold richer authenticated card data; the public list stream is viewer-only.
+      if (get().auth.authenticated) return;
+      set((state) => {
+        const existing = state.cards.find((card) => card.id === summary.id);
+        // A summary can only replace what we hold when it is strictly newer — an equal-or-older
+        // event must never downgrade a full card (with players/snapshots) to a shallow summary.
+        if (existing && existing.version >= summary.version) return state;
+        const next = publicSummaryCard(summary);
+        return {
+          cards: existing
+            ? state.cards.map((card) => card.id === summary.id ? next : card)
+            : [...state.cards, next],
+          error: null,
+        };
+      });
+    },
+    removePublicCard(cardId) {
+      if (get().auth.authenticated) return;
+      set((state) => state.cards.some((card) => card.id === cardId)
+        ? { cards: state.cards.filter((card) => card.id !== cardId), error: null }
+        : state);
+    },
     async loadAudit(cardId) {
       // Audit is no longer in the card payload (kept the hot path cheap); fetch it on demand for the audit page.
       return request<AuditEntry[]>(`/api/cards/${cardId}/audit`);
     },
     async refreshAuth() {
       try {
-        const auth = await request<AuthState>("/api/auth/me");
+        const hadBackOfficeSession = hasStaffAccess(get().auth) || hasStaffSessionHint();
+        const auth = await fetchAuthState();
+        if (hadBackOfficeSession && !hasStaffAccess(auth)) {
+          expireBackOfficeSession();
+          return;
+        }
+        if (hasStaffAccess(auth)) rememberStaffSessionHint();
         set({ auth });
         if (!auth.authenticated) clearStaffSessionHint();
       } catch {
-        set({ auth: anonymous });
-        clearStaffSessionHint();
+        // Keep an already-rendered privileged session during a temporary outage. Its next 401 or
+        // a confirmed anonymous /auth/me response will perform the actual logout and redirect.
+        if (!hasStaffAccess(get().auth)) {
+          set({ auth: anonymous });
+          clearStaffSessionHint();
+        }
       }
     },
     async load() {
       set({ loading: true, error: null });
       try {
         let auth = anonymous;
-        if (hasStaffSessionHint()) {
-          const authResponse = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
-          if (!authResponse.ok) throw new Error(await readError(authResponse));
-          auth = await authResponse.json() as AuthState;
-          if (!auth.authenticated) clearStaffSessionHint();
+        const hadStaffSession = hasStaffSessionHint();
+        if (hadStaffSession) {
+          auth = await fetchAuthState();
+          if (!hasStaffAccess(auth)) {
+            // This browser WAS a staff session and it is gone (expired while away, server
+            // restart): land on the login page instead of a locked-out console.
+            expireBackOfficeSession();
+            return;
+          }
+          rememberStaffSessionHint();
         }
         let cards: TournamentCard[];
         const scopeToken = publicScopeToken ?? tokenFromLocation();
         if (auth.authenticated) {
           const response = await fetch("/api/cards", { credentials: "same-origin", cache: "no-store" });
-          if (!response.ok) throw new Error(await readError(response));
+          if (!response.ok) {
+            if (response.status === 401) {
+              expireBackOfficeSession();
+              return;
+            }
+            throw new Error(await readError(response));
+          }
           cards = await response.json() as TournamentCard[];
         } else if (scopeToken) {
           // A token-scoped viewer page is active: its bundle already carries everything, so
@@ -542,7 +682,10 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         credentials: "same-origin",
         cache: "no-store",
       });
-      if (!response.ok) throw new Error(`ออกจากระบบไม่สำเร็จ (${response.status})`);
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) await get().ensureSessionAlive();
+        throw new Error(`ออกจากระบบไม่สำเร็จ (${response.status})`);
+      }
       clearStaffSessionHint();
       clearCsrfCookie();
       set({ auth: anonymous });
@@ -634,6 +777,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       const token = get().auth.csrfToken;
       if (token) headers.set("X-XSRF-TOKEN", token);
       const response = await fetch("/api/auth/verify-password", { method: "POST", headers, credentials: "same-origin", cache: "no-store", body: JSON.stringify({ password }) });
+      if (response.status === 401 || response.status === 403) await get().ensureSessionAlive();
       return response.ok;
     },
     async reviewResults(cardId) {

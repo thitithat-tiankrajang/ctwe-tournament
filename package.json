@@ -9,7 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx --test src/domain/tournament/*.test.ts src/infrastructure/http/*.test.ts",
+    "test": "tsx --test src/application/tournament/*.test.ts src/domain/tournament/*.test.ts src/infrastructure/http/*.test.ts src/ui/pdf/*.test.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "loadtest": "bash load-testing/scripts/run-load-test.sh",

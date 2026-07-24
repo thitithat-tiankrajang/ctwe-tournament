@@ -5,6 +5,7 @@ import com.ctwe.tournament.web.dto.PublicCardDtos;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -32,6 +33,20 @@ public class PublicCardQueryService {
         return cache.summaries().stream()
             .filter(summary -> tournamentId.equals(summary.tournamentId()))
             .toList();
+    }
+
+    /** One card's public summary, absent if the card no longer exists. */
+    public Optional<PublicCardDtos.CardSummary> summaryOf(UUID cardId) {
+        return cache.summaries().stream()
+            .filter(summary -> cardId.equals(summary.id()))
+            .findFirst();
+    }
+
+    /** Cheap change fingerprint of one tournament's catalog (membership + every card version). */
+    public long catalogFingerprint(UUID tournamentId) {
+        return summaries(tournamentId).stream()
+            .mapToLong(summary -> summary.version() + 1)
+            .sum();
     }
 
     public List<PublicCardDtos.CardVersion> versions() {

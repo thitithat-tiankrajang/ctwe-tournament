@@ -1,0 +1,174 @@
+#!/bin/bash -xe
+# ============================================================
+# Kiro Workshop - EC2 UserData Script
+# Student Registration App Lab Environment
+# AMI: Amazon Linux 2023
+# Purpose: Pre-configure EC2 with Node.js, MySQL, and project
+# ============================================================
+# Log all output for troubleshooting
+exec > >(tee /var/log/userdata.log) 2>&1
+echo "=== UserData Start: $(date) ==="
+# ----------------------------------------------------------
+# 1. System Update
+# ----------------------------------------------------------
+yum update -y
+# ----------------------------------------------------------
+# 2. Install Node.js 18 LTS
+# ----------------------------------------------------------
+yum install -y nodejs npm
+# Verify installation
+echo "Node.js version: $(node --version)"
+echo "npm version: $(npm --version)"
+# ----------------------------------------------------------
+# 3. Install MySQL (MariaDB)
+# ----------------------------------------------------------
+yum install -y mariadb105-server mariadb105
+# Start and enable MySQL
+systemctl start mariadb
+systemctl enable mariadb
+# ----------------------------------------------------------
+# 4. Configure MySQL Database & User
+# ----------------------------------------------------------
+mysql -u root <<EOF
+-- Create application database
+CREATE DATABASE IF NOT EXISTS STUDENTS;
+-- Create application user
+CREATE USER IF NOT EXISTS 'nodeapp'@'localhost' IDENTIFIED BY 'student12';
+CREATE USER IF NOT EXISTS 'nodeapp'@'%' IDENTIFIED BY 'student12';
+-- Grant privileges
+GRANT ALL PRIVILEGES ON STUDENTS.* TO 'nodeapp'@'localhost';
+GRANT ALL PRIVILEGES ON STUDENTS.* TO 'nodeapp'@'%';
+FLUSH PRIVILEGES;
+-- Create students table
+USE STUDENTS;
+CREATE TABLE IF NOT EXISTS students (
+id INT NOT NULL AUTO_INCREMENT,
+name VARCHAR(255) NOT NULL,
+address VARCHAR(255) NOT NULL,
+city VARCHAR(255) NOT NULL,
+state VARCHAR(255) NOT NULL,
+email VARCHAR(255) NOT NULL,
+phone VARCHAR(100) NOT NULL,
+PRIMARY KEY (id)
+);
+-- Insert sample data for verification
+INSERT INTO students (name, address, city, state, email, phone) VALUES
+('John Doe', '123 Main St', 'Bangkok', 'BKK', 'john@example.com', '081-234-5678'),
+('Jane Smith', '456 Oak Ave', 'Chiang Mai', 'CM', 'jane@example.com', '089-876-5432');
+EOF
+echo "=== MySQL configured ==="
+# ----------------------------------------------------------
+# 5. Install additional tools
+# ----------------------------------------------------------
+yum install -y git unzip wget
+# Install nodemon globally for development
+npm install -g nodemon
+# ----------------------------------------------------------
+# 6. Create project directory structure
+# ----------------------------------------------------------
+PROJECT_DIR=/home/ec2-user/student-registration-app
+mkdir -p $PROJECT_DIR
+cd $PROJECT_DIR
+# ----------------------------------------------------------
+# 7. Create package.json
+# ----------------------------------------------------------
+cat <<'PACKAGE' > package.json
+{
+"name": "student-registration-app",
+"version": "1.0.0",
+"description": "Student Registration Application - Kiro Workshop",
+"main": "server.js",
+"scripts": {
+"start": "node server.js",
+"dev": "nodemon server.js"
+},
+"dependencies": {
+"express": "^4.18.2",
+"mysql2": "^3.6.0",
+"ejs": "^3.1.9",
+"dotenv": "^16.3.1",
+"body-parser": "^1.20.2"
+}
+}
+PACKAGE
+# ----------------------------------------------------------
+# 8. Create .env file
+# ----------------------------------------------------------
+cat <<'ENVFILE' > .env
+APP_DB_HOST=localhost
+APP_DB_PORT=3306
+APP_DB_USER=nodeapp
+APP_DB_PASSWORD=student12
+APP_DB_NAME=STUDENTS
+APP_PORT=80
+ENVFILE
+# ----------------------------------------------------------
+# 9. Install npm dependencies
+# ----------------------------------------------------------
+npm install
+# ----------------------------------------------------------
+# 10. Set ownership to ec2-user
+# ----------------------------------------------------------
+chown -R ec2-user:ec2-user $PROJECT_DIR
+# ----------------------------------------------------------
+# 11. Create workshop welcome page (temporary httpd)
+# ----------------------------------------------------------
+yum install -y httpd
+systemctl start httpd
+systemctl enable httpd
+cat <<'HTML' > /var/www/html/index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiro Workshop Lab</title>
+<style>
+body { font-family: 'Segoe UI', Arial, sans-serif; background: #232f3e; color: #fff; display: flex;
+justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+.card { background: #fff; color: #232f3e; border-radius: 12px; padding: 40px; max-width:
+600px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+h1 { color: #ff9900; }
+.status { background: #e8f5e9; padding: 10px; border-radius: 6px; margin: 10px 0; }
+.info { background: #f5f5f5; padding: 15px; border-radius: 6px; text-align: left; margin-top:
+20px; font-family: monospace; font-size: 0.9em; }
+code { background: #eee; padding: 2px 6px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="card">
+<h1> Kiro Workshop Lab Ready!</h1>
+<p>Your EC2 environment is configured and ready for the workshop.</p>
+<div class="status"> Node.js installed</div>
+<div class="status"> MySQL (MariaDB) running</div>
+<div class="status"> Database STUDENTS created</div>
+<div class="status"> Project scaffolded</div>
+<div class="info">
+<strong>Project Location:</strong><br>
+<code>/home/ec2-user/student-registration-app/</code><br><br>
+<strong>Next Steps:</strong><br>
+1. SSH into this instance<br>
+2. Open project in Kiro IDE<br>
+3. Follow instructor guide
+</div>
+</div>
+</body>
+</html>
+HTML
+# ----------------------------------------------------------
+# 12. Configure firewall (if applicable)
+# ----------------------------------------------------------
+# Note: Security Group should allow ports 22, 80, 3306 (internal)
+# No iptables rules needed on Amazon Linux 2023 by default
+# ----------------------------------------------------------
+# 13. Final verification
+# ----------------------------------------------------------
+echo "=== Verification ==="
+echo "Node.js: $(node --version)"
+echo "npm: $(npm --version)"
+echo "MySQL status: $(systemctl is-active mariadb)"
+echo "httpd status: $(systemctl is-active httpd)"
+mysql -u nodeapp -pstudent12 -e "USE STUDENTS; SELECT COUNT(*) AS sample_records FROM
+students;"
+echo "Project dir: $(ls -la $PROJECT_DIR)"
+echo "=== UserData Complete: $(date) ==="

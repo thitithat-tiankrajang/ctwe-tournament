@@ -3,7 +3,7 @@
 import { ArrowLeft, ChevronRight, LockKeyhole, Trophy } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
-import { usePublicSync } from "@/application/tournament/use-public-sync";
+import { usePublicBundleSync, usePublicSync } from "@/application/tournament/use-public-sync";
 import type { TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { CardOverview } from "@/ui/components/card-overview";
@@ -59,6 +59,9 @@ export function TournamentViewer({ token }: { token: string }) {
 
   // Live results for the card being watched; staff accounts keep their own /cards sync channel.
   usePublicSync(selectedCard?.id, !auth.authenticated);
+  // The card list has no SSE channel of its own — keep it live (new cards, stage badges) while
+  // it is what the viewer is looking at, so nobody has to refresh to see a newly created card.
+  usePublicBundleSync(token, !auth.authenticated && !dead && tournament !== null && !selectedCard);
 
   // A single-card tournament jumps straight into that card.
   useEffect(() => {

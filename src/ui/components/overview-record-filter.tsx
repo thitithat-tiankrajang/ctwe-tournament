@@ -18,7 +18,8 @@ export interface OverviewRecordFilterValue {
  */
 const MAX_VISIBLE_OPTIONS = 80;
 const MOBILE_PICKER_QUERY = "(max-width: 768px)";
-const SHEET_CLOSE_FALLBACK_MS = 280;
+const SHEET_CLOSE_FALLBACK_MS = 380;
+const SHEET_SNAP_DURATION_MS = 220;
 
 function codeTokens(query: string): string[] | null {
   const tokens = query.split(/[\s,;]+/).filter(Boolean);
@@ -100,12 +101,12 @@ export function OverviewRecordFilter({
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
-  const dragRef = useRef({ pointerId: -1, startY: 0, lastY: 0, lastTime: 0, velocity: 0 });
+  const dragFrameRef = useRef<number | null>(null);
+  const closingRef = useRef(false);
+  const dragRef = useRef({ pointerId: -1, startY: 0, currentY: 0, lastY: 0, lastTime: 0, velocity: 0, sheetHeight: 1 });
   const [open, setOpen] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [dragY, setDragY] = useState(0);
   const [query, setQuery] = useState("");
   // Typing updates the input at full speed; the (heavier) list below follows at deferred priority.
   const deferredQuery = useDeferredValue(query);
@@ -123,15 +124,18 @@ export function OverviewRecordFilter({
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
+    if (dragFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+    closingRef.current = false;
+    dragRef.current.pointerId = -1;
     setOpen(false);
-    setClosing(false);
-    setDragging(false);
-    setDragY(0);
     setQuery("");
   }, []);
 
   const close = useCallback(() => {
-    if (closing) return;
+    if (closingRef.current) return;
     const mobile = window.matchMedia(MOBILE_PICKER_QUERY).matches;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!mobile || reduceMotion) {
@@ -139,15 +143,31 @@ export function OverviewRecordFilter({
       return;
     }
 
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    setDragging(false);
-    setDragY(0);
-    setClosing(true);
+    closingRef.current = true;
+    if (dragFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+    const sheet = sheetRef.current;
+    const backdrop = backdropRef.current;
+    rootRef.current?.classList.remove("overview-record-filter--dragging");
+    rootRef.current?.classList.add("overview-record-filter--closing");
+    if (sheet) {
+      const progress = Math.min(1, Math.max(0, dragRef.current.currentY) / Math.max(1, sheet.offsetHeight));
+      const duration = Math.round(170 + (1 - progress) * 90);
+      sheet.style.transitionDuration = `${duration}ms`;
+      sheet.style.transform = `translate3d(0, ${sheet.offsetHeight + 24}px, 0)`;
+    }
+    if (backdrop) {
+      backdrop.style.transitionDuration = "200ms";
+      backdrop.style.opacity = "0";
+    }
     closeTimerRef.current = window.setTimeout(finishClose, SHEET_CLOSE_FALLBACK_MS);
-  }, [closing, finishClose]);
+  }, [finishClose]);
 
   useEffect(() => () => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
   }, []);
 
   // Desktop dropdown: close when clicking anywhere else. The mobile sheet closes via its backdrop,
@@ -177,9 +197,8 @@ export function OverviewRecordFilter({
   }, [open]);
 
   const openPicker = () => {
-    if (closing) return;
-    setDragY(0);
-    setDragging(false);
+    if (closingRef.current) return;
+    dragRef.current.currentY = 0;
     setOpen(true);
     // Auto-focus only where a keyboard doesn't cover half the screen.
     if (!window.matchMedia(MOBILE_PICKER_QUERY).matches) {
@@ -188,16 +207,18 @@ export function OverviewRecordFilter({
   };
 
   const startSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
-    if (!open || closing || !event.isPrimary || event.button !== 0 || !window.matchMedia(MOBILE_PICKER_QUERY).matches) return;
+    if (!open || closingRef.current || !event.isPrimary || event.button !== 0 || !window.matchMedia(MOBILE_PICKER_QUERY).matches) return;
     dragRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
+      currentY: 0,
       lastY: event.clientY,
       lastTime: event.timeStamp,
       velocity: 0,
+      sheetHeight: sheetRef.current?.offsetHeight ?? 1,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
-    setDragging(true);
+    rootRef.current?.classList.add("overview-record-filter--dragging");
   };
   const moveSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
@@ -207,26 +228,49 @@ export function OverviewRecordFilter({
     drag.velocity = (drag.velocity * 0.35) + (instantVelocity * 0.65);
     drag.lastY = event.clientY;
     drag.lastTime = event.timeStamp;
-    setDragY(Math.max(0, event.clientY - drag.startY));
+    drag.currentY = Math.max(0, event.clientY - drag.startY);
+    if (dragFrameRef.current !== null) return;
+    dragFrameRef.current = window.requestAnimationFrame(() => {
+      dragFrameRef.current = null;
+      const sheet = sheetRef.current;
+      if (!sheet || dragRef.current.pointerId < 0) return;
+      const y = dragRef.current.currentY;
+      sheet.style.transform = `translate3d(0, ${y}px, 0)`;
+      if (backdropRef.current) {
+        const fade = Math.min(0.58, (y / dragRef.current.sheetHeight) * 0.82);
+        backdropRef.current.style.opacity = String(1 - fade);
+      }
+    });
+  };
+  const snapSheetBack = () => {
+    const sheet = sheetRef.current;
+    rootRef.current?.classList.remove("overview-record-filter--dragging");
+    if (sheet) {
+      sheet.style.transitionDuration = `${SHEET_SNAP_DURATION_MS}ms`;
+      sheet.style.transform = "translate3d(0, 0, 0)";
+    }
+    if (backdropRef.current) {
+      backdropRef.current.style.transitionDuration = "180ms";
+      backdropRef.current.style.opacity = "1";
+    }
+    dragRef.current.currentY = 0;
   };
   const endSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (drag.pointerId !== event.pointerId) return;
-    const distance = Math.max(0, event.clientY - drag.startY);
-    const sheetHeight = sheetRef.current?.offsetHeight ?? 0;
-    const farEnough = distance >= Math.min(140, sheetHeight * 0.2);
+    drag.currentY = Math.max(0, event.clientY - drag.startY);
+    const distance = drag.currentY;
+    const farEnough = distance >= Math.min(140, drag.sheetHeight * 0.2);
     const fastEnough = distance >= 28 && drag.velocity >= 0.5;
     drag.pointerId = -1;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    setDragging(false);
     if (farEnough || fastEnough) close();
-    else setDragY(0);
+    else snapSheetBack();
   };
   const cancelSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (dragRef.current.pointerId !== event.pointerId) return;
     dragRef.current.pointerId = -1;
-    setDragging(false);
-    setDragY(0);
+    snapSheetBack();
   };
   const changeMode = (mode: OverviewRecordFilterValue["mode"]) => {
     onChange({ ...value, mode });
@@ -274,7 +318,7 @@ export function OverviewRecordFilter({
   return (
     <div
       ref={rootRef}
-      className={`overview-record-filter${open ? " overview-record-filter--open" : ""}${closing ? " overview-record-filter--closing" : ""}${dragging ? " overview-record-filter--dragging" : ""}`}
+      className={`overview-record-filter${open ? " overview-record-filter--open" : ""}`}
     >
       <button
         type="button"
@@ -295,16 +339,15 @@ export function OverviewRecordFilter({
 
       {open && (
         <>
-          <div className="overview-record-filter__backdrop" aria-hidden="true" onClick={close} />
+          <div ref={backdropRef} className="overview-record-filter__backdrop" aria-hidden="true" onClick={close} />
           <section
             ref={sheetRef}
             className="overview-record-filter__popup"
             role="dialog"
             aria-modal="true"
             aria-label="เลือกตัวกรองข้อมูลภาพรวม"
-            style={dragY > 0 && !closing ? { transform: `translateY(${dragY}px)` } : undefined}
             onTransitionEnd={(event) => {
-              if (closing && event.currentTarget === event.target && event.propertyName === "transform") finishClose();
+              if (closingRef.current && event.currentTarget === event.target && event.propertyName === "transform") finishClose();
             }}
           >
             <span

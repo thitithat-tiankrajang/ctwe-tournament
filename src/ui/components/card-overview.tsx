@@ -15,7 +15,7 @@ import { CardNotFound } from "@/ui/components/card-not-found";
 import { DataGrid, type DataColumn } from "@/ui/components/data-grid";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
-import { PdfDownloadPanel } from "@/ui/components/pdf-download-panel";
+import { DocumentDownloadPanel } from "@/ui/components/document-download-panel";
 import { PlayerHistoryTable } from "@/ui/components/player-history-table";
 import { SelectMenu } from "@/ui/components/select-menu";
 import { stageLabels } from "@/ui/components/stage-info";
@@ -421,7 +421,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
       ))}
 
       {/* Back-office extras live below the spectator content: document export, then the danger zone. */}
-      {(isAdmin(auth) || canManage) && <PdfDownloadPanel card={card} />}
+      {(isAdmin(auth) || canManage) && <DocumentDownloadPanel card={card} />}
       {canClose && (
         <Panel className="panel--danger" title="ปิดการ์ดถาวร" description="การ์ดที่ปิดแล้วจะแก้ไขข้อมูลใด ๆ ไม่ได้อีก — ทำเมื่อการแข่งขันจบสมบูรณ์แล้วเท่านั้น">
           <div className="panel-padding">

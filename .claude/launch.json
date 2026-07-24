@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "zsh",
+      "runtimeArgs": ["-c", "export PATH=/Users/thitithat_tiankrajang/.nvm/versions/node/v23.9.0/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH; npm run dev"],
       "port": 3000
     }
   ]
