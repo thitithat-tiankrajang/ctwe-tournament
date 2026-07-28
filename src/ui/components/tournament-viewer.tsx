@@ -70,6 +70,7 @@ export function TournamentViewer({ token }: { token: string }) {
     const cardId = tournamentCards[0].id;
     setSelectedId(cardId);
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#card=${cardId}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, [selectedId, tournamentCards]);
 
   if (dead) {
@@ -89,6 +90,7 @@ export function TournamentViewer({ token }: { token: string }) {
     const leaveCard = () => {
       setSelectedId(null);
       window.history.pushState(null, "", window.location.pathname + window.location.search);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
     };
     return (
       <>
@@ -117,9 +119,8 @@ export function TournamentViewer({ token }: { token: string }) {
     <>
       <PageHeader
         className="cards-page-header"
-        eyebrow="รายการแข่งขัน"
         title={tournament.name}
-        description="เลือกรุ่นการแข่งขัน (card) เพื่อติดตามอันดับ คู่แข่งขัน และผลแบบสด"
+        description="เลือกรุ่นการแข่งขัน เพื่อติดตามอันดับ ผลประกบคู่ และผลการแข่งขัน"
       />
       {tournamentCards.length === 0 ? (
         <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีรุ่นการแข่งขัน" description="เมื่อผู้จัดเผยแพร่รุ่นการแข่งขัน รายการจะปรากฏที่นี่" />

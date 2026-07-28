@@ -1,7 +1,7 @@
 "use client";
 
 import { Building2, Check, ChevronDown, Hash, Search, X } from "lucide-react";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { matchesPlayerCode, PLAYER_CODE_QUERY } from "@/domain/tournament/player-code";
 import type { Player } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
@@ -21,6 +21,13 @@ const MOBILE_PICKER_QUERY = "(max-width: 768px)";
 const SHEET_CLOSE_FALLBACK_MS = 380;
 const SHEET_SNAP_DURATION_MS = 220;
 
+function transformTranslateY(transform: string): number {
+  if (!transform || transform === "none") return 0;
+  const values = transform.slice(transform.indexOf("(") + 1, transform.lastIndexOf(")")).split(",").map(Number);
+  const value = transform.startsWith("matrix3d") ? values[13] : values[5];
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
 function codeTokens(query: string): string[] | null {
   const tokens = query.split(/[\s,;]+/).filter(Boolean);
   return tokens.length > 0 && tokens.every((token) => PLAYER_CODE_QUERY.test(token)) ? tokens : null;
@@ -29,7 +36,7 @@ function codeTokens(query: string): string[] | null {
 /**
  * The scrollable option rows, memoised as a unit: live SSE updates re-render the overview while
  * the picker is open, and this keeps those renders away from the (potentially large) list. Its
- * props only change on real picker interactions (typing settles via the deferred query).
+ * props only change on real picker interactions.
  */
 const OptionList = memo(function OptionList({ mode, players, schools, query, selectedPlayers, selectedSchools, onTogglePlayer, onToggleSchool }: {
   mode: OverviewRecordFilterValue["mode"];
@@ -102,18 +109,19 @@ export function OverviewRecordFilter({
   const inputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
+  const playersSnapshotRef = useRef<Player[]>(players);
   const closeTimerRef = useRef<number | null>(null);
-  const dragFrameRef = useRef<number | null>(null);
   const closingRef = useRef(false);
-  const dragRef = useRef({ pointerId: -1, startY: 0, currentY: 0, lastY: 0, lastTime: 0, velocity: 0, sheetHeight: 1 });
+  const dragRef = useRef({ pointerId: -1, startY: 0, originY: 0, currentY: 0, lastY: 0, lastTime: 0, velocity: 0, sheetHeight: 1 });
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Typing updates the input at full speed; the (heavier) list below follows at deferred priority.
-  const deferredQuery = useDeferredValue(query);
-  const sortedPlayers = useMemo(() => [...players]
-    .sort((a, b) => a.id.localeCompare(b.id, "th", { numeric: true })), [players]);
-  const schools = useMemo(() => [...new Set(players.map((player) => player.school).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, "th", { numeric: true })), [players]);
+  // Keep row positions stable while the picker is open. Live SSE result updates may replace the
+  // players array, but those updates must not move a different row underneath an active tap.
+  const pickerPlayers = open ? playersSnapshotRef.current : players;
+  const sortedPlayers = useMemo(() => [...pickerPlayers]
+    .sort((a, b) => a.id.localeCompare(b.id, "th", { numeric: true })), [pickerPlayers]);
+  const schools = useMemo(() => [...new Set(pickerPlayers.map((player) => player.school).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "th", { numeric: true })), [pickerPlayers]);
   const activeCount = value.mode === "player" ? value.playerIds.length : value.schools.length;
   const selectedChips = value.mode === "player"
     ? [...value.playerIds].sort((a, b) => a.localeCompare(b, "th", { numeric: true }))
@@ -123,10 +131,6 @@ export function OverviewRecordFilter({
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
-    }
-    if (dragFrameRef.current !== null) {
-      window.cancelAnimationFrame(dragFrameRef.current);
-      dragFrameRef.current = null;
     }
     closingRef.current = false;
     dragRef.current.pointerId = -1;
@@ -144,21 +148,27 @@ export function OverviewRecordFilter({
     }
 
     closingRef.current = true;
-    if (dragFrameRef.current !== null) {
-      window.cancelAnimationFrame(dragFrameRef.current);
-      dragFrameRef.current = null;
-    }
     const sheet = sheetRef.current;
     const backdrop = backdropRef.current;
     rootRef.current?.classList.remove("overview-record-filter--dragging");
-    rootRef.current?.classList.add("overview-record-filter--closing");
     if (sheet) {
-      const progress = Math.min(1, Math.max(0, dragRef.current.currentY) / Math.max(1, sheet.offsetHeight));
+      const currentY = transformTranslateY(window.getComputedStyle(sheet).transform);
+      const progress = Math.min(1, currentY / Math.max(1, sheet.offsetHeight));
       const duration = Math.round(170 + (1 - progress) * 90);
+      sheet.style.animation = "none";
+      sheet.style.transitionProperty = "none";
+      sheet.style.transform = `translate3d(0, ${currentY}px, 0)`;
+      void sheet.offsetHeight;
+      sheet.style.transitionProperty = "transform";
+      sheet.style.transitionTimingFunction = "cubic-bezier(.22, 1, .36, 1)";
       sheet.style.transitionDuration = `${duration}ms`;
+      rootRef.current?.classList.add("overview-record-filter--closing");
       sheet.style.transform = `translate3d(0, ${sheet.offsetHeight + 24}px, 0)`;
+    } else {
+      rootRef.current?.classList.add("overview-record-filter--closing");
     }
     if (backdrop) {
+      backdrop.style.transitionProperty = "opacity";
       backdrop.style.transitionDuration = "200ms";
       backdrop.style.opacity = "0";
     }
@@ -167,7 +177,6 @@ export function OverviewRecordFilter({
 
   useEffect(() => () => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
-    if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
   }, []);
 
   // Desktop dropdown: close when clicking anywhere else. The mobile sheet closes via its backdrop,
@@ -198,6 +207,8 @@ export function OverviewRecordFilter({
 
   const openPicker = () => {
     if (closingRef.current) return;
+    playersSnapshotRef.current = players;
+    dragRef.current.originY = 0;
     dragRef.current.currentY = 0;
     setOpen(true);
     // Auto-focus only where a keyboard doesn't cover half the screen.
@@ -208,10 +219,23 @@ export function OverviewRecordFilter({
 
   const startSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (!open || closingRef.current || !event.isPrimary || event.button !== 0 || !window.matchMedia(MOBILE_PICKER_QUERY).matches) return;
+    const sheet = sheetRef.current;
+    const originY = sheet ? transformTranslateY(window.getComputedStyle(sheet).transform) : 0;
+    if (sheet) {
+      sheet.style.animation = "none";
+      sheet.style.transitionProperty = "none";
+      sheet.style.transitionDuration = "0ms";
+      sheet.style.transform = `translate3d(0, ${originY}px, 0)`;
+    }
+    if (backdropRef.current) {
+      backdropRef.current.style.transitionProperty = "none";
+      backdropRef.current.style.transitionDuration = "0ms";
+    }
     dragRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
-      currentY: 0,
+      originY,
+      currentY: originY,
       lastY: event.clientY,
       lastTime: event.timeStamp,
       velocity: 0,
@@ -219,6 +243,16 @@ export function OverviewRecordFilter({
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     rootRef.current?.classList.add("overview-record-filter--dragging");
+  };
+  const paintSheetDrag = () => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const y = dragRef.current.currentY;
+    sheet.style.transform = `translate3d(0, ${y}px, 0)`;
+    if (backdropRef.current) {
+      const fade = Math.min(0.58, (y / dragRef.current.sheetHeight) * 0.82);
+      backdropRef.current.style.opacity = String(1 - fade);
+    }
   };
   const moveSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
@@ -228,40 +262,35 @@ export function OverviewRecordFilter({
     drag.velocity = (drag.velocity * 0.35) + (instantVelocity * 0.65);
     drag.lastY = event.clientY;
     drag.lastTime = event.timeStamp;
-    drag.currentY = Math.max(0, event.clientY - drag.startY);
-    if (dragFrameRef.current !== null) return;
-    dragFrameRef.current = window.requestAnimationFrame(() => {
-      dragFrameRef.current = null;
-      const sheet = sheetRef.current;
-      if (!sheet || dragRef.current.pointerId < 0) return;
-      const y = dragRef.current.currentY;
-      sheet.style.transform = `translate3d(0, ${y}px, 0)`;
-      if (backdropRef.current) {
-        const fade = Math.min(0.58, (y / dragRef.current.sheetHeight) * 0.82);
-        backdropRef.current.style.opacity = String(1 - fade);
-      }
-    });
+    drag.currentY = Math.max(0, drag.originY + event.clientY - drag.startY);
+    paintSheetDrag();
   };
   const snapSheetBack = () => {
     const sheet = sheetRef.current;
     rootRef.current?.classList.remove("overview-record-filter--dragging");
     if (sheet) {
+      sheet.style.transitionProperty = "transform";
+      sheet.style.transitionTimingFunction = "cubic-bezier(.22, 1, .36, 1)";
       sheet.style.transitionDuration = `${SHEET_SNAP_DURATION_MS}ms`;
+      void sheet.offsetHeight;
       sheet.style.transform = "translate3d(0, 0, 0)";
     }
     if (backdropRef.current) {
+      backdropRef.current.style.transitionProperty = "opacity";
       backdropRef.current.style.transitionDuration = "180ms";
       backdropRef.current.style.opacity = "1";
     }
+    dragRef.current.originY = 0;
     dragRef.current.currentY = 0;
   };
   const endSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (drag.pointerId !== event.pointerId) return;
-    drag.currentY = Math.max(0, event.clientY - drag.startY);
-    const distance = drag.currentY;
-    const farEnough = distance >= Math.min(140, drag.sheetHeight * 0.2);
-    const fastEnough = distance >= 28 && drag.velocity >= 0.5;
+    drag.currentY = Math.max(0, drag.originY + event.clientY - drag.startY);
+    paintSheetDrag();
+    const pulledDistance = Math.max(0, drag.currentY - drag.originY);
+    const farEnough = pulledDistance >= Math.min(140, drag.sheetHeight * 0.2);
+    const fastEnough = pulledDistance >= 28 && drag.velocity >= 0.5;
     drag.pointerId = -1;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (farEnough || fastEnough) close();
@@ -269,6 +298,7 @@ export function OverviewRecordFilter({
   };
   const cancelSheetDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (dragRef.current.pointerId !== event.pointerId) return;
+    paintSheetDrag();
     dragRef.current.pointerId = -1;
     snapSheetBack();
   };
@@ -367,9 +397,7 @@ export function OverviewRecordFilter({
               <div>
                 <strong>ค้นหาและกรองข้อมูล</strong>
                 <span className="overview-record-filter__scope-hint">Ranking, Pairing และ Result ใช้ตัวกรองชุดเดียวกัน</span>
-                <span className="overview-record-filter__dismiss-hint">แตะพื้นที่ด้านนอกหรือปัดลงเพื่อปิด</span>
               </div>
-              <button type="button" className="overview-record-filter__close" aria-label="ปิดตัวกรอง" onClick={close}><X size={19} /></button>
             </header>
             <div className="overview-record-filter__modes" role="group" aria-label="ประเภทตัวกรอง">
               <button type="button" className={value.mode === "player" ? "is-active" : ""} aria-pressed={value.mode === "player"} onClick={() => changeMode("player")}><Hash size={15} />รหัสนักกีฬา</button>
@@ -395,30 +423,25 @@ export function OverviewRecordFilter({
                   if (!selectTypedCodes()) singleEnterMatch();
                 }}
               />
-              {query && (
-                <button type="button" className="overview-record-filter__searchclear" aria-label="ล้างคำค้นหา" onClick={() => { setQuery(""); inputRef.current?.focus(); }}>
-                  <X size={16} />
-                </button>
-              )}
+              <button type="button" className="overview-record-filter__searchclear" aria-label="ล้างคำค้นหา" aria-hidden={!query} disabled={!query} onClick={() => { setQuery(""); inputRef.current?.focus(); }}>
+                <X size={16} />
+              </button>
             </div>
-            {value.mode === "player" && (
-              <p className="overview-record-filter__hint">พิมพ์หลายรหัสคั่นด้วยเว้นวรรคแล้วกด Enter ได้ เช่น 1 12 31</p>
-            )}
-            {selectedChips.length > 0 && (
-              <div className="overview-record-filter__chips" aria-label="รายการที่เลือก — แตะเพื่อเอาออก">
-                {selectedChips.map((chip) => (
-                  <button type="button" key={chip} onClick={() => (value.mode === "player" ? togglePlayer(chip) : toggleSchool(chip))} aria-label={`เอา ${chip} ออก`}>
-                    {chip}<X size={13} aria-hidden="true" />
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="overview-record-filter__chips" aria-label="รายการที่เลือก — แตะเพื่อเอาออก">
+              {selectedChips.length === 0
+                ? <span className="overview-record-filter__chips-empty">ยังไม่ได้เลือกรายการ</span>
+                : selectedChips.map((chip) => (
+                    <button type="button" key={chip} onClick={() => (value.mode === "player" ? togglePlayer(chip) : toggleSchool(chip))} aria-label={`เอา ${chip} ออก`}>
+                      {chip}<X size={13} aria-hidden="true" />
+                    </button>
+                  ))}
+            </div>
             <div className="overview-record-filter__options">
               <OptionList
                 mode={value.mode}
                 players={sortedPlayers}
                 schools={schools}
-                query={deferredQuery}
+                query={query}
                 selectedPlayers={value.playerIds}
                 selectedSchools={value.schools}
                 onTogglePlayer={togglePlayer}

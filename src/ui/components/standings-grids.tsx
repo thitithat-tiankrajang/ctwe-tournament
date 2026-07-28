@@ -35,7 +35,7 @@ export function PairingGrid({ pairings, players, storageKey, resetKey, emptyText
   rowIdPrefix?: string;
 }) {
   const playerOf = (playerId: string | null) => playerId ? players.get(playerId) : undefined;
-  const fullName = (playerId: string | null) => { const player = playerOf(playerId); return `${player?.firstName ?? ""} ${player?.lastName ?? ""}`.trim() || "รอคู่แข่ง"; };
+  const fullName = (playerId: string | null) => { const player = playerOf(playerId); return `${player?.firstName ?? ""} ${player?.lastName ?? ""}`.trim() || "-"; };
   const seatOne = (pairing: Pairing) => (pairing.tableNumber - 1) * 2 + 1;
   const columns: DataColumn<Pairing>[] = [
     { key: "pair", label: "คู่", min: 44, width: 56, align: "right", value: (pairing) => pairing.tableNumber, filterable: false, render: (pairing) => <strong>{pairing.tableNumber}</strong> },

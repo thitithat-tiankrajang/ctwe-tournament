@@ -5,8 +5,6 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import {
   Activity,
   ArrowLeft,
-  Bell,
-  BellRing,
   ChevronRight,
   ClipboardList,
   Code2,
@@ -29,7 +27,6 @@ import { useEffect, useRef, useState } from "react";
 import { readActiveTournament, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { useCardSync } from "@/application/tournament/use-card-sync";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
-import { usePushNotifications, type PushNotificationScope, type PushToggleResult } from "@/application/tournament/use-push-notifications";
 import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
@@ -124,7 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState(true);   // sidebar shows the full menu; collapsed = icon rail
   const [hydrated, setHydrated] = useState(false);
-  const [notificationConfirm, setNotificationConfirm] = useState(false);
+  const [tourCardOpen, setTourCardOpen] = useState(false);
   const isStaff = hasStaffAccess(auth);
   const admin = isAdmin(auth);
   const director = isDirector(auth);
@@ -148,40 +145,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Read-only overviews have no primary mobile navigation underneath their
   // Ranking/Pairing/Result bar, including tournament viewer routes without an `id` param.
   const standaloneOverview = !operator && (Boolean(id) || onTournamentViewer);
-  const notificationScope: PushNotificationScope | null = !isStaff && id && pathname === `/cards/${id}`
-    ? {
-        type: "CARD",
-        id,
-        label: currentCard ? `${currentCard.name} · ${currentCard.division}` : "รุ่นการแข่งขันนี้",
-      }
-    : !isStaff && (pathname === "/cards" || onTournamentViewer) && activeTournament
-      ? { type: "TOURNAMENT", id: activeTournament.id, label: activeTournament.name }
-      : null;
-  const { notificationsOn, pending: notificationPending, support: notificationSupport, enable: enableNotifications, disable: disableNotifications } =
-    usePushNotifications(notificationScope);
-  const showNotificationError = (result: PushToggleResult) => {
-    if (result === "denied") toast.error("การแจ้งเตือนถูกปิดในเบราว์เซอร์ — เปิดใหม่ได้จากการตั้งค่าเว็บไซต์ของเบราว์เซอร์");
-    else if (result === "unsupported") toast.error("อุปกรณ์นี้ยังใช้ Web Push ไม่ได้ — บน iPhone/iPad ให้เพิ่มเว็บไปหน้าจอโฮมก่อน");
-    else if (result === "unavailable") toast.error("ระบบส่งแจ้งเตือนยังไม่ได้ตั้งค่ากุญแจสำหรับเซิร์ฟเวอร์");
-    else if (result === "error") toast.error("ตั้งค่าการแจ้งเตือนไม่สำเร็จ กรุณาลองอีกครั้ง");
-  };
-  const handleNotificationButton = async () => {
-    if (!notificationsOn) {
-      setNotificationConfirm(true);
-      return;
-    }
-    const result = await disableNotifications();
-    showNotificationError(result);
-    if (result === "granted") toast.success(`ปิดการแจ้งเตือน${notificationScope?.type === "CARD" ? "เฉพาะรุ่นนี้" : "ทั้งรายการ"}แล้ว`);
-  };
-  const confirmEnableNotifications = async () => {
-    const result = await enableNotifications();
-    showNotificationError(result);
-    if (result === "granted") {
-      setNotificationConfirm(false);
-      toast.success(`เปิดการแจ้งเตือน${notificationScope?.type === "CARD" ? "เฉพาะรุ่นนี้" : "ทุกรุ่นในรายการนี้"}แล้ว`);
-    }
-  };
   // Entry is link-based now. Directors and admins reach their tournament list from "/"; each also
   // keeps the console relevant to their role.
   const generalLinks = [
@@ -224,6 +187,16 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => { if (hydrated) try { sessionStorage.setItem(OPENED_KEY, JSON.stringify(openedIds)); } catch { /* ignore */ } }, [openedIds, hydrated]);
   useEffect(() => { if (hydrated) try { sessionStorage.setItem(EXPANDED_KEY, expanded ? "1" : "0"); } catch { /* ignore */ } }, [expanded, hydrated]);
+  useEffect(() => {
+    if (!onTournamentViewer) {
+      setTourCardOpen(false);
+      return;
+    }
+    const syncTourCard = () => setTourCardOpen(/^#card=[0-9a-fA-F-]{36}$/.test(window.location.hash));
+    syncTourCard();
+    window.addEventListener("hashchange", syncTourCard);
+    return () => window.removeEventListener("hashchange", syncTourCard);
+  }, [onTournamentViewer]);
 
   const toggleFolder = (cardId: string) => setExpandedIds((prev) => {
     const next = new Set(prev);
@@ -257,6 +230,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     return operator && card ? stageHref(cardId, card.runtimeStage) : undefined;
   };
   const collapsed = !expanded;
+  const leaveTourCard = () => {
+    setTourCardOpen(false);
+    window.history.pushState(null, "", window.location.pathname + window.location.search);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  };
 
   return (
     <div className={`app-shell${expanded ? "" : " app-shell--collapsed"}`}>
@@ -349,27 +327,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="status-dot" />
           <span className="sidebar__footer-text" aria-hidden={collapsed}><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? roleLabel : "ดูข้อมูลเท่านั้น"}</small></span>
         </div>
-        {isStaff ? (
+        {isStaff && (
           <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>
-        ) : (
-          notificationScope && <div className="sidebar__public-actions">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="sidebar__auth"
-              disabled={notificationPending}
-              onClick={() => void handleNotificationButton()}
-              title={notificationsOn ? `ปิดการแจ้งเตือน: ${notificationScope.label}` : `เปิดการแจ้งเตือน: ${notificationScope.label}`}
-            >
-              {notificationsOn ? <BellRing size={15} /> : <Bell size={15} />}
-              <span className="sidebar__auth-label">{notificationsOn ? "ปิดแจ้งเตือน" : "เปิดแจ้งเตือน"}</span>
-            </Button>
-          </div>
         )}
       </aside>
       <div className={`app-main${standaloneOverview ? " app-main--standalone-overview" : ""}`}>
         <div className="mobile-brand">
+          {tourCardOpen && (
+            <button type="button" className="mobile-brand__back-button" onClick={leaveTourCard} aria-label="กลับไปยังรุ่นทั้งหมด">
+              <ArrowLeft size={19} aria-hidden="true" />
+            </button>
+          )}
           {scopeLocked
             ? id && !isStaff
               ? <Link prefetch={false} href="/cards" className="mobile-brand__title mobile-brand__back" aria-label={`กลับไปเลือกกลุ่มรุ่นของ ${activeTournament?.name ?? "รายการแข่งขัน"}`}>
@@ -380,17 +348,6 @@ export function AppShell({ children }: { children: ReactNode }) {
               : <span className="mobile-brand__title"><Trophy size={19} /><strong>{activeTournament?.name ?? "Tournament Control"}</strong></span>
             : <Link prefetch={false} href="/" className="mobile-brand__title" aria-label="ไปหน้ารวมการแข่งขัน"><Trophy size={19} /><strong>Tournament Control</strong></Link>}
           <div className="mobile-brand__actions">
-            {notificationScope && (
-              <button
-                type="button"
-                className={`mobile-brand__auth${notificationsOn ? " mobile-brand__auth--enabled" : ""}`}
-                disabled={notificationPending}
-                onClick={() => void handleNotificationButton()}
-                aria-label={notificationsOn ? `ปิดการแจ้งเตือน ${notificationScope.label}` : `เปิดการแจ้งเตือน ${notificationScope.label}`}
-              >
-                {notificationsOn ? <BellRing size={15} /> : <Bell size={15} />}
-              </button>
-            )}
             {isStaff && (
               <button type="button" className="mobile-brand__auth" onClick={() => setLogoutConfirm(true)}><LogOut size={15} />ออกจากระบบ</button>
             )}
@@ -418,48 +375,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         <p>คุณกำลังจะออกจากบัญชี <strong>{auth.username}</strong> — ยืนยันหรือไม่?</p>
       </ConfirmDialog>
 
-      {notificationScope && (() => {
-        const iosNeedsInstall = notificationSupport === "ios-needs-install";
-        return (
-          <ConfirmDialog
-            open={notificationConfirm}
-            eyebrow="การแจ้งเตือนบนอุปกรณ์"
-            icon={<BellRing size={20} />}
-            title={`เปิดแจ้งเตือน${notificationScope.type === "CARD" ? "เฉพาะรุ่นนี้" : "ทั้งรายการ"}?`}
-            className="notification-consent"
-            confirmLabel={iosNeedsInstall ? "เข้าใจแล้ว" : "อนุญาตแจ้งเตือน"}
-            busyLabel="กำลังเปิด…"
-            hideCancel={iosNeedsInstall}
-            cancelLabel="ไว้ภายหลัง"
-            busy={notificationPending}
-            onConfirm={iosNeedsInstall ? () => setNotificationConfirm(false) : () => void confirmEnableNotifications()}
-            onCancel={() => { if (!notificationPending) setNotificationConfirm(false); }}
-          >
-            <p>
-              {notificationScope.type === "CARD"
-                ? <>คุณจะได้รับแจ้งเตือนเฉพาะ <strong>{notificationScope.label}</strong></>
-                : <>คุณจะได้รับแจ้งเตือนจาก <strong>ทุก card ใน {notificationScope.label}</strong></>}
-            </p>
-            <ul className="notification-consent__events">
-              <li>Pairing ของแต่ละเกมถูกเผยแพร่</li>
-              <li>Ranking ของแต่ละเกมถูกเผยแพร่</li>
-              <li>รอบชิงเริ่มต้น</li>
-              <li>การแข่งขันจบ พร้อมชื่อผู้ชนะอันดับ 1</li>
-            </ul>
-            <p className="notification-consent__privacy">แจ้งเตือนจะเด้งบนอุปกรณ์แม้ปิดหน้าเว็บหรือล็อกหน้าจอ · ระบบเก็บเฉพาะรหัสส่งข้อความที่เบราว์เซอร์สร้างให้ ไม่ขอชื่อ ตำแหน่ง หรือข้อมูลส่วนตัวของผู้ชม คุณปิดขอบเขตนี้ได้จากปุ่มเดิมทุกเมื่อ</p>
-            {iosNeedsInstall && (
-              <>
-                <div className="notice notice--info"><p><strong>บน iPhone/iPad ต้องติดตั้งเว็บก่อน</strong><span>iOS จะส่งแจ้งเตือนได้เฉพาะเมื่อเพิ่มเว็บนี้ไว้ที่หน้าจอโฮม แล้วเปิดจากไอคอนนั้น</span></p></div>
-                <ol className="notification-consent__events">
-                  <li>แตะปุ่ม <strong>แชร์</strong> ในแถบล่างของ Safari</li>
-                  <li>เลือก <strong>เพิ่มไปยังหน้าจอโฮม (Add to Home Screen)</strong></li>
-                  <li>เปิดแอปจากไอคอนบนหน้าจอโฮม แล้วกดเปิดแจ้งเตือนอีกครั้ง</li>
-                </ol>
-              </>
-            )}
-          </ConfirmDialog>
-        );
-      })()}
       <Toaster />
       <GlobalDialogHost />
     </div>

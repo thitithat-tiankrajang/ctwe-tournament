@@ -739,7 +739,7 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
               const draw = pairing.resultType === "DRAW";
               const penalty = pairing.resultType === "PENALTY";
               const diff = recordedDiff(pairing);
-              const absentText = recorded ? "บาย" : "รอคู่แข่ง";
+              const absentText = recorded ? "-" : "ไม่มีคู่แข่ง";
               return <tr key={pairing.id} className={`egrid-row${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
                 <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                 <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>
