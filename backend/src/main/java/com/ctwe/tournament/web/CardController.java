@@ -264,12 +264,14 @@ public class CardController {
     @PostMapping("/{cardId}/pairings/publish-next")
     public CardDtos.CardResponse publishNextPairing(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        // Viewer streams receive the destination game's rows as data; the bump also gates Web Push.
+        // Publishing the destination pairing ALSO confirms the source game's ranking snapshot. Those
+        // two facts change at the same version and can't ride two competing deltas, so nudge viewers to
+        // resync the (small) card once — they then hold the new pairing AND the source ranking together.
         return changedWithPublicDelta(cardId,
             () -> service.publishPairResultDestination(cardId, authentication.getName()),
             (result, version) -> {
                 int destinationGame = result.currentGame() + 1;
-                events.publishPublicPairings(cardId, version, destinationGame, publicPairingsOf(cardId, destinationGame));
+                events.publishPublic(cardId, version);
                 push.pairingPublished(cardId, destinationGame);
             });
     }

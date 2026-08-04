@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, hasStaffAccess, isAdmin } from "@/domain/tournament/roles";
-import { rankingAfterGame } from "@/domain/tournament/history";
+import { finalStandings, rankingAfterGame } from "@/domain/tournament/history";
 import { comparePlayerCodes } from "@/domain/tournament/player-code";
 import type { FinalSlot, Pairing, PairingSnapshot, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
@@ -86,6 +86,24 @@ function RankingTable({ players, rankingPositions, selectedId, onPlayerClick, re
     { key: "diff", label: "ผลต่างสะสม", min: 82, width: 96, align: "center", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
   ];
   return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" emptyText="ไม่พบผู้เล่นตามตัวกรอง" resizableColumns={resizableColumns} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
+}
+
+/**
+ * Final placings shown after the whole card is done: only rank / name / school (no points), and a
+ * click opens the player's master card. The championship result is already baked into the order.
+ */
+function FinalResultsList({ standings, onPlayerClick, resizableColumns }: {
+  standings: Player[];
+  onPlayerClick: (playerId: string) => void;
+  resizableColumns: boolean;
+}) {
+  const rows = standings.map((player, index) => ({ player, rank: index + 1 }));
+  const columns: DataColumn<{ player: Player; rank: number }>[] = [
+    { key: "rank", label: "อันดับ", min: 48, width: 64, align: "center", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
+    { key: "name", label: "ชื่อ - นามสกุล", min: 140, width: 300, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
+    { key: "school", label: "โรงเรียน/สถาบัน", min: 140, width: 320, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
+  ];
+  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:final-result" tableClassName="entry-grid--ranking" emptyText="ยังไม่มีผลการแข่งขัน" resizableColumns={resizableColumns} onRowClick={(row) => onPlayerClick(row.player.id)} />;
 }
 
 function PairingGrid({ pairings, players, resizableColumns }: { pairings: Pairing[]; players: Map<string, Player>; resizableColumns: boolean }) {
@@ -207,7 +225,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const auth = useTournamentStore((state) => state.auth);
   const resizableColumns = hasStaffAccess(auth);
   const card = selectCard(cards, id);
-  const [historyGame, setHistoryGame] = useState<number | "final" | null>(null);
+  const [historyGame, setHistoryGame] = useState<number | "final" | "result" | null>(null);
   const [views, setViews] = useState<Set<OverviewView>>(new Set<OverviewView>());
   const [selectedRankingPlayerId, setSelectedRankingPlayerId] = useState<string | null>(null);
   const [historyPlayerId, setHistoryPlayerId] = useState<string | null>(null);
@@ -263,11 +281,12 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const latestVisibleGame = Math.max(0, ...visibleSnapshots.flatMap(overviewGames));
   const currentVisibleGame = latestVisibleGame > 0 ? latestVisibleGame : card.currentGame;
   const selectedFinal = hasFinalRound && (historyGame === "final" || (historyGame == null && finalActive));
+  const selectedResultSummary = historyGame === "result";
   const selectedGame = typeof historyGame === "number" && visibleGames.has(historyGame) ? historyGame : currentVisibleGame;
   const selectedSnapshot = visibleSnapshots.find((snapshot) => overviewGames(snapshot).includes(selectedGame));
   const selectedPairings = selectedSnapshot ? overviewPairings(selectedSnapshot).filter((pairing) => (pairing.gameNumber ?? selectedGame) === selectedGame) : [];
   const rankingCard = { ...card, snapshots: publishedSnapshots };
-  const historicalRanking = selectedGame > 0 ? rankingAfterGame(rankingCard, selectedGame) : [...card.players].sort((a, b) => comparePlayerCodes(a.id, b.id));
+  const historicalRanking = selectedGame > 0 ? rankingAfterGame(rankingCard, selectedGame) : [...card.players].filter((player) => !player.terminated).sort((a, b) => comparePlayerCodes(a.id, b.id));
   const rankingPositions = new Map(historicalRanking.map((player, index) => [player.id, index + 1]));
   const players = new Map(card.players.map((player) => [player.id, player]));
   const activeRecordValues = recordFilter.mode === "player" ? recordFilter.playerIds : recordFilter.schools;
@@ -299,12 +318,16 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     result: "Result จะเปิดให้ดูเมื่อมีการบันทึกคะแนนคู่แรกของเกมนี้",
   };
   const historyPlayer = historyPlayerId ? players.get(historyPlayerId) : undefined;
-  const historyCard = { ...rankingCard, snapshots: publishedSnapshots.filter((snapshot) => Math.max(...snapshot.gameNumbers) <= selectedGame) };
+  const historyUpToGame = selectedResultSummary ? Number.MAX_SAFE_INTEGER : selectedGame;
+  const historyCard = { ...rankingCard, snapshots: publishedSnapshots.filter((snapshot) => Math.max(...snapshot.gameNumbers) <= historyUpToGame) };
   const final = card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED";
   const canClose = card.status === "FINISHED" && canManage;
+  // Final placings (bracket-aware) for the "ผลการแข่งขัน" view, shown once the card is finished.
+  const finalResults = selectedResultSummary ? finalStandings(rankingCard, latestVisibleGame) : [];
   const gameOptions = [...visibleGames].sort((a, b) => a - b)
     .map((game) => ({ value: String(game), label: `เกม ${game}` }))
-    .concat(hasFinalRound ? [{ value: "final", label: "รอบชิง" }] : []);
+    .concat(hasFinalRound ? [{ value: "final", label: "รอบชิง" }] : [])
+    .concat(final ? [{ value: "result", label: "ผลการแข่งขัน" }] : []);
   const toggleView = (view: OverviewView) => {
     const opening = !views.has(view);
     setViews((prev) => {
@@ -335,19 +358,19 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
             {visibleSnapshots.length > 0 && (
               <div className="overview-header-controls">
                 <div className="overview-game-filter-row">
-                  {!selectedFinal && <OverviewRecordFilter players={card.players} value={recordFilter} onChange={setRecordFilter} />}
+                  {!selectedFinal && !selectedResultSummary && <OverviewRecordFilter players={card.players.filter((player) => !player.terminated)} value={recordFilter} onChange={setRecordFilter} />}
                   <div className="overview-game-menu-wrap">
                     <SelectMenu
                       ariaLabel="เลือกเกม"
                       className="overview-game-menu"
-                      value={selectedFinal ? "final" : String(selectedGame)}
+                      value={selectedResultSummary ? "result" : selectedFinal ? "final" : String(selectedGame)}
                       options={gameOptions}
-                      onChange={(value) => setHistoryGame(value === "final" ? "final" : Number(value))}
+                      onChange={(value) => setHistoryGame(value === "final" ? "final" : value === "result" ? "result" : Number(value))}
                       onOpenChange={setGameMenuOpen}
                     />
                   </div>
                 </div>
-                {!selectedFinal && <div className="segmented overview-view-picker" role="group" aria-label="เลือกมุมมอง">
+                {!selectedFinal && !selectedResultSummary && <div className="segmented overview-view-picker" role="group" aria-label="เลือกมุมมอง">
                   {(["ranking", "pairing", "result"] as const).map((view) => {
                     const unavailable = viewUnavailable[view];
                     const active = views.has(view) && !unavailable;
@@ -365,6 +388,12 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
 
       {selectedFinal && card.finalRound && <FinalRoundBoard card={card} readOnly onSlotHistory={setFinalHistorySlot} />}
 
+      {selectedResultSummary && (
+        <Panel className="overview-data-panel overview-ranking-panel" title="ผลการแข่งขัน (อันดับสุดท้าย)" description={hasFinalRound ? "คำนวณผลรอบชิงแล้ว — ผู้ชนะคู่ชิงอยู่อันดับสูงกว่า" : undefined}>
+          <FinalResultsList standings={finalResults} onPlayerClick={setHistoryPlayerId} resizableColumns={resizableColumns} />
+        </Panel>
+      )}
+
       {canManage && !final && (
         <div className="notice notice--info workflow-notice"><ClipboardCheck size={20} /><p><strong>ขั้นตอนปัจจุบัน: {stageLabels[card.runtimeStage]}</strong><span>เกม {card.currentGame} จาก {card.games.length} · ทำงานต่อในหน้าที่ระบบกำหนด</span></p><Link prefetch={false} href={workflowHref(id, card.runtimeStage)}><Button size="sm">ทำงานต่อ <ArrowRight size={15} /></Button></Link></div>
       )}
@@ -380,7 +409,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
         </p></div>
       )}
 
-      {!selectedFinal && (visibleSnapshots.length === 0 ? (
+      {!selectedFinal && !selectedResultSummary && (visibleSnapshots.length === 0 ? (
         card.players.length > 0 ? <>
           <Panel className="overview-data-panel overview-ranking-panel" title="Ranking เริ่มต้น">
             <RankingTable players={visibleRanking} rankingPositions={rankingPositions} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
@@ -392,7 +421,7 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
           {views.size === 0 && <Panel><EmptyState icon={<ClipboardCheck size={24} />} title="ยังไม่ได้เลือกมุมมอง" description="เลือกมุมมอง ผลการจัดอันดับ / ผลประกบคู่ / ผลการแข่งขัน เพื่อแสดงข้อมูลที่ต้องการ" /></Panel>}
 
           {views.has("ranking") && (
-            <Panel id="overview-view-ranking" className="overview-data-panel overview-view-section overview-ranking-panel" title={selectedResultsPublished ? `RANKING (ผลการจัดอันดับ หลังจบเกม ${selectedGame})` : `RANKING (ผลการจัดอันดับ ก่อนจบเกม ${selectedGame})`} description={selectedResultsPublished && selectedSnapshot?.confirmedAt ? publishedAtText(selectedSnapshot.confirmedAt) : undefined}>
+            <Panel id="overview-view-ranking" className="overview-data-panel overview-view-section overview-ranking-panel" title={selectedResultsPublished ? `RANKING (ผลการจัดอันดับ หลังจบเกม ${selectedGame})` : selectedHasResults ? `RANKING (ผลการจัดอันดับ ก่อนจบเกม ${selectedGame})` : `RANKING (ผลการจัดอันดับ ก่อนเริ่มเกม ${selectedGame})`} description={selectedResultsPublished && selectedSnapshot?.confirmedAt ? publishedAtText(selectedSnapshot.confirmedAt) : undefined}>
               <RankingTable players={visibleRanking} rankingPositions={rankingPositions} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} />
             </Panel>
           )}

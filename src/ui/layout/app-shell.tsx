@@ -53,13 +53,22 @@ function stageHref(id: string, stage: RuntimeStage) {
   }
 }
 
-const cardLinks = (id: string, isStaff: boolean) => isStaff ? [
-  { href: `/cards/${id}`, label: "ภาพรวม", icon: Activity },
-  { href: `/cards/${id}/players`, label: "ผู้เล่น", icon: Users },
-  { href: `/cards/${id}/tables`, label: "โต๊ะแข่งขัน", icon: TableProperties },
-  { href: `/cards/${id}/games`, label: "ผลการแข่งขัน", icon: Gamepad2 },
-  { href: `/cards/${id}/audit`, label: "บันทึกกิจกรรม", icon: FileClock },
-] : [{ href: `/cards/${id}`, label: "ภาพรวมการแข่งขัน", icon: Activity }];
+// Result-entry staff (not a director) only ever work on the overview + result-entry pages; players,
+// tables/pairing and the activity log are director tools, so they are hidden from the staff sidebar.
+const cardLinks = (id: string, isOperator: boolean, isDirectorRole: boolean) => {
+  if (!isOperator) return [{ href: `/cards/${id}`, label: "ภาพรวมการแข่งขัน", icon: Activity }];
+  if (!isDirectorRole) return [
+    { href: `/cards/${id}`, label: "ภาพรวม", icon: Activity },
+    { href: `/cards/${id}/games`, label: "ผลการแข่งขัน", icon: Gamepad2 },
+  ];
+  return [
+    { href: `/cards/${id}`, label: "ภาพรวม", icon: Activity },
+    { href: `/cards/${id}/players`, label: "ผู้เล่น", icon: Users },
+    { href: `/cards/${id}/tables`, label: "โต๊ะแข่งขัน", icon: TableProperties },
+    { href: `/cards/${id}/games`, label: "ผลการแข่งขัน", icon: Gamepad2 },
+    { href: `/cards/${id}/audit`, label: "บันทึกกิจกรรม", icon: FileClock },
+  ];
+};
 
 function NavigationLink({ href, label, icon: Icon, active, workflow = false, collapsed = false, nested = false }: { href: string; label: string; icon: typeof ClipboardList; active: boolean; workflow?: boolean; collapsed?: boolean; nested?: boolean }) {
   const nudge = workflow && !active;
@@ -224,7 +233,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   };
 
-  const railLinks = id ? cardLinks(id, operator) : generalLinks;
+  const railLinks = id ? cardLinks(id, operator, director) : generalLinks;
   const workflowHrefFor = (cardId: string) => {
     const card = selectCard(cards, cardId);
     return operator && card ? stageHref(cardId, card.runtimeStage) : undefined;
@@ -279,7 +288,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                       cardId={card.id}
                       name={card.name}
                       division={card.division}
-                      pages={cardLinks(card.id, operator)}
+                      pages={cardLinks(card.id, operator, director)}
                       expanded={expandedIds.has(card.id)}
                       current={card.id === id}
                       workflowHref={workflowHrefFor(card.id)}
@@ -307,7 +316,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                         cardId={cardId}
                         name={card?.name ?? cardId}
                         division={card?.division}
-                        pages={cardLinks(cardId, isStaff)}
+                        pages={cardLinks(cardId, isStaff, director)}
                         expanded={expandedIds.has(cardId)}
                         current={cardId === id}
                         workflowHref={workflowHrefFor(cardId)}

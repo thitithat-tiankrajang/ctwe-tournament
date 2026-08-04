@@ -383,17 +383,18 @@ public class TournamentCardService {
         int upperExclusive = joinCurrentGame ? currentGame : currentGame + 1;
         int rejoinGame = joinCurrentGame ? currentGame : currentGame + 1;
         for (int code : codes) {
-            long played = count("""
-                SELECT COUNT(DISTINCT m.game_number) FROM matches m
-                WHERE m.card_id = ? AND (m.player_one = ? OR m.player_two = ?)
-                  AND m.result_type IS NOT NULL AND m.game_number < ?
-                """, cardId, code, code, upperExclusive);
-            int missed = Math.max(0, (upperExclusive - 1) - (int) played);
+            // The restored player rejoins from rejoinGame; absence_loss_points remembers the penalty so a
+            // game still in progress at restore (case C) gets its row appended on publish. carry_* are
+            // reset because missed games are now real rows, not hidden running totals.
             jdbc.update("""
                 UPDATE players SET terminated_at = NULL, terminated_by = NULL,
-                                   carry_losses = ?, carry_diff = ?, rejoin_game = ?
+                                   carry_losses = 0, carry_diff = 0,
+                                   absence_loss_points = ?, rejoin_game = ?
                 WHERE card_id = ? AND code = ?
-                """, missed, missed * lossPoints, rejoinGame, cardId, code);
+                """, lossPoints, rejoinGame, cardId, code);
+            // Append a bye + ลงดาบ history row for every already-published game the player missed. The
+            // current (unpublished) game, if sat out, is handled when its block is published.
+            insertAbsencePenaltyRows(cardId, code, upperExclusive, lossPoints);
         }
         recalculateStandings(cardId);
         touch(cardId);
@@ -402,6 +403,60 @@ public class TournamentCardService {
             "players", codes.stream().map(TournamentCardService::pcode).toList(),
             "lossPoints", lossPoints, "joinCurrentGame", joinCurrentGame, "unpaired", unpaired, "game", currentGame));
         return get(cardId, true);
+    }
+
+    /**
+     * Append a bye + ลงดาบ history row for every already-published game (snapshot_no set) in
+     * [1, upperExclusive) where the player has no match, marking each missed game as a loss of
+     * {@code lossPoints}. A game still awaiting its snapshot is skipped here — {@link #publishResults}
+     * appends the row when that block is confirmed.
+     */
+    private void insertAbsencePenaltyRows(UUID cardId, int code, int upperExclusive, int lossPoints) {
+        List<Integer> missed = jdbc.queryForList("""
+            SELECT DISTINCT m.game_number FROM matches m
+            WHERE m.card_id = ? AND m.game_number < ? AND m.snapshot_no IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM matches p WHERE p.card_id = m.card_id
+                AND p.game_number = m.game_number AND (p.player_one = ? OR p.player_two = ?))
+            ORDER BY m.game_number
+            """, Integer.class, cardId, upperExclusive, code, code);
+        for (int game : missed) {
+            Integer snapshotNo = jdbc.queryForObject(
+                "SELECT MIN(snapshot_no) FROM matches WHERE card_id = ? AND game_number = ? AND snapshot_no IS NOT NULL",
+                Integer.class, cardId, game);
+            insertAbsencePenaltyRow(cardId, game, code, lossPoints, snapshotNo);
+        }
+    }
+
+    /** Insert a single lone-player PENALTY row (bye that lost by {@code lossPoints}) at the game's tail. */
+    private void insertAbsencePenaltyRow(UUID cardId, int game, int code, int lossPoints, Integer snapshotNo) {
+        Integer nextTable = jdbc.queryForObject(
+            "SELECT COALESCE(MAX(table_number), 0) + 1 FROM matches WHERE card_id = ? AND game_number = ?",
+            Integer.class, cardId, game);
+        jdbc.update("""
+            INSERT INTO matches (card_id, game_number, table_number, player_one, player_two, winner,
+                                 result_type, score_one, score_two, calculated_diff, snapshot_no,
+                                 pairing_published_at, submitted_by, submitted_at)
+            VALUES (?, ?, ?, ?, NULL, NULL, 'P', 0, 0, ?, ?, now(), 'system', now())
+            """, cardId, game, nextTable, code, lossPoints, snapshotNo);
+    }
+
+    /**
+     * When a block is confirmed, append the absence penalty row for any restored player who was
+     * sitting out a game in it (rejoin_game past that game, so never paired in) — this is the case-C
+     * "current game" that could not be recorded at restore time because it had no snapshot yet.
+     */
+    private void appendAbsencePenaltiesForBlock(UUID cardId, int gameFrom, int gameTo, int snapshotNo) {
+        for (int game = gameFrom; game <= gameTo; game++) {
+            List<int[]> absentees = jdbc.query("""
+                SELECT code, absence_loss_points FROM players
+                WHERE card_id = ? AND terminated_at IS NULL AND rejoin_game > ?
+                  AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.card_id = players.card_id
+                    AND m.game_number = ? AND (m.player_one = players.code OR m.player_two = players.code))
+                """, (rs, row) -> new int[] { rs.getInt("code"), rs.getInt("absence_loss_points") },
+                cardId, game, game);
+            for (int[] absentee : absentees)
+                insertAbsencePenaltyRow(cardId, game, absentee[0], absentee[1], snapshotNo);
+        }
     }
 
     /** Discards the current game's unpublished pairing back to TABLE_PAIRING (shared by undo + restore). */
@@ -463,7 +518,7 @@ public class TournamentCardService {
         // game-1 loss without any match row) would silently distort standings after re-finish.
         jdbc.update("""
             UPDATE players SET terminated_at = NULL, terminated_by = NULL,
-                               carry_losses = 0, carry_diff = 0, rejoin_game = 1
+                               carry_losses = 0, carry_diff = 0, absence_loss_points = 0, rejoin_game = 1
             WHERE card_id = ?
             """, cardId);
         recalculateStandings(cardId);
@@ -675,21 +730,49 @@ public class TournamentCardService {
         if (destinationTotal != sourceTotal || emptyDestinations > 0)
             throw new IllegalArgumentException("Pairing เกม " + destinationGame + " ยังสร้างไม่ครบ");
 
-        long changed = jdbc.update("""
+        jdbc.update("""
             UPDATE matches SET pairing_published_at = now()
             WHERE card_id = ? AND game_number = ? AND snapshot_no IS NULL AND pairing_published_at IS NULL
             """, cardId, destinationGame);
-        if (changed > 0) {
-            jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number = ?", cardId, destinationGame);
-            touch(cardId);
-            publishPublic(cardId);
-            audit(cardId, actor, "PUBLISH_PAIR_RESULT_DESTINATION", null, Map.of(
-                "sourceGame", sourceGame,
-                "publishedPairingGame", destinationGame,
-                "pairings", destinationTotal
-            ));
-        }
+        // Publishing the destination pairing also finalises the source game as its own confirmed
+        // snapshot, so viewers immediately see the source game's ranking ("หลังจบเกม N") and the
+        // destination's pre-game ranking ("ก่อนเริ่มเกม N+1"). The source stays editable via
+        // overrideResult (director), which re-stamps this snapshot's timestamp.
+        int sourceSnapshot = confirmSourceGameSnapshot(cardId, sourceGame);
+        recalculateStandings(cardId);
+        jdbc.update("UPDATE games SET status = 'OPEN' WHERE card_id = ? AND game_number = ?", cardId, destinationGame);
+        touch(cardId);
+        publishPublic(cardId);
+        audit(cardId, actor, "PUBLISH_PAIR_RESULT_DESTINATION", null, Map.of(
+            "sourceGame", sourceGame,
+            "publishedPairingGame", destinationGame,
+            "sourceSnapshot", sourceSnapshot,
+            "pairings", destinationTotal
+        ));
         return get(cardId, true);
+    }
+
+    /**
+     * Confirm the PAIR_RESULT source game as a single-game snapshot (idempotent) so its ranking is
+     * published the instant the destination pairing goes out, while the destination keeps being scored.
+     */
+    private int confirmSourceGameSnapshot(UUID cardId, int sourceGame) {
+        Integer existing = jdbc.queryForObject(
+            "SELECT MIN(snapshot_no) FROM matches WHERE card_id = ? AND game_number = ? AND snapshot_no IS NOT NULL",
+            Integer.class, cardId, sourceGame);
+        if (existing != null) return existing;
+        Integer snapshotNo = jdbc.queryForObject(
+            "SELECT COALESCE(MAX(snapshot_no), 0) + 1 FROM pairing_snapshots WHERE card_id = ?", Integer.class, cardId);
+        jdbc.update("""
+            INSERT INTO pairing_snapshots (card_id, snapshot_no, game_from, game_to, confirmed_at)
+            VALUES (?, ?, ?, ?, now())
+            """, cardId, snapshotNo, sourceGame, sourceGame);
+        jdbc.update("""
+            UPDATE matches SET snapshot_no = ?, pairing_published_at = COALESCE(pairing_published_at, now())
+            WHERE card_id = ? AND game_number = ? AND snapshot_no IS NULL
+            """, snapshotNo, cardId, sourceGame);
+        jdbc.update("UPDATE games SET status = 'COMPLETED' WHERE card_id = ? AND game_number = ?", cardId, sourceGame);
+        return snapshotNo;
     }
 
     /**
@@ -891,6 +974,7 @@ public class TournamentCardService {
         jdbc.update("UPDATE matches SET snapshot_no = ? WHERE card_id = ? AND game_number BETWEEN ? AND ? AND snapshot_no IS NULL",
             snapshotNo, cardId, gameFrom, gameTo);
         jdbc.update("UPDATE games SET status = 'COMPLETED' WHERE card_id = ? AND game_number BETWEEN ? AND ?", cardId, gameFrom, gameTo);
+        appendAbsencePenaltiesForBlock(cardId, gameFrom, gameTo, snapshotNo);
         boolean finished = gameTo >= card.numberOfGames();
         recalculateStandings(cardId);
         // If the card has a final round, the last regular game leads to FINAL_SEEDING (director then starts it),
@@ -1046,6 +1130,11 @@ public class TournamentCardService {
         boolean existing = match.resultType() != null;
         Object previous = existing ? previousResultAudit(match) : Map.of("matchId", matchId, "status", "UNRECORDED");
         saveResultColumns(cardId, key, winner, scoreOne, scoreTwo, resultType, calculatedDiff, actor);
+        // Editing a published (snapshotted) result re-stamps that snapshot so viewers see a fresh
+        // "ผลเผยแพร่ล่าสุดเมื่อ ..." time for the corrected game.
+        if (match.snapshotNo() != null)
+            jdbc.update("UPDATE pairing_snapshots SET confirmed_at = now() WHERE card_id = ? AND snapshot_no = ?",
+                cardId, match.snapshotNo());
         recalculateStandings(cardId);
         touch(cardId);
         publishPublic(cardId);
@@ -1264,9 +1353,16 @@ public class TournamentCardService {
     }
 
     private List<Integer> activeResultGames(CardRow card) {
-        if (card.currentGame() < card.numberOfGames() && isOutgoingPairResult(card.id(), card.currentGame()))
-            return List.of(card.currentGame(), card.currentGame() + 1);
-        return List.of(card.currentGame());
+        int game = card.currentGame();
+        if (game < card.numberOfGames() && isOutgoingPairResult(card.id(), game)) {
+            // Once publish-next has confirmed the source game as its own snapshot, only the destination
+            // remains open for scoring; before that the source + destination form one active block.
+            boolean sourceConfirmed = count(
+                "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = ? AND snapshot_no IS NOT NULL",
+                card.id(), game) > 0;
+            return sourceConfirmed ? List.of(game + 1) : List.of(game, game + 1);
+        }
+        return List.of(game);
     }
 
     private boolean isOutgoingPairResult(UUID cardId, int sourceGame) {
@@ -1803,13 +1899,13 @@ public class TournamentCardService {
                      WHEN m.player_one = p.code THEN COALESCE(m.score_one, 0) - COALESCE(m.score_two, 0)
                      WHEN m.player_two = p.code THEN COALESCE(m.score_two, 0) - COALESCE(m.score_one, 0)
                      ELSE 0
-                   END), 0) - COALESCE(p.carry_diff, 0) raw_diff
+                   END), 0) raw_diff
             FROM players p LEFT JOIN standings s ON s.card_id = p.card_id AND s.player_code = p.code
             LEFT JOIN matches m ON m.card_id = p.card_id AND m.result_type IS NOT NULL
               AND (m.player_one = p.code OR m.player_two = p.code)
             WHERE p.card_id = ? AND p.terminated_at IS NULL
               AND p.rejoin_game <= (SELECT current_game FROM tournament_cards WHERE id = p.card_id)
-            GROUP BY p.code, p.school, p.carry_diff, s.win_points, s.diff
+            GROUP BY p.code, p.school, s.win_points, s.diff
             ORDER BY p.code
             """, (rs, row) -> new PairingStrategy.PlayerScore(String.valueOf(rs.getInt("code")), rs.getString("school"),
                 rs.getInt("win_points"), rs.getInt("diff"), rs.getLong("score_for"), rs.getLong("raw_diff")), cardId);
@@ -1885,13 +1981,8 @@ public class TournamentCardService {
             jdbc.update("UPDATE standings SET losses = losses + 1, diff = diff - ? WHERE card_id = ? AND player_code = ?",
                 result.calculatedDiff(), cardId, loser);
         }
-        // Restored players carry a running loss penalty for the games they missed while terminated
-        // (not stored as fake matches — their history shows only games from their return onward).
-        jdbc.update("""
-            UPDATE standings s SET losses = s.losses + p.carry_losses, diff = s.diff - p.carry_diff
-            FROM players p
-            WHERE p.card_id = s.card_id AND p.code = s.player_code AND s.card_id = ? AND p.carry_losses > 0
-            """, cardId);
+        // Games missed while terminated are now real bye+ลงดาบ rows (a lone-player PENALTY), so they are
+        // already counted above by the PENALTY branch — no separate carry adjustment is needed.
     }
 
     PairingRuleType ruleForGame(UUID cardId, int gameNumber) {

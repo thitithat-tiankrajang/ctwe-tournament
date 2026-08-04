@@ -15,6 +15,9 @@ export interface PlayerHistoryRow {
   diff: number;
   cumulativeDiff: number;
   opponentId: string;
+  /** True for a championship-round game; `gameLabel` then carries a display name like "ชิง 1". */
+  final?: boolean;
+  gameLabel?: string;
 }
 
 function hasPlayer(pairing: Pairing, playerId: string): boolean {
@@ -34,7 +37,7 @@ export function playerHistory(card: TournamentCard, playerId: string): PlayerHis
   entries.sort((a, b) => a.game - b.game);
 
   let cumulativeWinPoints = 0; let cumulativeDiff = 0;
-  return entries.map(({ game, pairing }) => {
+  const rows: PlayerHistoryRow[] = entries.map(({ game, pairing }) => {
     const isOne = pairing.playerOneId === playerId;
     const ownScore = (isOne ? pairing.scoreOne : pairing.scoreTwo) ?? 0;
     const opponentScore = (isOne ? pairing.scoreTwo : pairing.scoreOne) ?? 0;
@@ -46,6 +49,51 @@ export function playerHistory(card: TournamentCard, playerId: string): PlayerHis
     cumulativeDiff += diff;
     return { game, table: pairing.tableNumber, result, cumulativeWinPoints, ownScore, opponentScore, diff, cumulativeDiff, opponentId: (isOne ? pairing.playerTwoId : pairing.playerOneId) ?? "" };
   });
+
+  // A finalist's championship games are appended after their regular history so the master card
+  // reads as one continuous record. Non-finalists (and cards without a final) get nothing extra.
+  const slot = card.finalRound?.slots.find((entry) => entry.playerOneId === playerId || entry.playerTwoId === playerId);
+  const lastGame = rows.length > 0 ? rows[rows.length - 1].game : 0;
+  slot?.games.forEach((finalGame) => {
+    if (finalGame.scoreOne == null || finalGame.scoreTwo == null) return;
+    const isOne = slot.playerOneId === playerId;
+    const ownScore = isOne ? finalGame.scoreOne : finalGame.scoreTwo;
+    const opponentScore = isOne ? finalGame.scoreTwo : finalGame.scoreOne;
+    const result: "W" | "T" | "L" = finalGame.winnerId == null ? "T" : finalGame.winnerId === playerId ? "W" : "L";
+    cumulativeWinPoints += result === "W" ? 2 : result === "T" ? 1 : 0;
+    const diff = ownScore - opponentScore;
+    cumulativeDiff += diff;
+    rows.push({
+      game: lastGame + finalGame.gameIndex, gameLabel: `ชิง ${finalGame.gameIndex}`, final: true,
+      table: 0, result, cumulativeWinPoints, ownScore, opponentScore, diff, cumulativeDiff,
+      opponentId: (isOne ? slot.playerTwoId : slot.playerOneId) ?? "",
+    });
+  });
+  return rows;
+}
+
+/**
+ * Final placings for the "ผลการแข่งขัน" view: the championship bracket decides the top seats
+ * (slot 0 winner = 1st / loser = 2nd, slot 1 winner = 3rd / loser = 4th) and everyone else follows
+ * the regular standings. A card without a final round simply returns its final regular standings.
+ */
+export function finalStandings(card: TournamentCard, lastGame: number): Player[] {
+  const base = lastGame > 0 ? rankingAfterGame(card, lastGame) : [];
+  const round = card.finalRound;
+  if (!round || card.finalType === "NONE") return base;
+  const byId = new Map(card.players.map((player) => [player.id, player]));
+  const ordered: Player[] = [];
+  const placed = new Set<string>();
+  const place = (id: string | null | undefined) => {
+    if (id && byId.has(id) && !placed.has(id)) { ordered.push(byId.get(id)!); placed.add(id); }
+  };
+  [...round.slots].sort((a, b) => a.slot - b.slot).forEach((slot) => {
+    if (!slot.winnerId) return; // unresolved bracket: fall back to standings order for these players
+    place(slot.winnerId);
+    place(slot.winnerId === slot.playerOneId ? slot.playerTwoId : slot.playerOneId);
+  });
+  base.forEach((player) => place(player.id));
+  return ordered;
 }
 
 export function rankingAfterGame(card: TournamentCard, gameNumber: number): Player[] {
@@ -87,5 +135,9 @@ export function rankingAfterGame(card: TournamentCard, gameNumber: number): Play
     if (loser) { loser.losses += 1; loser.diff -= diff; }
   }));
 
-  return [...ranking.values()].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || comparePlayerCodes(a.id, b.id));
+  // Terminated players are scored (so their past opponents' wins/losses stay correct) but never
+  // shown in the standings — once withdrawn they live only in the director's restore "trash".
+  return [...ranking.values()]
+    .filter((player) => !player.terminated)
+    .sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || comparePlayerCodes(a.id, b.id));
 }
