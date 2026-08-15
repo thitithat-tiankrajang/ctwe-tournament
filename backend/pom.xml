@@ -11,7 +11,10 @@
   <artifactId>tournament-api</artifactId>
   <version>0.1.0</version>
   <name>Tournament API</name>
-  <properties><java.version>17</java.version></properties>
+  <properties>
+    <java.version>17</java.version>
+    <awssdk.version>2.29.52</awssdk.version>
+  </properties>
   <dependencies>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
@@ -30,6 +33,23 @@
     <dependency><groupId>org.apache.httpcomponents</groupId><artifactId>httpasyncclient</artifactId><version>4.1.5</version></dependency>
     <dependency><groupId>org.bitbucket.b_c</groupId><artifactId>jose4j</artifactId><version>0.9.6</version></dependency>
     <dependency><groupId>org.bouncycastle</groupId><artifactId>bcprov-jdk18on</artifactId><version>1.80</version></dependency>
+    <!-- Cloudflare R2 via the S3 API (Public Snapshot publication). The default Apache HTTP client
+         is excluded in favour of url-connection-client: it is a much smaller dependency tree and
+         boots faster, which matters on a 512 MB instance that is expected to start on demand. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+      <version>${awssdk.version}</version>
+      <exclusions>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>url-connection-client</artifactId>
+      <version>${awssdk.version}</version>
+    </dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>
   </dependencies>

@@ -78,6 +78,21 @@ app:
     vapid-subject: ${VAPID_SUBJECT:}
     # Comma-separated suffix override; defaults cover Chrome/Firefox/Safari/Edge push services.
     allowed-host-suffixes: ${WEB_PUSH_ALLOWED_HOST_SUFFIXES:}
+  # Public Snapshot publication (Phase B). Unset everywhere except the deployment that publishes:
+  # with none of these set, publication is unavailable and nothing else changes. Setting SOME of the
+  # R2 values but not all fails startup deliberately — half-set credentials must not surface as a
+  # mid-publication error. Credentials are never NEXT_PUBLIC_* and the Worker gets no R2 binding.
+  snapshot-storage:
+    endpoint: ${R2_ENDPOINT:}
+    access-key-id: ${R2_ACCESS_KEY_ID:}
+    secret-access-key: ${R2_SECRET_ACCESS_KEY:}
+    private-bucket: ${R2_PRIVATE_BUCKET:}
+    public-bucket: ${R2_PUBLIC_BUCKET:}
+    # The hostname the public bucket is served on. Publication verifies a candidate through THIS
+    # origin before promoting it, so R2 without it is refused at startup.
+    public-origin: ${SNAPSHOT_PUBLIC_ORIGIN:}
+    cloudflare-zone-id: ${CLOUDFLARE_ZONE_ID:}
+    cloudflare-purge-token: ${CLOUDFLARE_PURGE_TOKEN:}
   cache:
     public-card-details:
       ttl-seconds: ${PUBLIC_CARD_CACHE_TTL_SECONDS:300}

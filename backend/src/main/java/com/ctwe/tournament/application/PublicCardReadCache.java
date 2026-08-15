@@ -69,33 +69,16 @@ public class PublicCardReadCache {
             )));
     }
 
+    /**
+     * The projection itself lives in {@link PublicCardProjection} so the Public Snapshot builder can
+     * reuse it verbatim without going through this cache. Statement order matters and is preserved:
+     * {@code version(cardId)} runs first, so an unknown card still 404s before the card is loaded.
+     */
     @Cacheable(cacheNames = TournamentCaches.PUBLIC_CARD_DETAILS, key = "#cardId", sync = true)
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public CardDtos.CardResponse card(UUID cardId) {
         long publicVersion = version(cardId);
-        CardDtos.CardResponse source = cards.get(cardId, false);
-        boolean finalPublished = source.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.FINAL_PUBLISHED
-            || source.status() == com.ctwe.tournament.domain.model.CardStatus.FINISHED
-            || source.status() == com.ctwe.tournament.domain.model.CardStatus.CLOSED;
-        boolean finalVisible = finalPublished
-            || source.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.FINAL_COLLECTION;
-        boolean collectingPublishedPairing = source.snapshots().stream()
-            .anyMatch(snapshot -> snapshot.confirmedAt() == null || snapshot.confirmedAt().isBlank());
-        com.ctwe.tournament.domain.model.RuntimeStage publicStage = finalPublished
-            ? com.ctwe.tournament.domain.model.RuntimeStage.FINAL_PUBLISHED
-            : finalVisible
-                ? com.ctwe.tournament.domain.model.RuntimeStage.FINAL_COLLECTION
-            : source.runtimeStage() == com.ctwe.tournament.domain.model.RuntimeStage.PLAYER_REGISTRATION
-                ? com.ctwe.tournament.domain.model.RuntimeStage.PLAYER_REGISTRATION
-                : collectingPublishedPairing
-                    ? com.ctwe.tournament.domain.model.RuntimeStage.RESULT_COLLECTION
-                    : com.ctwe.tournament.domain.model.RuntimeStage.TABLE_PAIRING;
-        return new CardDtos.CardResponse(
-            source.id(), source.tournamentId(), source.name(), source.division(), source.status(), publicStage,
-            source.currentGame(), publicVersion, source.games(), source.initialPairingRule(), List.of(), source.players(), List.of(),
-            source.snapshots(), List.of(), source.finalType(), source.finalGames(),
-            finalVisible ? source.finalRound() : null, source.gibsonEnabled(), source.createdAt(), source.codePrefix()
-        );
+        return PublicCardProjection.of(cards.get(cardId, false), publicVersion);
     }
 
     @Cacheable(cacheNames = TournamentCaches.PUBLIC_CARD_VERSIONS, key = "'" + VERSIONS_KEY + "'", sync = true)

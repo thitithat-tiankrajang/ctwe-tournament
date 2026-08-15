@@ -66,6 +66,18 @@ public final class TenantDtos {
 
     public record EnabledRequest(@NotNull Boolean enabled) {}
 
+    /**
+     * ⚠️ Confirmation for EXCEL EXPORT &amp; PURGE — the operation that permanently deletes a
+     * tournament's live rows. Not related to Public Snapshot publication.
+     *
+     * <p>{@code tournamentName} must repeat the target tournament's exact current name; the operator
+     * types it so a mis-clicked row cannot be purged. {@code password} re-authenticates the operator.
+     */
+    public record PurgeConfirmation(
+        @NotBlank String password,
+        @NotBlank @Size(max = 180) String tournamentName
+    ) {}
+
     /** Metadata for an archived (exported-to-Excel) tournament; the file blob is downloaded separately. */
     public record ArchiveSummary(
         UUID id, String tournamentName, String fileName, long byteSize,

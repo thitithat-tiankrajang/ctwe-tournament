@@ -44,3 +44,23 @@ services:
         value: "300"
       - key: PUBLIC_CARD_VERSIONS_CACHE_TTL_SECONDS
         value: "3"
+      # Public Snapshot publication (Phase B). R2 credentials live ONLY here — never in the Worker,
+      # never NEXT_PUBLIC_*. Leave every value unset until the buckets exist: with none set,
+      # publication is unavailable and the rest of the service is unaffected. Setting some but not
+      # all of the R2 five fails startup on purpose.
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_PRIVATE_BUCKET
+        sync: false
+      - key: R2_PUBLIC_BUCKET
+        sync: false
+      - key: SNAPSHOT_PUBLIC_ORIGIN
+        sync: false
+      - key: CLOUDFLARE_ZONE_ID
+        sync: false
+      - key: CLOUDFLARE_PURGE_TOKEN
+        sync: false

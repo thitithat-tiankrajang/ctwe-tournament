@@ -64,6 +64,27 @@ public class AuthorizationService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "ไม่มีสิทธิ์เข้าถึงรายการแข่งขันนี้");
     }
 
+    /**
+     * "An ADMIN, or a DIRECTOR of <em>this</em> tournament" — the Public Snapshot rule
+     * (architecture §4.2), used by approve, revoke, publish and retract.
+     *
+     * <p>Two independent conditions, because either alone is wrong. <b>Role</b>: result-entry staff
+     * are legitimately scoped to a tournament through {@code staff_tournament_access}, and §4.2 gives
+     * them no rights over publication at all — scope alone would let them consent to, or withdraw,
+     * a permanent public record of athletes' names. <b>Scope</b>: a director's authority stops at the
+     * tournaments assigned to them.
+     *
+     * <p>Deliberately not {@link #requireTournamentCapability}, which also demands the tournament be
+     * OPEN. Publication readiness is card state, not link state, and a tournament worth publishing —
+     * or worth withdrawing — is usually closed.
+     */
+    public void requireTournamentOperator(Authentication auth, UUID tournamentId) {
+        if (!isAdmin(auth) && !isDirector(auth))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "การดำเนินการนี้สงวนสำหรับผู้ดูแลระบบและผู้อำนวยการเท่านั้น");
+        requireTournamentAccess(auth, tournamentId);
+    }
+
     public void requireTournamentCapability(Authentication auth, UUID tournamentId, Capability capability) {
         requireTournamentAccess(auth, tournamentId);
         requireTournamentOpen(tournamentId);

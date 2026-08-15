@@ -1,5 +1,6 @@
-package com.ctwe.tournament.application;
+package com.ctwe.tournament.application.excelexport;
 
+import com.ctwe.tournament.application.TournamentCardService;
 import com.ctwe.tournament.web.dto.TenantDtos;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -26,31 +27,65 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * "Deleting" a tournament is replaced by archiving: export every card (players, results, standings) to a
- * single .xlsx, store the file, then remove the live data — all in ONE transaction so we can never delete
- * data without a safely-stored backup. The file blob stays downloadable forever (publicly).
+ * ⚠️ THIS IS "EXCEL EXPORT &amp; PURGE" — IT PERMANENTLY DELETES LIVE TOURNAMENT DATA. ⚠️
+ *
+ * <p>"Deleting" a tournament is replaced by exporting: every card (players, results, standings) is written
+ * to a single .xlsx, the file is stored, then the live data is removed — all in ONE transaction so we can
+ * never delete data without a safely-stored backup. The file blob stays downloadable forever (publicly).
+ *
+ * <p><b>This is NOT the Public Snapshot publisher.</b> Public Snapshot publication is a separate,
+ * non-destructive feature that derives an immutable public JSON snapshot into R2 and never touches
+ * PostgreSQL rows. See {@code docs/PUBLIC_SNAPSHOT_ARCHITECTURE.md} §5 for the naming rules and the
+ * incident that motivated them. Do not merge, wrap, chain, or cross-reference these two features:
+ * connecting them is how "publish the results" turns into "delete the tournament".
+ *
+ * <p>Guardrails on this class:
+ * <ul>
+ *   <li>{@link #exportToExcelAndPurgeLiveData} takes a typed {@link TenantDtos.PurgeConfirmation} and
+ *       cannot be invoked with a bare tournament id.</li>
+ *   <li>The caller must re-authenticate the operator's password (see {@code AdminController}).</li>
+ *   <li>The confirmation must repeat the tournament's exact name, so a mis-clicked row cannot be purged.</li>
+ * </ul>
  */
 @Service
-public class TournamentArchiveService {
+public class TournamentExcelExportService {
     private static final ZoneId BANGKOK = ZoneId.of("Asia/Bangkok");
     private final JdbcTemplate jdbc;
     private final TournamentCardService cardService;
 
-    public TournamentArchiveService(JdbcTemplate jdbc, TournamentCardService cardService) {
+    public TournamentExcelExportService(JdbcTemplate jdbc, TournamentCardService cardService) {
         this.jdbc = jdbc;
         this.cardService = cardService;
     }
 
+    /**
+     * The ONLY snapshot states from which live rows may be destroyed — architecture §5.3 G1.
+     * Deliberately an allowlist; see {@link #requireNothingPublished}.
+     */
+    private static final java.util.Set<String> PURGEABLE_SNAPSHOT_STATES =
+        java.util.Set.of("NOT_PUBLISHED", "RETRACTED");
+
     public record ArchiveFile(String fileName, byte[] content) {}
 
+    /**
+     * Exports the tournament to .xlsx and then PERMANENTLY DELETES its live rows, in one transaction.
+     *
+     * @param confirmation must repeat the tournament's exact current name; the operator's password is
+     *                     re-authenticated by the caller before this method runs.
+     */
     @Transactional
-    public TenantDtos.ArchiveSummary archiveAndDelete(UUID tournamentId, String actor) {
+    public TenantDtos.ArchiveSummary exportToExcelAndPurgeLiveData(
+        UUID tournamentId, TenantDtos.PurgeConfirmation confirmation, String actor
+    ) {
         String tournamentName;
         try {
             tournamentName = jdbc.queryForObject("SELECT name FROM tournaments WHERE id = ?", String.class, tournamentId);
         } catch (EmptyResultDataAccessException notFound) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "ไม่พบทัวร์นาเมนต์");
         }
+        requireNameMatches(confirmation, tournamentName);
+        requireNothingPublished(tournamentId);
+
         List<Map<String, Object>> cards = jdbc.queryForList(
             "SELECT id, name, division FROM tournament_cards WHERE tournament_id = ? ORDER BY created_at", tournamentId);
         Integer playerCount = jdbc.queryForObject(
@@ -75,6 +110,59 @@ public class TournamentArchiveService {
 
         return new TenantDtos.ArchiveSummary(archiveId, tournamentName, fileName, content.length,
             cards.size(), playerCount == null ? 0 : playerCount, actor, Instant.now());
+    }
+
+    /**
+     * GUARDRAIL G1 — purging is refused while a public snapshot is published.
+     *
+     * <p>A published snapshot is a permanent public artifact that must stay regenerable from
+     * PostgreSQL. Deleting the live rows destroys that ability: the object would keep serving from
+     * R2 with nothing behind it, and no correction, re-verification or rollback would ever be
+     * possible again. So the two features are wired together once, here, deliberately and safely —
+     * rather than being left adjacent and unrelated until someone chains them by accident.
+     *
+     * <p>Read with a plain SQL lookup on purpose. This class must not import, reference, or depend on
+     * anything in {@code …application.publicsnapshot} — the package-independence test enforces that
+     * in both directions, so that "publish the results" can never reach "delete the tournament"
+     * through a call graph. A column read carries the fact without carrying the coupling.
+     *
+     * <p><b>An allowlist, not a blocklist.</b> Purging is permitted only from the two states that
+     * positively mean "nothing of this tournament is public": {@code NOT_PUBLISHED} and
+     * {@code RETRACTED}. Everything else is refused, including states that might look harmless.
+     *
+     * <p>{@code PUBLISH_FAILED} is the case that makes this matter. A publication that promotes the
+     * object and then fails its post-promotion verification leaves a <b>live public object</b> with
+     * no {@code PROMOTED} row behind it, so the tournament lands in {@code PUBLISH_FAILED} while
+     * {@code s/&#123;h&#125;.json} is being served. Enumerating "blocked" states would have to
+     * predict every such combination; enumerating the two safe ones cannot be wrong in that
+     * direction. An unrecognised or {@code null} state is likewise refused rather than assumed
+     * harmless.
+     *
+     * <p>The escape hatch is retraction (Phase F), not weakening this check: withdraw the snapshot
+     * first, then purge.
+     */
+    private void requireNothingPublished(UUID tournamentId) {
+        String snapshotState = jdbc.queryForObject(
+            "SELECT snapshot_state FROM tournaments WHERE id = ?", String.class, tournamentId);
+        // Set.of is null-hostile, so the null check comes first: a missing state must produce the
+        // same clear 409 as any other unrecognised one, never a NullPointerException.
+        if (snapshotState == null || !PURGEABLE_SNAPSHOT_STATES.contains(snapshotState))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "ทัวร์นาเมนต์นี้อาจมีฉบับเผยแพร่สาธารณะอยู่ (สถานะ " + snapshotState + ") — "
+                    + "ต้องถอนการเผยแพร่ก่อนจึงจะลบข้อมูลสดได้ "
+                    + "(ลบตอนนี้จะทำให้สร้างฉบับเผยแพร่ใหม่ไม่ได้อีกเลย)");
+    }
+
+    /**
+     * The typed confirmation must name the exact tournament being purged. This is the last guard between
+     * a mis-clicked row and irreversible deletion, so it compares the stored name verbatim (trimmed only).
+     */
+    private void requireNameMatches(TenantDtos.PurgeConfirmation confirmation, String tournamentName) {
+        String typed = confirmation == null || confirmation.tournamentName() == null
+            ? "" : confirmation.tournamentName().trim();
+        if (!typed.equals(tournamentName == null ? "" : tournamentName.trim()))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "ชื่อทัวร์นาเมนต์ที่ยืนยันไม่ตรงกับรายการที่เลือก — ยกเลิกการลบเพื่อความปลอดภัย");
     }
 
     public List<TenantDtos.ArchiveSummary> list() {

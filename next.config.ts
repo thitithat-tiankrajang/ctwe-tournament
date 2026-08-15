@@ -23,7 +23,10 @@ const nextConfig: NextConfig = {
     // High-volume anonymous reads (and the public SSE stream) bypass the Worker proxy and hit
     // this origin directly, so the CSP must allow it. Same-origin staff traffic is unaffected.
     const publicApiOrigin = (process.env.NEXT_PUBLIC_PUBLIC_API_ORIGIN ?? "").trim().replace(/\/+$/, "");
-    const connectSrc = `'self'${publicApiOrigin ? ` ${publicApiOrigin}` : ""}`;
+    // Published tournaments are fetched straight from the snapshot CDN. Unset until the cutover, in
+    // which case the probe never runs and this adds nothing to the policy.
+    const snapshotOrigin = (process.env.NEXT_PUBLIC_SNAPSHOT_ORIGIN ?? "").trim().replace(/\/+$/, "");
+    const connectSrc = ["'self'", publicApiOrigin, snapshotOrigin].filter(Boolean).join(" ");
     return [
       // Opt in only the representation-stable public reads. The SSE route must always stream
       // directly from the origin and must never share a CDN cache entry.

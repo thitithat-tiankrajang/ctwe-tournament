@@ -32,6 +32,15 @@ export interface BackendSample {
   httpRequestTotalSec: number | null;
   httpRequestMaxSec: number | null;
   httpServerErrorCount: number | null;
+  /**
+   * Caffeine counters for the public card cache (Phase H ③).
+   *
+   * Micrometer publishes these because `CacheConfiguration` builds every cache with `recordStats()`.
+   * They are monotonic counters, so only the delta across a stage means anything — a ratio computed
+   * from the absolute values would be dominated by whatever happened before the stage began.
+   */
+  publicCardCacheHits: number | null;
+  publicCardCacheMisses: number | null;
 }
 
 export interface BackendWindowSummary {
@@ -59,6 +68,10 @@ export interface BackendWindowSummary {
   serverAvgLatencyMs: number | null;
   serverMaxLatencyMs: number | null;
   serverErrors: number | null;
+  /** Public-card cache hits/misses during this stage only, and their ratio (null when unavailable). */
+  publicCardCacheHits: number | null;
+  publicCardCacheMisses: number | null;
+  publicCardCacheHitRatio: number | null;
 }
 
 interface MetricResponse {
@@ -86,9 +99,13 @@ export class MetricsCollector {
     return await response.json() as { maxPublicSseConnections: number; heartbeatIntervalMs: number };
   }
 
-  private async metric(name: string, statistic: string, tag?: string): Promise<number | null> {
+  private async metric(name: string, statistic: string, tag?: string | string[]): Promise<number | null> {
     try {
-      const query = tag ? `?tag=${encodeURIComponent(tag)}` : "";
+      // Actuator selects a meter by repeating `tag`; `cache.gets` needs both the cache name and the
+      // hit/miss result, so one tag is not enough.
+      const tags = tag === undefined ? [] : Array.isArray(tag) ? tag : [tag];
+      const query = tags.length === 0
+        ? "" : `?${tags.map((value) => `tag=${encodeURIComponent(value)}`).join("&")}`;
       const response = await this.session.request(`/actuator/metrics/${name}${query}`);
       if (!response.ok) return null;
       const body = await response.json() as MetricResponse;
@@ -108,6 +125,7 @@ export class MetricsCollector {
       liveThreads, hikariActive, hikariPending, hikariMax,
       tomcatBusyThreads, tomcatConnections,
       httpRequestCount, httpRequestTotalSec, httpRequestMaxSec, httpServerErrorCount,
+      publicCardCacheHits, publicCardCacheMisses,
     ] = await Promise.all([
       this.metric("sse.streams.public", "VALUE"),
       this.metric("sse.streams.staff", "VALUE"),
@@ -132,6 +150,8 @@ export class MetricsCollector {
       this.metric("http.server.requests", "TOTAL_TIME"),
       this.metric("http.server.requests", "MAX"),
       this.metric("http.server.requests", "COUNT", "outcome:SERVER_ERROR"),
+      this.metric("cache.gets", "COUNT", ["cache:public-card-details", "result:hit"]),
+      this.metric("cache.gets", "COUNT", ["cache:public-card-details", "result:miss"]),
     ]);
     return {
       at: new Date().toISOString(),
@@ -142,6 +162,7 @@ export class MetricsCollector {
       liveThreads, hikariActive, hikariPending, hikariMax,
       tomcatBusyThreads, tomcatConnections,
       httpRequestCount, httpRequestTotalSec, httpRequestMaxSec, httpServerErrorCount,
+      publicCardCacheHits, publicCardCacheMisses,
     };
   }
 
@@ -170,6 +191,10 @@ export class MetricsCollector {
     // The outcome:SERVER_ERROR tagged meter does not exist until the first 5xx. Treat an absent
     // first sample as zero when a later sample appears, otherwise the first error in a run would
     // be silently lost.
+    const cacheHits = delta((sample) => sample.publicCardCacheHits);
+    const cacheMisses = delta((sample) => sample.publicCardCacheMisses);
+    const cacheLookups = cacheHits === null || cacheMisses === null ? null : cacheHits + cacheMisses;
+
     const endingServerErrors = last.httpServerErrorCount;
     const serverErrorDelta = endingServerErrors === null
       ? null : Math.max(0, endingServerErrors - (first.httpServerErrorCount ?? 0));
@@ -201,6 +226,12 @@ export class MetricsCollector {
       serverMaxLatencyMs: max((sample) => sample.httpRequestMaxSec) === null
         ? null : Math.round(max((sample) => sample.httpRequestMaxSec)! * 10_000) / 10,
       serverErrors: serverErrorDelta,
+      publicCardCacheHits: cacheHits,
+      publicCardCacheMisses: cacheMisses,
+      // A stage with no cache lookups at all has no ratio; zero would read as "0% hit rate", which
+      // is a different and wrong claim.
+      publicCardCacheHitRatio: cacheLookups === null || cacheLookups === 0 || cacheHits === null
+        ? null : cacheHits / cacheLookups,
     };
   }
 }

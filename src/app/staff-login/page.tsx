@@ -7,6 +7,8 @@ import { useTournamentStore } from "@/application/tournament/store";
 import { Button } from "@/ui/components/button";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { PageHeader, Panel } from "@/ui/components/page";
+import { SystemOffPanel } from "@/ui/components/system-off-panel";
+import { fetchSystemState, systemIsOff, type SystemState } from "@/infrastructure/http/system-state";
 
 export default function StaffLoginPage() {
   const router = useRouter();
@@ -22,6 +24,10 @@ export default function StaffLoginPage() {
   useEffect(() => {
     setSessionExpired(new URLSearchParams(window.location.search).get("expired") === "1");
   }, []);
+  // Architecture §21: when the operator has declared the system off, say so instead of offering a
+  // form that cannot succeed. Fails toward the form — an unreadable state file changes nothing.
+  const [systemState, setSystemState] = useState<SystemState | null>(null);
+  useEffect(() => { void fetchSystemState().then(setSystemState); }, []);
   useEffect(() => {
     if (!auth.csrfToken) void refreshAuth();
   }, [auth.csrfToken, refreshAuth]);
@@ -41,6 +47,17 @@ export default function StaffLoginPage() {
       setSubmitting(false);
     }
   };
+
+  if (systemIsOff(systemState) && systemState) {
+    return (
+      <>
+        <PageHeader eyebrow="ระบบจัดการแข่งขัน" title="เข้าสู่ระบบ" description="สำหรับผู้ดูแลระบบ ผู้อำนวยการ และเจ้าหน้าที่กรอกผลเท่านั้น" />
+        <SystemOffPanel state={systemState}>
+          <p className="console-note">· ผู้จัด: ต้องเริ่มระบบก่อนจึงจะเข้าสู่ระบบได้</p>
+        </SystemOffPanel>
+      </>
+    );
+  }
 
   return (
     <>

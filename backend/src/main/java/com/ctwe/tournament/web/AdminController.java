@@ -4,7 +4,7 @@ import com.ctwe.tournament.application.CardEventPublisher;
 import com.ctwe.tournament.application.RuntimeSettings;
 import com.ctwe.tournament.application.RuntimeSettingsService;
 import com.ctwe.tournament.application.TenantService;
-import com.ctwe.tournament.application.TournamentArchiveService;
+import com.ctwe.tournament.application.excelexport.TournamentExcelExportService;
 import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
 import com.ctwe.tournament.web.dto.SettingsDtos;
 import com.ctwe.tournament.web.dto.TenantDtos;
@@ -21,15 +21,15 @@ import java.util.UUID;
 @RequestMapping("/api/admin")
 public class AdminController {
     private final TenantService tenant;
-    private final TournamentArchiveService archive;
+    private final TournamentExcelExportService excelExport;
     private final ReauthenticationService reauth;
     private final RuntimeSettingsService settings;
     private final CardEventPublisher events;
 
-    public AdminController(TenantService tenant, TournamentArchiveService archive, ReauthenticationService reauth,
+    public AdminController(TenantService tenant, TournamentExcelExportService excelExport, ReauthenticationService reauth,
                            RuntimeSettingsService settings, CardEventPublisher events) {
         this.tenant = tenant;
-        this.archive = archive;
+        this.excelExport = excelExport;
         this.reauth = reauth;
         this.settings = settings;
         this.events = events;
@@ -75,16 +75,27 @@ public class AdminController {
         tenant.deleteTournament(tournamentId, auth.getName());
     }
 
-    /** Export the whole tournament to an admin-only .xlsx archive, then delete the live data. */
+    /**
+     * ⚠️ DESTRUCTIVE: exports the whole tournament to an admin-only .xlsx, then PERMANENTLY DELETES the
+     * live data. This is Excel Export &amp; Purge — <b>not</b> Public Snapshot publication (which is
+     * non-destructive and lives under {@code /public-snapshot/**}). The path keeps its historical
+     * {@code /archive} name so existing download links stay valid; the behaviour is deletion.
+     *
+     * <p>Two guards: the operator's password is re-authenticated here, and the request must repeat the
+     * tournament's exact name (checked against the database by the service).
+     */
     @PostMapping("/tournaments/{tournamentId}/archive")
-    public TenantDtos.ArchiveSummary archiveTournament(@PathVariable UUID tournamentId, Authentication auth) {
-        return archive.archiveAndDelete(tournamentId, auth.getName());
+    public TenantDtos.ArchiveSummary exportAndPurgeTournament(@PathVariable UUID tournamentId,
+                                                              @Valid @RequestBody TenantDtos.PurgeConfirmation request,
+                                                              Authentication auth) {
+        reauth.requireCurrentPassword(auth, request.password());
+        return excelExport.exportToExcelAndPurgeLiveData(tournamentId, request, auth.getName());
     }
 
     @DeleteMapping("/archives/{archiveId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteArchive(@PathVariable UUID archiveId) {
-        archive.deleteArchive(archiveId);
+        excelExport.deleteArchive(archiveId);
     }
 
     @PatchMapping("/tournaments/{tournamentId}/status")

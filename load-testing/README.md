@@ -110,6 +110,71 @@ Important variables:
 
 Every threshold also has an environment override. See `config.ts` for names and defaults.
 
+## Phase H — the snapshot cutover measurements
+
+[The implementation plan's Phase H](../docs/PUBLIC_SNAPSHOT_IMPLEMENTATION_PLAN.md) asks for four
+measurements before the published-viewer flag is turned on in production. They are driven from the
+same harness, with a second scenario (`scenarios/snapshot-viewer.ts`) that mirrors the browser's
+static-first path: derive `s/{h}.json` from the access token, fetch it from the CDN, and — on a 200 —
+stop, having contacted neither Render nor Neon.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `SNAPSHOT_ORIGIN` | unset | CDN origin serving `/s/*.json`. Unset ⇒ no probe, no published viewers: this is the ① baseline |
+| `FLEET` | `live` | `live`, `published`, or `mixed` |
+| `PUBLISHED_TOKENS` | unset | Access tokens of tournaments that really are published. Required for `published`/`mixed` |
+| `LIVE_TOKENS` | the `TOURNAMENT_URL` token | Live tournaments the live half of the fleet views |
+| `PUBLISHED_VIEWER_SHARE` | `0.5` | Share of a `mixed` fleet assigned to published tournaments |
+| `SNAPSHOT_PROBE_ON_LIVE` | on when `SNAPSHOT_ORIGIN` is set | Issue the probe on the live path — this is what ④ measures |
+| `SNAPSHOT_PROBE_TIMEOUT_MS` | `1200` | Mirrors the browser's `PROBE_TIMEOUT_MS` |
+| `BASELINE_RUN_DIR` | unset | A previous run directory to compare ① and ③ against |
+| `THRESHOLD_MAX_PROBE_P95_MS` | `25` | Architecture §2.5(1)'s live-path budget |
+| `THRESHOLD_MIN_EDGE_HIT_RATIO` | `0.95` | Architecture §2.5(2): 404 probes answered by the edge |
+
+The recommended sequence is two runs — a baseline, then a mixed fleet compared against it:
+
+```bash
+# ① baseline: no snapshot origin, so the request sequence is exactly what it was before Phase H
+FLEET=live npm run loadtest
+
+# ②③④: 2 live + 2 published tournaments, judged against that baseline
+FLEET=mixed \
+SNAPSHOT_ORIGIN=https://snapshot.ct-we.com \
+LIVE_TOKENS=live-cup-a,live-cup-b \
+PUBLISHED_TOKENS=pub-cup-a,pub-cup-b \
+BASELINE_RUN_DIR=load-testing/results/<baseline-run-id> \
+npm run loadtest
+```
+
+The run refuses to start if any token in `PUBLISHED_TOKENS` does not actually resolve a snapshot
+through the public hostname. That refusal is the point: without it, every published viewer would 404,
+fail open onto the live path, and the run would report a "published fleet" that was never published.
+
+### What each measurement can and cannot show
+
+- ① and ② are behavioural and can be observed anywhere the two paths exist. Origin traffic is
+  **counted** per fleet (`lib/request-ledger.ts`), never assumed, so a published viewer that falls
+  back to the live path fails ② rather than passing it quietly.
+- ③ needs authenticated Actuator metrics for the Caffeine hit ratio; without them it reports
+  `NOT MEASURED`.
+- **④a is a delta and therefore needs two runs.** The single-run signal — the probe's own p95, which
+  is exactly what each live viewer additionally waits for, since the client awaits the probe before
+  the bundle — is reported alongside, and both must hold. Without a probe-off baseline the report
+  says the paired delta was not computed instead of implying it was. A baseline that itself probed is
+  refused as a control.
+- **④b is judged at steady state**, per §2.5(2). The first lookup of a key populates the edge's
+  negative cache and is *expected* to MISS, so cold first-lookups are counted separately and excluded
+  from the ratio; a run in which every key was probed exactly once reports `NOT MEASURED`, because the
+  edge never had a repeat to answer.
+- **④b can only be answered by a real Cloudflare edge.** With no edge in front of the bucket there is
+  no `cf-cache-status` header, and the report says `NOT MEASURED` rather than inventing a ratio.
+- A local or metrics-incomplete run **can never clear the Phase I gate**, however green its criteria
+  look. The runbook says so explicitly.
+
+`scripts/simulate-stack.ts` runs all three passes against three local stub servers. It exercises the
+orchestrator, the ledger and the report end to end without any infrastructure — and it measures the
+harness, not the system. Its latencies and its `cf-cache-status` values are whatever the stubs chose.
+
 ## Run with one command
 
 From the repository root:
@@ -201,7 +266,11 @@ load-testing/
 ```
 
 - `scenarios/viewer-sse.ts`: browser-compatible SSE viewer
+- `scenarios/snapshot-viewer.ts`: static-first published viewer (Phase H), including its fail-open fallback
 - `scenarios/staff-activity.ts`: optional real mutation load
+- `lib/request-ledger.ts`: per-fleet destination accounting — the basis of the zero-Render claim
+- `lib/snapshot-probe.ts` / `lib/snapshot-key.ts`: the probe and its object key, pinned to the browser's
+- `scripts/simulate-stack.ts`: stub-stack self-test of the Phase H pipeline (proves nothing about production)
 - `scripts/metrics-collector.ts`: authenticated Actuator sampling
 - `scripts/orchestrator.ts`: staged ramp/hold/evaluation lifecycle
 - `lib/evaluate.ts`: safety verdicts

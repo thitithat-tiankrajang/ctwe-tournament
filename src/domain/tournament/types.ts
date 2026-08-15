@@ -111,6 +111,69 @@ export interface Tournament {
   accessToken: string;
 }
 
+/**
+ * Why publication is or is not currently authorized (architecture §4.3).
+ *
+ * `contentFingerprint` is what the approver consented to; `currentFingerprint` is what the cards say
+ * now. They diverge exactly when publicly visible data changed after approval, which is the case the
+ * approval exists to catch.
+ */
+export interface PublicSnapshotApproval {
+  valid: boolean;
+  reason: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  expiresAt: string | null;
+  acknowledgmentRev: number;
+  contentFingerprint: string | null;
+  currentFingerprint: string;
+  currentAcknowledgmentRev: number;
+}
+
+/** Admin view of one tournament's public snapshot: what is published, and whether more may be. */
+export interface PublicSnapshotStatus {
+  state: "NOT_PUBLISHED" | "APPROVED" | "PUBLISHING" | "PUBLISHED" | "PUBLISH_FAILED" | "RETRACTED";
+  version: number;
+  publishedAt: string | null;
+  checksum: string | null;
+  objectKey: string;
+  publicUrl: string | null;
+  cardCount: number;
+  unfinishedCardCount: number;
+  storageConfigured: boolean;
+  approval: PublicSnapshotApproval;
+}
+
+/** A tournament standing between the operator and a backend shutdown (architecture §19.1). */
+export interface ShutdownBlocker {
+  tournamentId: string;
+  name: string;
+  snapshotState: PublicSnapshotStatus["state"];
+  cardCount: number;
+  unfinishedCardCount: number;
+}
+
+/** One published snapshot the stop workflow must verify from outside the backend (§19.3). */
+export interface ShutdownPublishedSnapshot {
+  tournamentId: string;
+  name: string;
+  h: string;
+  version: number;
+  sha: string;
+}
+
+/**
+ * The shutdown gate's answer. Advisory: the workflow still fetches every snapshot over the public
+ * internet before it suspends anything, because the backend may not judge its own shutdown (§19.3).
+ */
+export interface ShutdownReadiness {
+  activeTournamentCount: number;
+  unpublishedFinished: ShutdownBlocker[];
+  publishedSnapshots: ShutdownPublishedSnapshot[];
+  shelved: ShutdownBlocker[];
+  readyToStop: boolean;
+}
+
 /** Anonymous view of an OPEN tournament shown on the public root landing + token resolver. */
 export interface PublicTournamentSummary {
   id: string;

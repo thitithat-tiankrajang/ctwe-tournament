@@ -11,6 +11,8 @@ import { ArchiveList } from "@/ui/components/archive-list";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { SystemOffPanel } from "@/ui/components/system-off-panel";
+import { fetchSystemState, systemIsOff, type SystemState } from "@/infrastructure/http/system-state";
 
 /**
  * Master landing — role-aware entry point. Access requires signing in: anonymous visitors get a
@@ -87,7 +89,27 @@ export default function Home() {
     return () => { active = false; };
   }, [authLoading, staff, auth.authenticated, refresh, loadTournaments, setActiveTournament, router]);
 
+  // §20's system-off panel. Read once per mount; the file carries max-age=30 of its own.
+  const [systemState, setSystemState] = useState<SystemState | null>(null);
+  useEffect(() => { void fetchSystemState().then(setSystemState); }, []);
+
   if (authLoading) return <div className="panel panel-padding">กำลังตรวจสอบสิทธิ์…</div>;
+
+  // Architecture §20: the shell renders and the data calls fail, so the panel explains why rather
+  // than leaving a bare error banner. Anonymous visitors only — a signed-in operator's own screens
+  // already report their failures, and this must never hide a working system (§21 caveat 2).
+  if (!auth.authenticated && systemIsOff(systemState) && systemState) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="Tournament Control"
+          title="ระบบจัดการแข่งขันปิดอยู่"
+          description="ผลการแข่งขันที่เผยแพร่แล้วยังเปิดดูได้ตามปกติผ่านลิงก์ของรายการนั้น"
+        />
+        <SystemOffPanel state={systemState} />
+      </>
+    );
+  }
 
   if (staff) {
     return (
