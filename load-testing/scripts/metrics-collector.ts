@@ -169,14 +169,33 @@ export class MetricsCollector {
   /** Collapse a stage's samples into the numbers the verdict and the runbook need. */
   static summarize(samples: BackendSample[], windowSeconds: number): BackendWindowSummary | null {
     if (samples.length === 0) return null;
-    const values = (pick: (sample: BackendSample) => number | null) =>
-      samples.map(pick).filter((value): value is number => value !== null);
-    const max = (pick: (sample: BackendSample) => number | null) => {
-      const list = values(pick);
+    /**
+     * CPU is a *rate*, and a stage's first sample cannot measure one.
+     *
+     * Micrometer derives `process.cpu.usage`/`system.cpu.usage` from the interval since the meter was
+     * last read. The orchestrator takes the previous stage's `finalSample()` and then opens the next
+     * stage's collect loop with an immediate `sample()`, so that interval is near-zero and the ratio
+     * quantizes toward 1.0. A stage with 800/800 streams attached, zero rejections, zero reconnects
+     * and a 14% average then reports `cpuMax` 100% and FAILs on it.
+     *
+     * What proves it is an artifact rather than load: the same 100% first sample appears in a
+     * published-fleet stage that sent the backend no requests at all (4.8 rps of Actuator polling,
+     * zero SSE), and `system.cpu.usage` spikes on the very same sample — the whole host reads
+     * saturated for one reading and idle immediately after.
+     *
+     * Only the rate-derived readings drop that sample. Level gauges (heap, RSS, threads, pool,
+     * Tomcat) and the cumulative counter deltas keep every sample, because they read correctly at
+     * any interval. The raw sample still goes to `backendSamples`, so the record hides nothing.
+     */
+    const rateSamples = samples.length > 1 ? samples.slice(1) : samples;
+    const values = (pick: (sample: BackendSample) => number | null, from: BackendSample[] = samples) =>
+      from.map(pick).filter((value): value is number => value !== null);
+    const max = (pick: (sample: BackendSample) => number | null, from: BackendSample[] = samples) => {
+      const list = values(pick, from);
       return list.length ? Math.max(...list) : null;
     };
-    const avg = (pick: (sample: BackendSample) => number | null) => {
-      const list = values(pick);
+    const avg = (pick: (sample: BackendSample) => number | null, from: BackendSample[] = samples) => {
+      const list = values(pick, from);
       return list.length ? list.reduce((sum, value) => sum + value, 0) / list.length : null;
     };
     const first = samples[0];
@@ -200,9 +219,9 @@ export class MetricsCollector {
       ? null : Math.max(0, endingServerErrors - (first.httpServerErrorCount ?? 0));
     return {
       samples: samples.length,
-      cpuAvg: avg((sample) => sample.processCpu),
-      cpuMax: max((sample) => sample.processCpu),
-      systemCpuMax: max((sample) => sample.systemCpu),
+      cpuAvg: avg((sample) => sample.processCpu, rateSamples),
+      cpuMax: max((sample) => sample.processCpu, rateSamples),
+      systemCpuMax: max((sample) => sample.systemCpu, rateSamples),
       cpuCount: last.cpuCount,
       heapUsedMaxBytes: max((sample) => sample.heapUsedBytes),
       heapMaxBytes: last.heapMaxBytes,
