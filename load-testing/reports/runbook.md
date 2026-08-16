@@ -1,29 +1,29 @@
 # CTWE production performance runbook
 
-Generated from real run `2026-07-06T13-31-34` on 2026-07-06T13:31:52.371Z.
+Generated from real run `2026-08-16T22-55-56` on 2026-08-16T23:00:26.519Z.
 
 ## Executive recommendation
 
-- **Run classification:** LOCAL/INCOMPLETE SMOKE RUN — validates the harness, not production capacity
-- **Maximum concurrent viewers observed without hard failure:** 2 viewers / 2 active SSE
-- **Recommended `maxSseConnections`:** not available
-- **Recommended operating range:** not available
-- **Recommended minimum Render instance:** Not certifiable from this run
-- **Boundary confidence:** Only a lower bound was measured; extend STAGES until NEAR LIMIT/FAIL before treating this as a maximum.
+- **Run classification:** production/staging capacity evidence
+- **Maximum concurrent viewers observed without hard failure:** 250 viewers / 250 active SSE
+- **Recommended `maxSseConnections`:** 100
+- **Recommended operating range:** 80–100 concurrent SSE viewers
+- **Recommended minimum Render instance:** Standard — 1 CPU / 2 GB RAM
+- **Boundary confidence:** A near-limit or failing boundary was observed.
 - **Test stopped early:** no
 
 Reasoning:
 
 - The SSE recommendation uses the highest clean PASS stage; NEAR LIMIT stages are intentionally excluded from production headroom.
-- Render sizing and production SSE recommendations are intentionally withheld for local or metrics-incomplete runs.
+- Measured 0.36 CPU cores and 388 MiB process RSS; sizing keeps both below 70%.
 - CPU, heap, GC, threads, Hikari, Tomcat, and SSE occupancy come from authenticated Spring Boot Actuator metrics. Process RAM uses Linux kernel RSS when available.
 
 ## Stage results
 
 | Viewers | Active SSE | CPU max | Process RAM | Heap max | HTTP avg / p95 / p99 | SSE connect p95 / p99 | HTTP errors | Reconnects | Viewer HTTP RPS | Verdict |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|
-| 1 | 1 | 1.3% | — | 97 MiB | 26 ms / 69 ms / 69 ms | 3 ms / 3 ms | 0 | 0 | 0.4 | **PASS** |
-| 2 | 2 | 44.3% | — | 92 MiB | 12 ms / 25 ms / 25 ms | 2 ms / 2 ms | 0 | 0 | 0.4 | **PASS** |
+| 100 | 100 | 36.1% | 388 MiB | 118 MiB | 47 ms / 86 ms / 267 ms | 87 ms / 175 ms | 0 | 0 | 3 | **PASS** |
+| 250 | 250 | 29.1% | 393 MiB | 126 MiB | 39 ms / 78 ms / 123 ms | 146 ms / 178 ms | 0 | 0 | 4.4 | **NEAR LIMIT** |
 
 Errors in the table combine finite HTTP failures with SSE rejections, drops, and stalls.
 
@@ -31,26 +31,53 @@ Errors in the table combine finite HTTP failures with SSE rejections, drops, and
 
 | Viewers | GC pauses / total | Longest GC | Threads | Tomcat busy / conn | Hikari active / pending / max | Events | Fan-out p95 |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 1 / 0.01 s | 10 ms | 39 | 23 / 26 | 0 / 0 / 10 | 1 | — |
-| 2 | 1 / 0.005 s | 10 ms | 39 | 9 / 28 | 0 / 0 / 10 | 1 | — |
+| 100 | 5 / 0.764 s | 319 ms | 52 | 7 / 340 | 0 / 0 / 5 | 100 | — |
+| 250 | 3 / 0.026 s | 319 ms | 52 | 5 / 269 | 0 / 0 / 5 | 150 | — |
+
+## Phase H — snapshot cutover measurements
+
+- **Fleet:** `live`
+- **Snapshot origin:** https://snapshot.ct-we.com/
+- **Probe on the live path:** yes, 1200 ms timeout
+- **Live tournaments:** `stg-live-a`, `stg-live-b`
+- **Published tournaments:** `stg-pub-c`, `stg-pub-d`
+- **Baseline run:** `2026-08-16T22-51-11`
+
+| # | Measurement | Status | Evidence |
+|:--|:--|:--|:--|
+| ① | Baseline — live tournament, today's numbers | **PASS** | Taken from baseline run `2026-08-16T22-51-11`: live p95-to-first-data 218 ms. |
+| ② | Published fleet — zero Render requests, zero SSE connections | **NOT MEASURED** | No published viewers in this fleet (FLEET=live). |
+| ③ | Mixed fleet — live cache hit ratio improves, live p95 does not regress | **NOT MEASURED** | This run's fleet is `live`; ③ needs FLEET=mixed. |
+| ④a | Live-path p95-to-first-data does not regress (hard gate on Phase I) | **PASS** | Live p95-to-first-data 205 ms with the probe vs 218 ms without (Δ -13 ms, budget 25 ms), baseline run `2026-08-16T22-51-11`. Per-viewer added latency: PASS — p95 17 ms (avg 16.2 ms, max 202 ms) over 150 probe(s). |
+| ④b | 404 probes served from the Cloudflare edge (hard gate on Phase I) | **PASS** | 148/148 repeat 404 lookups were edge HITs (100%); statuses: HIT=148. Excluded 2 cold first-lookup(s) (HIT=2), which populate the negative cache and are expected to MISS. |
+
+**Phase I gate (④):** satisfied by this run.
+
+### Per-stage snapshot metrics
+
+| Viewers | Live / published | Probes (200 / 404 / timeout / error) | Probe p95 | Live first data p95 | Published first data p95 | Published Render req | Published SSE | Edge status (404) | Cache hit ratio |
+|---:|---:|---:|---:|---:|---:|---:|---:|:--|---:|
+| 100 | 100 / 0 | 0 / 100 / 0 / 0 | 17 ms | 351 ms | — | 0 | 0 | HIT=98 | 99% |
+| 250 | 250 / 0 | 0 / 150 / 0 / 0 | 17 ms | 205 ms | — | 0 | 0 | HIT=148 | 100% |
 
 ## Threshold findings
 
-- No threshold breaches or near-limit warnings were recorded.
+- **250 viewers — NEAR LIMIT:**
+  - Warning: heap usage at 86% of its budget
 
 ## Test identity and method
 
-- Tournament: **TestVerseCase** (`5be7e391-75b5-4b3b-91a0-d28fd7b4af03`)
-- Viewer page: `http://localhost:13000/tour/44c9918b95d1432990ab4d6827d4fdd5`
-- Public API: `http://localhost:18080/`
-- Backend metrics origin: `http://localhost:18080/`
-- Cards distributed across viewers: `cdea06b8-761b-424c-861e-e79706321284`
-- Effective backend SSE cap at preflight: 20
+- Tournament: **stg-live-a** (`176d5c4a-d050-4605-9b93-adc5dda5e05f`)
+- Viewer page: `https://ct-we.com/tour/stg-live-a`
+- Public API: `https://ctwe-backend-staging.onrender.com/`
+- Backend metrics origin: `https://ctwe-backend-staging.onrender.com/`
+- Cards distributed across viewers: `5db5cc0a-a543-468d-9634-85a3db5853f9`, `6ac54787-ed4d-4951-b51b-5c78de80513e`
+- Effective backend SSE cap at preflight: 1500
 - Heartbeat interval: 25000 ms
-- Stages: 1 → 2
-- Per-stage timing: 1s ramp + 1s settle + 6s hold
+- Stages: 100 → 250
+- Per-stage timing: 30s ramp + 10s settle + 90s hold
 - Staff result activity: disabled
-- Raw result directory: `/Users/thitithat_tiankrajang/Desktop/CTWE/load-testing/results/2026-07-06T13-31-34`
+- Raw result directory: `/Users/thitithat_tiankrajang/Desktop/CTWE/load-testing/results/2026-08-16T22-55-56`
 
 Each viewer fetches the real tournament document, realtime config, and one-shot tournament bundle, then holds one EventSource-compatible SSE connection for its selected card. The harness parses SSE frames, honors server retry hints, watches heartbeats, and reconnects with capped jittered backoff.
 
@@ -66,8 +93,8 @@ Each viewer fetches the real tournament document, realtime config, and one-shot 
 
 ### Production configuration
 
-- Start with `maxPublicSseConnections=<highest clean PASS>`.
-- Set Tomcat max connections to at least `ceil(maxSseConnections × 1.20)` so staff/API/health traffic retains headroom.
+- Start with `maxPublicSseConnections=100`.
+- Set Tomcat max connections to at least `120` so staff/API/health traffic retains headroom.
 - Keep heartbeat below proxy idle timeouts and above the level that creates excessive fan-out work; the measured value is shown above.
 - Keep `LOAD_TEST_MODE=false` in normal production. The admin-managed cap and its production ceiling remain authoritative.
 
