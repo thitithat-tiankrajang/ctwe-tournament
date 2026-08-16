@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, CloudOff, CloudUpload, ExternalLink, LoaderCircle, ShieldCheck, ShieldX } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import type { PublicSnapshotStatus, Tournament } from "@/domain/tournament/types";
 import { Badge, type BadgeTone } from "@/ui/components/badge";
@@ -49,18 +49,29 @@ export function SnapshotPublicationPanel({ tournament, busy, onApprove, onError,
   const [status, setStatus] = useState<PublicSnapshotStatus | null>(null);
   const [working, setWorking] = useState(false);
 
+  // The console passes these as inline arrows, so their identity changes on every parent render.
+  // Held in refs rather than depended on: reporting a status calls back into the parent, which
+  // re-renders this row, and a load effect keyed on callback identity would then schedule another
+  // load — one request storm per mounted row, forever.
+  const onStatusRef = useRef(onStatus);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onStatusRef.current = onStatus;
+    onErrorRef.current = onError;
+  });
+
   const publish = useCallback((next: PublicSnapshotStatus) => {
     setStatus(next);
-    onStatus?.(tournament.id, next);
-  }, [onStatus, tournament.id]);
+    onStatusRef.current?.(tournament.id, next);
+  }, [tournament.id]);
 
   const refresh = useCallback(async () => {
     try {
       publish(await loadSnapshotStatus(tournament.id));
     } catch (error) {
-      onError(error instanceof Error ? error.message : "โหลดสถานะฉบับเผยแพร่ไม่สำเร็จ");
+      onErrorRef.current(error instanceof Error ? error.message : "โหลดสถานะฉบับเผยแพร่ไม่สำเร็จ");
     }
-  }, [loadSnapshotStatus, tournament.id, onError, publish]);
+  }, [loadSnapshotStatus, tournament.id, publish]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
