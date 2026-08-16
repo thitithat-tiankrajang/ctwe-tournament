@@ -25,6 +25,36 @@ interface Distribution {
   max: number | null;
 }
 
+interface SnapshotFleetRecord {
+  liveViewers: number;
+  publishedViewers: number;
+  probes: number;
+  probesPublished: number;
+  probesNotPublished: number;
+  probesTimedOut: number;
+  probesFailed: number;
+  probesUnusable: number;
+  liveFleetProbeHits: number;
+  probeMs: Distribution;
+  publishedOriginRequests: number;
+  publishedSseAttempts: number;
+  publishedFallbacks: number;
+  liveOriginRequests: number;
+  cdnRequests: number;
+  cdnBytes: number;
+  edgeStatus200: Record<string, number>;
+  edgeStatus404: Record<string, number>;
+  liveFirstDataMs: Distribution;
+  publishedFirstDataMs: Distribution;
+}
+
+interface SnapshotCriterionRecord {
+  id: string;
+  label: string;
+  status: "PASS" | "FAIL" | "NOT MEASURED";
+  detail: string;
+}
+
 interface StageRecord {
   target: number;
   client: {
@@ -48,6 +78,8 @@ interface StageRecord {
     writeMs: Distribution;
     writes: number;
     writeErrors: number;
+    /** Absent in runs recorded before Phase H. */
+    snapshot?: SnapshotFleetRecord;
   };
   backend: null | {
     samples: number;
@@ -74,8 +106,16 @@ interface StageRecord {
     serverAvgLatencyMs: number | null;
     serverMaxLatencyMs: number | null;
     serverErrors: number | null;
+    publicCardCacheHits?: number | null;
+    publicCardCacheMisses?: number | null;
+    publicCardCacheHitRatio?: number | null;
   };
-  evaluation: { verdict: Verdict; breaches: string[]; warnings: string[] };
+  evaluation: {
+    verdict: Verdict;
+    breaches: string[];
+    warnings: string[];
+    snapshotCriteria?: SnapshotCriterionRecord[];
+  };
 }
 
 interface RunRecord {
@@ -91,6 +131,19 @@ interface RunRecord {
     cardIds: string[];
     effectiveCap: number | null;
     heartbeatIntervalMs: number | null;
+  };
+  /** Absent in runs recorded before Phase H. */
+  snapshot?: {
+    fleet: "live" | "published" | "mixed";
+    configured: boolean;
+    origin: string | null;
+    probeOnLive: boolean;
+    probeTimeoutMs: number;
+    publishedShare: number;
+    liveTokens: string[];
+    publishedTokens: string[];
+    publishedSnapshots: { token: string; url: string; edgeStatus: string | null }[];
+    baselineRunDir: string | null;
   };
   settings: {
     stages: number[];
@@ -201,7 +254,268 @@ function details(run: RunRecord): string[] {
   return lines.length ? lines : ["- No threshold breaches or near-limit warnings were recorded."];
 }
 
-function renderRunbook(run: RunRecord, runDir: string): string {
+// ------------------------------------------------------------------ Phase H (snapshot cutover)
+
+type CriterionStatus = "PASS" | "FAIL" | "NOT MEASURED";
+
+/** The worst status any stage recorded for one criterion — a single failing stage fails it. */
+function worstCriterion(run: RunRecord, id: string): SnapshotCriterionRecord | null {
+  const found = run.stages
+    .flatMap((stage) => stage.evaluation.snapshotCriteria ?? [])
+    .filter((criterion) => criterion.id === id);
+  if (found.length === 0) return null;
+  return found.find((c) => c.status === "FAIL")
+    ?? found.find((c) => c.status === "NOT MEASURED")
+    ?? found[found.length - 1];
+}
+
+/** The stage of `run` that best corresponds to `stage`, preferring an identical viewer target. */
+function pairedStage(run: RunRecord, target: number): StageRecord | undefined {
+  return run.stages.find((stage) => stage.target === target) ?? run.stages.at(-1);
+}
+
+function loadBaseline(baselineRunDir: string | null): RunRecord | null {
+  if (!baselineRunDir) return null;
+  const runPath = path.join(baselineRunDir, "run.json");
+  if (!fs.existsSync(runPath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(runPath, "utf8")) as RunRecord;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Measurement ③ — the mixed fleet.
+ *
+ * Two claims, both compared against the baseline run rather than against intuition: publishing some
+ * tournaments must improve the public-card cache hit ratio for the tournaments still live (fewer
+ * distinct cards competing for a cache whose maximum size is 8), and it must not make the live
+ * viewers slower.
+ */
+function mixedFleetFinding(run: RunRecord, baseline: RunRecord | null, thresholds: Record<string, number>) {
+  if (run.snapshot?.fleet !== "mixed") {
+    return { status: "NOT MEASURED" as CriterionStatus, detail: `This run's fleet is \`${run.snapshot?.fleet ?? "live"}\`; ③ needs FLEET=mixed.` };
+  }
+  if (!baseline) {
+    return { status: "NOT MEASURED" as CriterionStatus, detail: "No baseline run supplied (set BASELINE_RUN_DIR to a ① run) — there is nothing to compare against." };
+  }
+  const stage = run.stages.at(-1);
+  const control = stage ? pairedStage(baseline, stage.target) : undefined;
+  if (!stage || !control) {
+    return { status: "NOT MEASURED" as CriterionStatus, detail: "The mixed run or the baseline has no comparable stage." };
+  }
+
+  const mixedP95 = stage.client.snapshot?.liveFirstDataMs.p95 ?? null;
+  const baseP95 = control.client.snapshot?.liveFirstDataMs.p95 ?? control.client.bootstrapMs.p95 ?? null;
+  const mixedRatio = stage.backend?.publicCardCacheHitRatio ?? null;
+  const baseRatio = control.backend?.publicCardCacheHitRatio ?? null;
+  const budget = thresholds.maxLiveFirstDataRegressionMs ?? 25;
+
+  const parts: string[] = [];
+  let status: CriterionStatus = "PASS";
+  if (mixedP95 === null || baseP95 === null) {
+    parts.push("live p95-to-first-data could not be compared (one side has no sample)");
+    status = "NOT MEASURED";
+  } else {
+    const delta = mixedP95 - baseP95;
+    parts.push(`live p95-to-first-data ${mixedP95} ms vs baseline ${baseP95} ms (Δ ${delta >= 0 ? "+" : ""}${delta} ms, budget ${budget} ms)`);
+    if (delta > budget) status = "FAIL";
+  }
+  if (mixedRatio === null || baseRatio === null) {
+    parts.push("Caffeine hit ratio unavailable (Actuator metrics absent)");
+    if (status !== "FAIL") status = "NOT MEASURED";
+  } else {
+    parts.push(`public-card cache hit ratio ${pct(mixedRatio)} vs baseline ${pct(baseRatio)}`);
+    if (mixedRatio < baseRatio && status !== "FAIL") status = "FAIL";
+  }
+  return { status, detail: `${parts.join("; ")}. Baseline run: \`${baseline.runId}\`.` };
+}
+
+/**
+ * Measurement ④a — the probe's cost on the live path, as §2.5(1) states it.
+ *
+ * The criterion is a **delta**: live p95-to-first-data with the probe, against the same load without
+ * it. That needs two runs, so it is computed here and treated as authoritative whenever a probe-off
+ * baseline is available. The per-stage signal (the probe's own p95, which is exactly what each live
+ * viewer additionally waits for) is a single-run proxy and is reported alongside; both must hold,
+ * because either one failing means the live path got slower.
+ */
+function probeCostFinding(
+  run: RunRecord,
+  baseline: RunRecord | null,
+  thresholds: Record<string, number>,
+  perStage: SnapshotCriterionRecord | null,
+) {
+  const budget = thresholds.maxProbeP95Ms ?? 25;
+  const stage = run.stages.at(-1);
+  const control = stage ? pairedStage(baseline ?? run, stage.target) : undefined;
+  const runP95 = stage?.client.snapshot?.liveFirstDataMs.p95 ?? null;
+  const baseP95 = baseline ? control?.client.snapshot?.liveFirstDataMs.p95 ?? null : null;
+
+  const proxy = perStage
+    ? `Per-viewer added latency: ${perStage.status} — ${perStage.detail}`
+    : "Per-viewer added latency was not measured.";
+
+  // A paired delta needs a probe-on run with live viewers and a probe-off baseline. Anything else
+  // would be comparing two different things and calling the difference a cost.
+  const comparable = baseline !== null
+    && run.snapshot?.probeOnLive === true
+    && baseline.snapshot?.probeOnLive !== true
+    && runP95 !== null
+    && baseP95 !== null;
+
+  if (!comparable) {
+    const why = baseline === null
+      ? "no baseline run supplied"
+      : run.snapshot?.probeOnLive !== true
+        ? "this run issued no probe on the live path"
+        : baseline.snapshot?.probeOnLive === true
+          ? "the baseline run also probed, so it is not a probe-off control"
+          : "one side recorded no live-path first-data sample (a fleet with no live viewers)";
+    return {
+      status: (perStage?.status ?? "NOT MEASURED") as CriterionStatus,
+      detail: `**Paired delta not computed** (${why}), so only the single-run bound is available. ${proxy}`,
+    };
+  }
+
+  const delta = runP95! - baseP95!;
+  const failed = delta > budget || perStage?.status === "FAIL";
+  return {
+    status: (failed ? "FAIL" : "PASS") as CriterionStatus,
+    detail: `Live p95-to-first-data ${runP95} ms with the probe vs ${baseP95} ms without `
+      + `(Δ ${delta >= 0 ? "+" : ""}${delta} ms, budget ${budget} ms), baseline run \`${baseline!.runId}\`. ${proxy}`,
+  };
+}
+
+function phaseHSection(run: RunRecord, baseline: RunRecord | null, certifying: boolean): string[] {
+  const snapshot = run.snapshot;
+  if (!snapshot) {
+    return [
+      "## Phase H — snapshot cutover measurements",
+      "",
+      "This run predates Phase H instrumentation; none of the four measurements are present.",
+      "",
+    ];
+  }
+
+  const rows: { id: string; measurement: string; status: CriterionStatus; detail: string }[] = [];
+
+  // ① the live baseline
+  const isBaselineRun = snapshot.fleet === "live" && !snapshot.probeOnLive;
+  const last = run.stages.at(-1);
+  rows.push({
+    id: "①",
+    measurement: "Baseline — live tournament, today's numbers",
+    status: isBaselineRun ? "PASS" : baseline ? "PASS" : "NOT MEASURED",
+    detail: isBaselineRun
+      ? `This run is the baseline: FLEET=live with no probe. Live p95-to-first-data ${ms(last?.client.snapshot?.liveFirstDataMs.p95)}, ${last?.client.activeStreams ?? 0} active SSE at ${last?.target ?? 0} viewers.`
+      : baseline
+        ? `Taken from baseline run \`${baseline.runId}\`: live p95-to-first-data ${ms(pairedStage(baseline, last?.target ?? 0)?.client.snapshot?.liveFirstDataMs.p95)}.`
+        : "No baseline recorded in or referenced by this run. Run once with SNAPSHOT_ORIGIN unset and pass that directory as BASELINE_RUN_DIR.",
+  });
+
+  // ② published fleet
+  const h2 = worstCriterion(run, "H2");
+  rows.push({
+    id: "②",
+    measurement: "Published fleet — zero Render requests, zero SSE connections",
+    status: h2?.status ?? "NOT MEASURED",
+    detail: h2?.detail ?? "No published viewers were run.",
+  });
+
+  // ③ mixed fleet
+  const h3 = mixedFleetFinding(run, baseline, run.settings.thresholds);
+  rows.push({
+    id: "③",
+    measurement: "Mixed fleet — live cache hit ratio improves, live p95 does not regress",
+    status: h3.status,
+    detail: h3.detail,
+  });
+
+  // ④ probe cost — the hard gate on Phase I
+  const h4a = worstCriterion(run, "H4a");
+  const h4b = worstCriterion(run, "H4b");
+  const probeCost = probeCostFinding(run, baseline, run.settings.thresholds, h4a);
+  rows.push({
+    id: "④a",
+    measurement: "Live-path p95-to-first-data does not regress (hard gate on Phase I)",
+    status: probeCost.status,
+    detail: probeCost.detail,
+  });
+  rows.push({
+    id: "④b",
+    measurement: "404 probes served from the Cloudflare edge (hard gate on Phase I)",
+    status: h4b?.status ?? "NOT MEASURED",
+    detail: h4b?.detail ?? "No 404 probes were observed.",
+  });
+
+  const gateBlocked = rows.filter((row) => row.id.startsWith("④") && row.status !== "PASS");
+  const anyFail = rows.some((row) => row.status === "FAIL");
+
+  const lines = [
+    "## Phase H — snapshot cutover measurements",
+    "",
+    `- **Fleet:** \`${snapshot.fleet}\`${snapshot.fleet === "mixed" ? ` (${Math.round(snapshot.publishedShare * 100)}% published viewers)` : ""}`,
+    `- **Snapshot origin:** ${snapshot.origin ?? "not configured"}`,
+    `- **Probe on the live path:** ${snapshot.probeOnLive ? `yes, ${snapshot.probeTimeoutMs} ms timeout` : "no"}`,
+    `- **Live tournaments:** ${snapshot.liveTokens.map((token) => `\`${token}\``).join(", ") || "—"}`,
+    `- **Published tournaments:** ${snapshot.publishedTokens.map((token) => `\`${token}\``).join(", ") || "—"}`,
+    `- **Baseline run:** ${baseline ? `\`${baseline.runId}\`` : "none supplied"}`,
+    "",
+    "| # | Measurement | Status | Evidence |",
+    "|:--|:--|:--|:--|",
+    ...rows.map((row) => `| ${row.id} | ${row.measurement} | **${row.status}** | ${row.detail} |`),
+    "",
+    // A non-certifying run can never clear the gate, however green its criteria look. A local stub
+    // decides for itself what `cf-cache-status` to send, so ④b passing there says nothing about any
+    // edge; letting that read as "satisfied" is precisely the misreading this line exists to stop.
+    `**Phase I gate (④):** ${gateBlocked.length > 0
+      ? `NOT satisfied — ${gateBlocked.map((row) => `${row.id} is ${row.status}`).join(", ")}. Phase I must not proceed on this evidence.`
+      : certifying
+        ? "satisfied by this run."
+        : "NOT satisfied — ④a and ④b pass here, but this run is local or metrics-incomplete, so it "
+          + "cannot clear a gate about production edge behaviour. Re-run against staging behind the "
+          + "real CDN."}`,
+    "",
+  ];
+
+  if (!certifying) {
+    lines.push(
+      "> **This run does not certify anything about production.** It targets a local or "
+      + "metrics-incomplete stack, so the numbers above validate the harness and the client's request "
+      + "behaviour, not the capacity or edge behaviour of the real deployment. Measurement ④b in "
+      + "particular can only be answered by a real Cloudflare edge in front of the public bucket.",
+      "",
+    );
+  }
+  if (anyFail) {
+    lines.push(
+      "> A **FAIL** above is a measurement result, not a harness error. Architecture §2.5 makes ④ a "
+      + "precondition for the cutover: if the probe regresses the live path, the documented fallback "
+      + "is Worker routing (§2.2 option C), which reuses the identical client change and only moves "
+      + "the signal's source.",
+      "",
+    );
+  }
+
+  lines.push(
+    "### Per-stage snapshot metrics",
+    "",
+    "| Viewers | Live / published | Probes (200 / 404 / timeout / error) | Probe p95 | Live first data p95 | Published first data p95 | Published Render req | Published SSE | Edge status (404) | Cache hit ratio |",
+    "|---:|---:|---:|---:|---:|---:|---:|---:|:--|---:|",
+  );
+  for (const stage of run.stages) {
+    const s = stage.client.snapshot;
+    if (!s) continue;
+    const edge = Object.entries(s.edgeStatus404).map(([key, count]) => `${key}=${count}`).join(", ") || "—";
+    lines.push(`| ${stage.target} | ${s.liveViewers} / ${s.publishedViewers} | ${s.probesPublished} / ${s.probesNotPublished} / ${s.probesTimedOut} / ${s.probesFailed + s.probesUnusable} | ${ms(s.probeMs.p95)} | ${ms(s.liveFirstDataMs.p95)} | ${ms(s.publishedFirstDataMs.p95)} | ${s.publishedOriginRequests} | ${s.publishedSseAttempts} | ${edge} | ${stage.backend?.publicCardCacheHitRatio == null ? "—" : pct(stage.backend.publicCardCacheHitRatio)} |`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function renderRunbook(run: RunRecord, runDir: string, baseline: RunRecord | null): string {
   const nonFail = run.stages.filter((stage) => stage.evaluation.verdict !== "FAIL");
   const clean = run.stages.filter((stage) => stage.evaluation.verdict === "PASS");
   const maximumObserved = nonFail.at(-1);
@@ -256,6 +570,7 @@ function renderRunbook(run: RunRecord, runDir: string): string {
     "",
     ...resourceTable(run),
     "",
+    ...phaseHSection(run, baseline, certifying),
     "## Threshold findings",
     "",
     ...details(run),
@@ -319,14 +634,15 @@ function renderRunbook(run: RunRecord, runDir: string): string {
   return lines.join("\n");
 }
 
-export function generateRunbook(runDir: string, reportsDir: string): string {
+export function generateRunbook(runDir: string, reportsDir: string, baselineRunDir: string | null = null): string {
   const runPath = path.join(runDir, "run.json");
   if (!fs.existsSync(runPath)) throw new Error(`Missing run artifact: ${runPath}`);
   const run = JSON.parse(fs.readFileSync(runPath, "utf8")) as RunRecord;
   if (!Array.isArray(run.stages) || run.stages.length === 0)
     throw new Error(`Run has no completed stages: ${runPath}`);
   fs.mkdirSync(reportsDir, { recursive: true });
-  const content = renderRunbook(run, runDir);
+  const baseline = loadBaseline(baselineRunDir ?? run.snapshot?.baselineRunDir ?? null);
+  const content = renderRunbook(run, runDir, baseline);
   const latest = path.join(reportsDir, "runbook.md");
   const archived = path.join(reportsDir, `runbook-${run.runId}.md`);
   fs.writeFileSync(latest, content);
@@ -334,11 +650,20 @@ export function generateRunbook(runDir: string, reportsDir: string): string {
   return latest;
 }
 
+/**
+ * `RESULTS_DIR` and `REPORTS_DIR` are honoured here for the same reason the orchestrator honours
+ * them: without that, regenerating a report from a scratch run silently overwrites
+ * `reports/runbook.md` — the committed record of the last real capacity run. That is not a
+ * hypothetical; it happened while Phase H was being built.
+ */
 function cli(): void {
   const here = path.dirname(fileURLToPath(import.meta.url));
+  const resultsDir = process.env.RESULTS_DIR ?? path.join(here, "results");
+  const reportsDir = process.env.REPORTS_DIR ?? path.join(here, "reports");
   const explicit = process.argv[2];
-  const runDir = explicit ? path.resolve(explicit) : latestRunDir(path.join(here, "results"));
-  const output = generateRunbook(runDir, path.join(here, "reports"));
+  const runDir = explicit ? path.resolve(explicit) : latestRunDir(resultsDir);
+  const baseline = process.argv[3] ? path.resolve(process.argv[3]) : process.env.BASELINE_RUN_DIR ?? null;
+  const output = generateRunbook(runDir, reportsDir, baseline);
   console.log(`Runbook generated: ${output}`);
 }
 

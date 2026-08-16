@@ -1,8 +1,9 @@
 "use client";
 
 import { create } from "zustand";
-import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicTournamentBundle, PublicTournamentSummary, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
+import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
 import { comparePlayerCodes } from "@/domain/tournament/player-code";
 import { hasStaffAccess } from "@/domain/tournament/roles";
 
@@ -18,6 +19,12 @@ export interface ActiveTournament {
   name: string;
   /** Present for anonymous link-scoped viewers; never used as an authorization credential. */
   accessToken?: string;
+  /**
+   * True when this tournament was resolved from a published CDN snapshot rather than the live API.
+   * Such a tournament is finished and immutable, so the viewer opens no SSE stream and starts no
+   * polling — there is nothing left to receive.
+   */
+  published?: boolean;
 }
 
 export interface TournamentArchive {
@@ -125,11 +132,27 @@ interface TournamentState {
   createTournament: (name: string, slug: string) => Promise<Tournament>;
   deleteTournament: (tournamentId: string) => Promise<void>;
   loadArchives: () => Promise<TournamentArchive[]>;
-  archiveTournament: (tournamentId: string) => Promise<void>;
+  /**
+   * ⚠️ DESTRUCTIVE — Excel Export & Purge: exports the tournament to .xlsx and then permanently
+   * deletes its live rows. Not Public Snapshot publication. `password` re-authenticates the admin and
+   * `tournamentName` must repeat the tournament's exact name; the backend rejects a mismatch.
+   */
+  archiveTournament: (tournamentId: string, password: string, tournamentName: string) => Promise<void>;
   deleteArchive: (archiveId: string) => Promise<void>;
   setTournamentStatus: (tournamentId: string, open: boolean, password: string) => Promise<void>;
   loadRealtimeSettings: () => Promise<RealtimeSettings>;
   updateRealtimeSettings: (settings: RealtimeSettingsInput) => Promise<RealtimeSettings>;
+  /** Public Snapshot (Phase E). Admin-only; nothing here is on any viewer path. */
+  loadSnapshotStatus: (tournamentId: string) => Promise<PublicSnapshotStatus>;
+  approveSnapshot: (tournamentId: string, password: string, tournamentName: string,
+    acknowledgmentRev: number) => Promise<PublicSnapshotStatus>;
+  revokeSnapshotApproval: (tournamentId: string) => Promise<PublicSnapshotStatus>;
+  publishSnapshot: (tournamentId: string) => Promise<PublicSnapshotStatus>;
+  retractSnapshot: (tournamentId: string) => Promise<PublicSnapshotStatus>;
+  /** Phase G shutdown gate (architecture §19). Admin-only; reports, never acts. */
+  loadShutdownReadiness: () => Promise<ShutdownReadiness>;
+  shelveTournament: (tournamentId: string, password: string) => Promise<ShutdownReadiness>;
+  unshelveTournament: (tournamentId: string) => Promise<ShutdownReadiness>;
   grantStaffTournament: (username: string, tournamentId: string) => Promise<void>;
   revokeStaffTournament: (username: string, tournamentId: string) => Promise<void>;
   listDirectors: () => Promise<ManagedUser[]>;
@@ -324,13 +347,35 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 
   // Default cache mode (not no-store): the server tags the bundle with an ETag, so refresh spam
   // revalidates to a tiny 304 instead of re-downloading the whole tournament.
-  const fetchTournamentBundle = async (token: string) => {
+  const fetchLiveTournamentBundle = async (token: string) => {
     const response = await fetch(
       publicApiUrl(`/api/public/tournaments/${encodeURIComponent(token)}/bundle`),
       { credentials: "omit" },
     );
     if (!response.ok) throw new Error(await readError(response));
     return response.json() as Promise<PublicTournamentBundle>;
+  };
+
+  // Tokens resolved from a published CDN snapshot rather than the live API. Read by the sync hooks
+  // so a published tournament opens no SSE stream and starts no polling: there is nothing to poll.
+  const publishedTokens = new Set<string>();
+
+  /**
+   * Static-first: ask the CDN for a published snapshot, and fall through to today's exact live path
+   * on anything other than a usable answer.
+   *
+   * The published branch issues NO request to the API origin — the probe response IS the data, so
+   * there is never a second fetch for the same tournament. The live branch issues exactly the same
+   * request it always has; the probe cost is one edge-cached 404 that never reaches an origin.
+   */
+  const fetchTournamentBundle = async (token: string): Promise<PublicTournamentBundle> => {
+    const snapshot = await fetchSnapshotBundle(token);
+    if (snapshot) {
+      publishedTokens.add(token);
+      return snapshot;
+    }
+    publishedTokens.delete(token);
+    return fetchLiveTournamentBundle(token);
   };
 
   // One network call shared between the viewer page effect and the app-wide hydration load().
@@ -343,7 +388,10 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         // Staff/directors hold richer card data from /api/cards; never clobber it with the
         // public projection. Anonymous viewers get the full bundle in one shot.
         if (publicScopeToken === token && !get().auth.authenticated && !hasStaffSessionHint()) {
-          get().setActiveTournament({ id: bundle.id, name: bundle.name, accessToken: bundle.accessToken });
+          get().setActiveTournament({
+            id: bundle.id, name: bundle.name, accessToken: bundle.accessToken,
+            published: publishedTokens.has(token),
+          });
           // The bundle is also revalidated periodically while the viewer sits on the card list,
           // and a CDN copy can lag a few seconds behind SSE — keep whichever card is newer so a
           // stale bundle never rolls back live data. New cards appear, deleted cards drop out.
@@ -868,8 +916,11 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       set({ archives });
       return archives;
     },
-    async archiveTournament(tournamentId) {
-      await request(`/api/admin/tournaments/${tournamentId}/archive`, { method: "POST" });
+    async archiveTournament(tournamentId, password, tournamentName) {
+      await request(`/api/admin/tournaments/${tournamentId}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ password, tournamentName }),
+      });
       const archives = await request<TournamentArchive[]>("/api/archives");
       set((state) => ({ cards: state.cards.filter((card) => card.tournamentId !== tournamentId), archives, error: null }));
     },
@@ -885,6 +936,43 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async updateRealtimeSettings(settings) {
       return request<RealtimeSettings>("/api/admin/settings/realtime", { method: "PUT", body: JSON.stringify(settings) });
+    },
+    async loadSnapshotStatus(tournamentId) {
+      return request<PublicSnapshotStatus>(`/api/admin/tournaments/${tournamentId}/public-snapshot/status`);
+    },
+    async approveSnapshot(tournamentId, password, tournamentName, acknowledgmentRev) {
+      // The revision travels with the approval so the record names the exact wording that was shown;
+      // the backend refuses anything but its current one.
+      return request<PublicSnapshotStatus>(`/api/admin/tournaments/${tournamentId}/public-snapshot/approve`, {
+        method: "POST",
+        body: JSON.stringify({ password, tournamentName, acknowledgmentRev }),
+      });
+    },
+    async revokeSnapshotApproval(tournamentId) {
+      return request<PublicSnapshotStatus>(`/api/admin/tournaments/${tournamentId}/public-snapshot/approve`, { method: "DELETE" });
+    },
+    async loadShutdownReadiness() {
+      return request<ShutdownReadiness>("/api/admin/system/shutdown-readiness");
+    },
+    async shelveTournament(tournamentId, password) {
+      return request<ShutdownReadiness>(`/api/admin/system/tournaments/${tournamentId}/shelve`, {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+    },
+    async unshelveTournament(tournamentId) {
+      return request<ShutdownReadiness>(`/api/admin/system/tournaments/${tournamentId}/shelve`, { method: "DELETE" });
+    },
+    async retractSnapshot(tournamentId) {
+      // Withdraws the public object. Deliberately needs no approval and no re-auth (architecture
+      // §4.5, I9): stopping publication must never be the hard part.
+      await request(`/api/admin/tournaments/${tournamentId}/public-snapshot/retract`, { method: "POST" });
+      return request<PublicSnapshotStatus>(`/api/admin/tournaments/${tournamentId}/public-snapshot/status`);
+    },
+    async publishSnapshot(tournamentId) {
+      // The pipeline returns its own outcome; the caller wants the resulting state, so re-read it.
+      await request(`/api/admin/tournaments/${tournamentId}/public-snapshot/publish`, { method: "POST" });
+      return request<PublicSnapshotStatus>(`/api/admin/tournaments/${tournamentId}/public-snapshot/status`);
     },
     async grantStaffTournament(username, tournamentId) {
       await request(`/api/director/staff/${encodeURIComponent(username)}/tournaments`, { method: "POST", body: JSON.stringify({ tournamentId }) });

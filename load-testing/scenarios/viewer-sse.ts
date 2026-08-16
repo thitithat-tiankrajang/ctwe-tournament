@@ -2,20 +2,35 @@
  * One simulated public viewer, faithful to the real /tour page:
  *
  *  1. (optional) GET the page document — what a first visit costs the frontend host.
- *  2. GET /api/public/realtime-config and the tournament bundle — the page's only data requests.
- *  3. Open ONE EventSource-equivalent SSE stream to the assigned card and keep it open.
+ *  2. (Phase H) the CDN probe, when a snapshot origin is configured — issued *before* the bundle,
+ *     because the real client awaits it before starting the live fetch.
+ *  3. GET /api/public/realtime-config and the tournament bundle — the page's only data requests.
+ *  4. Open ONE EventSource-equivalent SSE stream to the assigned card and keep it open.
  *
  * The SSE client reproduces browser EventSource semantics: incremental frame parsing, `retry:`
  * hints, automatic reconnect with exponential backoff + full jitter, and a heartbeat watchdog
  * that kills silently-dead sockets exactly like a mobile browser losing radio.
+ *
+ * With no snapshot origin configured, step 2 does not exist and the request sequence is identical to
+ * what it was before Phase H — that is what makes a run in this mode the ① baseline.
  */
 import http from "node:http";
 import https from "node:https";
-import type { Config } from "../config.js";
-import type { MetricsHub } from "../lib/metrics-hub.js";
+import { pageUrlFor, type Config } from "../config.js";
+import type { FleetRole, MetricsHub } from "../lib/metrics-hub.js";
+import type { CountedHttp } from "../lib/request-ledger.js";
+import { httpFor, probeSnapshot } from "../lib/snapshot-probe.js";
 
 export interface ViewerTarget {
+  token: string;
   cardId: string;
+}
+
+export interface ViewerOptions {
+  /** Which half of the fleet this viewer's traffic is charged to. */
+  fleet?: FleetRole;
+  /** False when a caller has already performed the page-load requests (the fail-open fallback). */
+  bootstrap?: boolean;
 }
 
 interface SseFrame {
@@ -34,6 +49,9 @@ export class Viewer {
   private readonly config: Config;
   private readonly hub: MetricsHub;
   private readonly target: ViewerTarget;
+  private readonly fleet: FleetRole;
+  private readonly doBootstrap: boolean;
+  private readonly http: CountedHttp;
 
   private stopped = false;
   private request: http.ClientRequest | null = null;
@@ -45,15 +63,26 @@ export class Viewer {
   private consecutiveFailures = 0;
   private serverRetryMs: number | null = null;
 
-  constructor(id: number, target: ViewerTarget, config: Config, hub: MetricsHub) {
+  constructor(
+    id: number,
+    target: ViewerTarget,
+    config: Config,
+    hub: MetricsHub,
+    options: ViewerOptions = {},
+  ) {
     this.id = id;
     this.target = target;
     this.config = config;
     this.hub = hub;
+    this.fleet = options.fleet ?? "live";
+    this.doBootstrap = options.bootstrap ?? true;
+    this.http = httpFor(config, hub, this.fleet);
+    // A viewer created as somebody else's fail-open fallback is already counted by its owner.
+    if (this.doBootstrap) hub.registerViewer(this.fleet);
   }
 
   async start(): Promise<void> {
-    await this.bootstrap();
+    if (this.doBootstrap) await this.bootstrap();
     if (!this.stopped) this.connect();
   }
 
@@ -73,13 +102,20 @@ export class Viewer {
     const started = Date.now();
     try {
       if (this.config.fetchPageDocument) {
-        await this.timedFetch(this.config.tournamentUrl.href, "text/html");
+        await this.timedFetch(pageUrlFor(this.config, this.target.token), "text/html");
+      }
+      // Phase H ④: the client awaits the probe before it starts the live fetch, so the probe's own
+      // duration is exactly what a live viewer pays. Ordering it here rather than in parallel is
+      // what makes that measurement faithful.
+      if (this.config.snapshot.probeOnLive) {
+        await probeSnapshot(this.config, this.hub, this.http, this.target.token, this.fleet);
       }
       await this.timedFetch(new URL("/api/public/realtime-config", this.config.publicApiOrigin).href, "application/json");
       await this.timedFetch(
-        new URL(`/api/public/tournaments/${encodeURIComponent(this.config.token)}/bundle`, this.config.publicApiOrigin).href,
+        new URL(`/api/public/tournaments/${encodeURIComponent(this.target.token)}/bundle`, this.config.publicApiOrigin).href,
         "application/json",
       );
+      this.hub.firstData(this.fleet, Date.now() - started);
       this.hub.bootstrapTimed(Date.now() - started);
     } catch {
       this.hub.httpError();
@@ -87,29 +123,16 @@ export class Viewer {
   }
 
   private async timedFetch(url: string, accept: string): Promise<void> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
-    const startedAt = Date.now();
-    let recorded = false;
-    try {
-      const response = await fetch(url, { headers: { accept }, signal: controller.signal });
-      // Drain so keep-alive sockets are reusable and byte counts stay honest.
-      const body = await response.arrayBuffer();
-      this.hub.bytes(body.byteLength);
-      this.hub.httpResponse(Date.now() - startedAt, response.ok);
-      recorded = true;
-      if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
-    } catch (error) {
-      if (!recorded) this.hub.httpError();
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
+    const response = await this.http.fetch(url, accept);
+    if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
   }
 
   private connect(): void {
     if (this.stopped) return;
-    this.hub.attempt();
+    this.hub.attempt(this.fleet);
+    // An SSE stream is a Render request and is charged as one. A published viewer opening a stream
+    // is therefore visible twice over in the ② criterion — as an attempt and as origin traffic.
+    this.hub.originRequest(this.fleet);
     const url = new URL(
       `/api/public/cards/${encodeURIComponent(this.target.cardId)}/events`,
       this.config.publicApiOrigin,

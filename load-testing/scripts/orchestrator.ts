@@ -11,9 +11,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertProductionGuard, loadConfig, type Config } from "../config.js";
+import { snapshotUrl } from "../lib/snapshot-key.js";
 import { MetricsHub } from "../lib/metrics-hub.js";
 import { evaluateStage, type Evaluation } from "../lib/evaluate.js";
 import { Viewer } from "../scenarios/viewer-sse.js";
+import { SnapshotViewer } from "../scenarios/snapshot-viewer.js";
 import { StaffActivity } from "../scenarios/staff-activity.js";
 import { MetricsCollector, type BackendSample, type BackendWindowSummary } from "./metrics-collector.js";
 import { generateRunbook } from "../runbook-generator.js";
@@ -30,14 +32,69 @@ interface StageRecord {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function preflight(config: Config, collector: MetricsCollector) {
+/** One live tournament a live viewer can be assigned to. */
+interface LiveTarget {
+  token: string;
+  id: string;
+  name: string;
+  cardIds: string[];
+}
+
+async function liveTarget(config: Config, token: string): Promise<LiveTarget> {
   const bundleUrl = new URL(
-    `/api/public/tournaments/${encodeURIComponent(config.token)}/bundle`, config.publicApiOrigin);
+    `/api/public/tournaments/${encodeURIComponent(token)}/bundle`, config.publicApiOrigin);
   const response = await fetch(bundleUrl, { headers: { accept: "application/json" } });
   if (!response.ok) throw new Error(`Bundle preflight failed: HTTP ${response.status} for ${bundleUrl}`);
   const bundle = await response.json() as { id: string; name: string; cards: { id: string; name: string; division: string }[] };
-  if (bundle.cards.length === 0) throw new Error("Tournament has no cards — viewers would idle. Seed a card first.");
-  const cardIds = config.cardId ? [config.cardId] : bundle.cards.map((card) => card.id);
+  if (bundle.cards.length === 0) {
+    throw new Error(`Tournament ${token} has no cards — viewers would idle. Seed a card first.`);
+  }
+  return {
+    token,
+    id: bundle.id,
+    name: bundle.name,
+    cardIds: config.cardId && token === config.token ? [config.cardId] : bundle.cards.map((card) => card.id),
+  };
+}
+
+/**
+ * Prove, before any load starts, that every token named as published really resolves a snapshot from
+ * the CDN.
+ *
+ * Without this the most likely Phase H failure is also the quietest: a mistyped token, a retracted
+ * tournament, or a key derivation that drifted from the browser's. Every viewer would 404, fail open
+ * onto the live path, and the run would report a "published fleet" that was never published. Refusing
+ * to start is the only way that mistake surfaces as a mistake.
+ */
+async function snapshotPreflight(config: Config): Promise<{ token: string; url: string; edgeStatus: string | null }[]> {
+  const origin = config.snapshot.origin;
+  if (!origin || config.snapshot.publishedTokens.length === 0) return [];
+  const resolved: { token: string; url: string; edgeStatus: string | null }[] = [];
+  for (const token of config.snapshot.publishedTokens) {
+    const url = snapshotUrl(origin, token);
+    const response = await fetch(url, { headers: { accept: "application/json" } });
+    if (!response.ok) {
+      throw new Error(
+        `Snapshot preflight failed for "${token}": HTTP ${response.status} at ${url}. `
+        + "PUBLISHED_TOKENS must list tournaments whose snapshot is actually published and reachable "
+        + "through the public hostname — otherwise every published viewer falls through to the live "
+        + "path and the zero-Render measurement is meaningless.",
+      );
+    }
+    const envelope = await response.json() as { snapshot?: { schema?: number }; payload?: { cards?: unknown[] } };
+    if (envelope?.snapshot?.schema !== 1 || !Array.isArray(envelope.payload?.cards)) {
+      throw new Error(`Snapshot preflight failed for "${token}": ${url} is not a schema-1 snapshot envelope.`);
+    }
+    resolved.push({ token, url, edgeStatus: response.headers.get("cf-cache-status") });
+  }
+  return resolved;
+}
+
+async function preflight(config: Config, collector: MetricsCollector) {
+  const liveTargets = await Promise.all(config.snapshot.liveTokens.map((token) => liveTarget(config, token)));
+  const bundle = liveTargets[0];
+  const cardIds = liveTargets.flatMap((target) => target.cardIds);
+  const publishedSnapshots = await snapshotPreflight(config);
 
   // One probe stream proves SSE actually opens before we commit thousands of sockets.
   const probeUrl = new URL(`/api/public/cards/${cardIds[0]}/events`, config.publicApiOrigin);
@@ -59,7 +116,27 @@ async function preflight(config: Config, collector: MetricsCollector) {
     effectiveCap = settings?.maxPublicSseConnections ?? null;
     heartbeatIntervalMs = settings?.heartbeatIntervalMs ?? null;
   }
-  return { tournament: { id: bundle.id, name: bundle.name }, cardIds, effectiveCap, heartbeatIntervalMs };
+  return {
+    tournament: { id: bundle.id, name: bundle.name },
+    cardIds,
+    liveTargets,
+    publishedSnapshots,
+    effectiveCap,
+    heartbeatIntervalMs,
+  };
+}
+
+/**
+ * Which fleet the n-th viewer belongs to.
+ *
+ * Interleaved rather than blocked, so the mix holds throughout the ramp instead of appearing only
+ * once the last viewer has joined — a stage that is aborted mid-ramp still describes a mixed fleet.
+ */
+function fleetFor(index: number, config: Config): "live" | "published" {
+  if (config.snapshot.fleet === "live") return "live";
+  if (config.snapshot.fleet === "published") return "published";
+  const share = config.snapshot.publishedShare;
+  return Math.floor((index + 1) * share) > Math.floor(index * share) ? "published" : "live";
 }
 
 function formatBytes(bytes: number | null): string {
@@ -107,14 +184,29 @@ async function main(): Promise<void> {
 
   const info = await preflight(config, collector);
   console.log(`Tournament    : ${info.tournament.name} (${info.cardIds.length} card(s))`);
-  if (info.effectiveCap !== null) {
+  console.log(`Fleet         : ${config.snapshot.fleet}`
+    + (config.snapshot.fleet === "mixed" ? ` (${Math.round(config.snapshot.publishedShare * 100)}% published)` : ""));
+  if (config.snapshot.origin) {
+    console.log(`Snapshot CDN  : ${config.snapshot.origin.href} (probe on live path: ${config.snapshot.probeOnLive})`);
+    for (const snapshot of info.publishedSnapshots) {
+      console.log(`  published   : ${snapshot.token} -> ${snapshot.url}`
+        + (snapshot.edgeStatus ? ` (cf-cache-status: ${snapshot.edgeStatus})` : " (no cf-cache-status header)"));
+    }
+  } else {
+    console.log("Snapshot CDN  : not configured — this run is the Phase H ① live baseline");
+  }
+  const topStage = config.stages[config.stages.length - 1].target;
+  // Only live viewers hold a stream, so only they consume the admission cap.
+  const topLiveViewers = Array.from({ length: topStage }, (_, index) => fleetFor(index, config))
+    .filter((fleet) => fleet === "live").length;
+  if (info.effectiveCap !== null && topLiveViewers > 0) {
     console.log(`Effective cap : ${info.effectiveCap} public SSE connections`);
-    const top = config.stages[config.stages.length - 1].target;
-    if (info.effectiveCap < top) {
+    if (info.effectiveCap < topLiveViewers) {
       throw new Error(
-        `Effective maxPublicSseConnections (${info.effectiveCap}) is below the top stage (${top}). `
-        + "Start the backend with LOAD_TEST_MODE=true MAX_SSE_CONNECTIONS=" + top
-        + " TOMCAT_MAX_CONNECTIONS=" + Math.ceil(top * 1.2) + " — see load-testing/README.md.",
+        `Effective maxPublicSseConnections (${info.effectiveCap}) is below the top stage's live viewer `
+        + `count (${topLiveViewers}). Start the backend with LOAD_TEST_MODE=true MAX_SSE_CONNECTIONS=`
+        + topLiveViewers + " TOMCAT_MAX_CONNECTIONS=" + Math.ceil(topLiveViewers * 1.2)
+        + " — see load-testing/README.md.",
       );
     }
   }
@@ -133,7 +225,10 @@ async function main(): Promise<void> {
     console.log("Staff activity: disabled (set ACTIVITY_CARD_ID + ACTIVITY_MATCH_ID to measure fan-out latency)");
   }
 
-  const viewers: Viewer[] = [];
+  const viewers: (Viewer | SnapshotViewer)[] = [];
+  // Round-robin over every (tournament, card) pair so a mixed fleet spreads across all live cards.
+  const liveSlots = info.liveTargets.flatMap((target) =>
+    target.cardIds.map((cardId) => ({ token: target.token, cardId })));
   const stopAll = () => {
     activity.stop();
     for (const viewer of viewers) viewer.stop();
@@ -168,7 +263,14 @@ async function main(): Promise<void> {
     const spacingMs = toAdd > 0 ? (config.rampSeconds * 1000) / toAdd : 0;
     for (let added = 0; added < toAdd; added += 1) {
       const id = viewers.length;
-      const viewer = new Viewer(id, { cardId: info.cardIds[id % info.cardIds.length] }, config, hub);
+      const viewer = fleetFor(id, config) === "published"
+        ? new SnapshotViewer(
+          id,
+          config.snapshot.publishedTokens[id % config.snapshot.publishedTokens.length],
+          config,
+          hub,
+        )
+        : new Viewer(id, liveSlots[id % liveSlots.length], config, hub);
       viewers.push(viewer);
       void viewer.start();
       if (spacingMs > 0) await sleep(spacingMs);
@@ -183,7 +285,10 @@ async function main(): Promise<void> {
 
     const client = hub.snapshot();
     const backend = MetricsCollector.summarize(samples, client.windowSeconds);
-    const evaluation = evaluateStage(stage.target, client, backend, config.thresholds);
+    const evaluation = evaluateStage(stage.target, client, backend, config.thresholds, {
+      fleet: config.snapshot.fleet,
+      configured: config.snapshot.origin !== null,
+    });
     const record: StageRecord = {
       target: stage.target,
       startedAt,
@@ -198,6 +303,10 @@ async function main(): Promise<void> {
     console.log(stageRow(record));
     for (const breach of evaluation.breaches) console.log(`        ✗ ${breach}`);
     for (const warning of evaluation.warnings) console.log(`        ! ${warning}`);
+    for (const criterion of evaluation.snapshotCriteria) {
+      console.log(`        ${criterion.status === "PASS" ? "✓" : criterion.status === "FAIL" ? "✗" : "·"} `
+        + `${criterion.id} ${criterion.status}: ${criterion.detail}`);
+    }
 
     if (evaluation.verdict === "FAIL" && config.stopOnFail) {
       aborted = `stopped after first failing stage (${stage.target} viewers); set STOP_ON_FAIL=false to continue`;
@@ -222,6 +331,18 @@ async function main(): Promise<void> {
       effectiveCap: info.effectiveCap,
       heartbeatIntervalMs: info.heartbeatIntervalMs,
     },
+    snapshot: {
+      fleet: config.snapshot.fleet,
+      configured: config.snapshot.origin !== null,
+      origin: config.snapshot.origin?.href ?? null,
+      probeOnLive: config.snapshot.probeOnLive,
+      probeTimeoutMs: config.snapshot.probeTimeoutMs,
+      publishedShare: config.snapshot.publishedShare,
+      liveTokens: config.snapshot.liveTokens,
+      publishedTokens: config.snapshot.publishedTokens,
+      publishedSnapshots: info.publishedSnapshots,
+      baselineRunDir: config.snapshot.baselineRunDir,
+    },
     settings: {
       stages: config.stages.map((stage) => stage.target),
       rampSeconds: config.rampSeconds,
@@ -237,7 +358,7 @@ async function main(): Promise<void> {
   };
   fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
 
-  const runbookPath = generateRunbook(runDir, config.reportsDir);
+  const runbookPath = generateRunbook(runDir, config.reportsDir, config.snapshot.baselineRunDir);
   console.log(`\nResults : ${runDir}`);
   console.log(`Runbook : ${runbookPath}`);
 }

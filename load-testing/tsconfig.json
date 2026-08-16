@@ -11,5 +11,5 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["config.ts", "runbook-generator.ts", "lib/**/*.ts", "scenarios/**/*.ts", "scripts/**/*.ts"]
+  "include": ["config.ts", "runbook-generator.ts", "*.test.ts", "lib/**/*.ts", "scenarios/**/*.ts", "scripts/**/*.ts"]
 }

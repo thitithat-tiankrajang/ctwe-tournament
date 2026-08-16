@@ -45,6 +45,75 @@ class Reservoir {
   }
 }
 
+export type Distribution = ReturnType<Reservoir["summary"]>;
+
+/** Which half of the fleet a measurement belongs to. */
+export type FleetRole = "live" | "published";
+
+/**
+ * How one snapshot probe ended, in the client's own terms
+ * (`src/infrastructure/http/snapshot-api.ts`).
+ *
+ * `unusable` is the 200-but-unreadable case — an envelope schema this build does not understand, or
+ * a malformed body. It is kept apart from `error` because it means the CDN is serving something,
+ * which is a different operational problem from the CDN being unreachable.
+ */
+export type ProbeOutcome = "published" | "not-published" | "timeout" | "error" | "unusable";
+
+export interface ProbeResult {
+  fleet: FleetRole;
+  outcome: ProbeOutcome;
+  durationMs: number;
+  /** The `cf-cache-status` response header, or null when no Cloudflare edge answered. */
+  edgeStatus: string | null;
+  /** The object key probed. Used to tell a cold first lookup from a warm repeat one. */
+  key: string;
+}
+
+/**
+ * Everything Phase H asserts on. Deliberately counted rather than inferred: the zero-Render claim is
+ * only meaningful if origin traffic from the published fleet is observed and reported, including the
+ * fail-open fallback that a real client performs when a snapshot is missing.
+ */
+export interface SnapshotFleetSnapshot {
+  liveViewers: number;
+  publishedViewers: number;
+  probes: number;
+  probesPublished: number;
+  probesNotPublished: number;
+  probesTimedOut: number;
+  probesFailed: number;
+  probesUnusable: number;
+  /** A probe on a LIVE-fleet token that returned a snapshot: that token is published after all. */
+  liveFleetProbeHits: number;
+  probeMs: Distribution;
+  /** Requests the published fleet sent to Render. Phase H ② requires this to be zero. */
+  publishedOriginRequests: number;
+  /** SSE connection attempts by the published fleet. Phase H ② requires this to be zero. */
+  publishedSseAttempts: number;
+  /** Published viewers that fell through to the live path (each one explains an origin request). */
+  publishedFallbacks: number;
+  liveOriginRequests: number;
+  cdnRequests: number;
+  cdnBytes: number;
+  /**
+   * `cf-cache-status` tallies, kept separate because ④ is specifically about the 404 probes, and
+   * split cold/warm because architecture §2.5(2) asks for the edge's behaviour **at steady state**.
+   *
+   * The first lookup of a given key is the one that populates the edge's negative cache, so it is
+   * expected to MISS by design — that is the mechanism working, not failing. Counting it against the
+   * hit ratio would make the criterion unsatisfiable at small viewer counts and would misdescribe it
+   * at large ones. `…Cold` holds those first-per-key lookups; `…` holds every repeat, and the repeats
+   * are what the ratio is computed over.
+   */
+  edgeStatus200: Record<string, number>;
+  edgeStatus404: Record<string, number>;
+  edgeStatus200Cold: Record<string, number>;
+  edgeStatus404Cold: Record<string, number>;
+  liveFirstDataMs: Distribution;
+  publishedFirstDataMs: Distribution;
+}
+
 export interface StageClientSnapshot {
   windowSeconds: number;
   activeStreams: number;
@@ -69,12 +138,15 @@ export interface StageClientSnapshot {
   writeMs: ReturnType<Reservoir["summary"]>;
   writes: number;
   writeErrors: number;
+  snapshot: SnapshotFleetSnapshot;
 }
 
 export class MetricsHub {
   // Gauges survive stage resets — they describe the fleet, not the window.
   activeStreams = 0;
   private peakActiveStreams = 0;
+  private liveViewers = 0;
+  private publishedViewers = 0;
 
   // Window counters, reset per stage.
   private sseAttempts = 0;
@@ -92,11 +164,35 @@ export class MetricsHub {
   private writes = 0;
   private writeErrors = 0;
 
+  // Phase H window counters.
+  private probes = 0;
+  private probesPublished = 0;
+  private probesNotPublished = 0;
+  private probesTimedOut = 0;
+  private probesFailed = 0;
+  private probesUnusable = 0;
+  private liveFleetProbeHits = 0;
+  private publishedOriginRequests = 0;
+  private publishedSseAttempts = 0;
+  private publishedFallbacks = 0;
+  private liveOriginRequests = 0;
+  private cdnRequests = 0;
+  private cdnBytesReceived = 0;
+  private edgeStatus200: Record<string, number> = {};
+  private edgeStatus404: Record<string, number> = {};
+  private edgeStatus200Cold: Record<string, number> = {};
+  private edgeStatus404Cold: Record<string, number> = {};
+  /** Keys probed at least once in this window; a repeat is a lookup the edge could have cached. */
+  private probedKeys = new Set<string>();
+
   private readonly connectMs = new Reservoir();
   private readonly bootstrapMs = new Reservoir();
   private readonly httpRequestMs = new Reservoir();
   private readonly eventLatencyMs = new Reservoir();
   private readonly writeMs = new Reservoir();
+  private readonly probeMs = new Reservoir();
+  private readonly liveFirstDataMs = new Reservoir();
+  private readonly publishedFirstDataMs = new Reservoir();
 
   /**
    * Staff-write correlation. There is exactly ONE writer and writes are many seconds apart while
@@ -126,7 +222,12 @@ export class MetricsHub {
     if (reason === "stalled") this.sseStalled += 1;
   }
 
-  attempt(): void { this.sseAttempts += 1; }
+  attempt(fleet: FleetRole = "live"): void {
+    this.sseAttempts += 1;
+    // A published viewer must never open a stream. Counting rather than forbidding is deliberate:
+    // the scenario is free to behave like the real fail-open client, and the criterion catches it.
+    if (fleet === "published") this.publishedSseAttempts += 1;
+  }
   rejected(status: number): void {
     this.sseRejected += 1;
     const key = String(status);
@@ -161,6 +262,88 @@ export class MetricsHub {
 
   writeFailed(): void { this.writeErrors += 1; }
 
+  // ------------------------------------------------------------------------------------ Phase H
+
+  registerViewer(fleet: FleetRole): void {
+    if (fleet === "published") this.publishedViewers += 1;
+    else this.liveViewers += 1;
+  }
+
+  /** One completed CDN probe, with the edge's own verdict on whether it answered from cache. */
+  probeCompleted(result: ProbeResult): void {
+    this.probes += 1;
+    this.probeMs.record(result.durationMs);
+    switch (result.outcome) {
+      case "published": this.probesPublished += 1; break;
+      case "not-published": this.probesNotPublished += 1; break;
+      case "timeout": this.probesTimedOut += 1; break;
+      case "unusable": this.probesUnusable += 1; break;
+      default: this.probesFailed += 1;
+    }
+    if (result.fleet === "live" && result.outcome === "published") this.liveFleetProbeHits += 1;
+
+    // An absent header is recorded as "absent", never folded into MISS: no Cloudflare answered, so
+    // ④ has no evidence either way and must report "not measured" rather than a ratio.
+    const cold = !this.probedKeys.has(result.key);
+    this.probedKeys.add(result.key);
+    const bucket = result.outcome === "published"
+      ? (cold ? this.edgeStatus200Cold : this.edgeStatus200)
+      : result.outcome === "not-published"
+        ? (cold ? this.edgeStatus404Cold : this.edgeStatus404)
+        : null;
+    if (bucket) {
+      const status = (result.edgeStatus ?? "absent").toUpperCase();
+      bucket[status] = (bucket[status] ?? 0) + 1;
+    }
+  }
+
+  /** Every request that reached Render, attributed to the fleet that issued it. */
+  originRequest(fleet: FleetRole): void {
+    if (fleet === "published") this.publishedOriginRequests += 1;
+    else this.liveOriginRequests += 1;
+  }
+
+  cdnRequest(bytes: number): void {
+    this.cdnRequests += 1;
+    this.cdnBytesReceived += bytes;
+  }
+
+  /** A published viewer that could not resolve a snapshot and took the live path instead. */
+  publishedFallback(): void { this.publishedFallbacks += 1; }
+
+  /** Page-open to tournament-data-in-hand, whichever path supplied it. */
+  firstData(fleet: FleetRole, ms: number): void {
+    if (fleet === "published") this.publishedFirstDataMs.record(ms);
+    else this.liveFirstDataMs.record(ms);
+  }
+
+  private snapshotFleet(): SnapshotFleetSnapshot {
+    return {
+      liveViewers: this.liveViewers,
+      publishedViewers: this.publishedViewers,
+      probes: this.probes,
+      probesPublished: this.probesPublished,
+      probesNotPublished: this.probesNotPublished,
+      probesTimedOut: this.probesTimedOut,
+      probesFailed: this.probesFailed,
+      probesUnusable: this.probesUnusable,
+      liveFleetProbeHits: this.liveFleetProbeHits,
+      probeMs: this.probeMs.summary(),
+      publishedOriginRequests: this.publishedOriginRequests,
+      publishedSseAttempts: this.publishedSseAttempts,
+      publishedFallbacks: this.publishedFallbacks,
+      liveOriginRequests: this.liveOriginRequests,
+      cdnRequests: this.cdnRequests,
+      cdnBytes: this.cdnBytesReceived,
+      edgeStatus200: { ...this.edgeStatus200 },
+      edgeStatus404: { ...this.edgeStatus404 },
+      edgeStatus200Cold: { ...this.edgeStatus200Cold },
+      edgeStatus404Cold: { ...this.edgeStatus404Cold },
+      liveFirstDataMs: this.liveFirstDataMs.summary(),
+      publishedFirstDataMs: this.publishedFirstDataMs.summary(),
+    };
+  }
+
   resetWindow(): void {
     this.sseAttempts = 0;
     this.sseOpened = 0;
@@ -176,6 +359,27 @@ export class MetricsHub {
     this.httpErrors = 0;
     this.writes = 0;
     this.writeErrors = 0;
+    this.probes = 0;
+    this.probesPublished = 0;
+    this.probesNotPublished = 0;
+    this.probesTimedOut = 0;
+    this.probesFailed = 0;
+    this.probesUnusable = 0;
+    this.liveFleetProbeHits = 0;
+    this.publishedOriginRequests = 0;
+    this.publishedSseAttempts = 0;
+    this.publishedFallbacks = 0;
+    this.liveOriginRequests = 0;
+    this.cdnRequests = 0;
+    this.cdnBytesReceived = 0;
+    this.edgeStatus200 = {};
+    this.edgeStatus404 = {};
+    this.edgeStatus200Cold = {};
+    this.edgeStatus404Cold = {};
+    this.probedKeys.clear();
+    this.probeMs.reset();
+    this.liveFirstDataMs.reset();
+    this.publishedFirstDataMs.reset();
     this.connectMs.reset();
     this.bootstrapMs.reset();
     this.httpRequestMs.reset();
@@ -211,6 +415,7 @@ export class MetricsHub {
       writeMs: this.writeMs.summary(),
       writes: this.writes,
       writeErrors: this.writeErrors,
+      snapshot: this.snapshotFleet(),
     };
   }
 }

@@ -1,6 +1,6 @@
 package com.ctwe.tournament.web;
 
-import com.ctwe.tournament.application.TournamentArchiveService;
+import com.ctwe.tournament.application.excelexport.TournamentExcelExportService;
 import com.ctwe.tournament.web.dto.TenantDtos;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -16,26 +16,27 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Anonymous access to archived (exported-to-Excel) tournaments shown on the root landing. Archive
- * blobs are intentionally retained as a permanent, publicly downloadable backup of finished events.
+ * Anonymous access to the .xlsx files produced by Excel Export &amp; Purge, shown on the root landing.
+ * These blobs are intentionally retained as a permanent, publicly downloadable backup of finished
+ * events. Read-only, and unrelated to Public Snapshot publication.
  */
 @RestController
 @RequestMapping("/api/public/archives")
 public class PublicArchiveController {
-    private final TournamentArchiveService archive;
+    private final TournamentExcelExportService excelExport;
 
-    public PublicArchiveController(TournamentArchiveService archive) {
-        this.archive = archive;
+    public PublicArchiveController(TournamentExcelExportService excelExport) {
+        this.excelExport = excelExport;
     }
 
     @GetMapping
     public List<TenantDtos.ArchiveSummary> list() {
-        return archive.list();
+        return excelExport.list();
     }
 
     @GetMapping("/{id}/download")
     public ResponseEntity<byte[]> download(@PathVariable UUID id) {
-        TournamentArchiveService.ArchiveFile file = archive.download(id);
+        TournamentExcelExportService.ArchiveFile file = excelExport.download(id);
         String encoded = URLEncoder.encode(file.fileName(), StandardCharsets.UTF_8).replace("+", "%20");
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"archive.xlsx\"; filename*=UTF-8''" + encoded)

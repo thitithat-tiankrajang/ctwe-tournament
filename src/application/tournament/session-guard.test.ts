@@ -89,6 +89,36 @@ test("a network failure does not masquerade as an expired session", async () => 
   }
 });
 
+/**
+ * Architecture §20, Phase G: while the backend is suspended the Worker proxy answers `/api/auth/me`
+ * with a clean 503. A returning admin must not be told their session expired and bounced to a login
+ * form that also cannot work — "the system is off" and "you were logged out" are different news.
+ *
+ * The guard already treats any unsuccessful response this way, because `fetchAuthState` throws on
+ * `!response.ok`. This pins that behaviour for the specific status Phase G produces, so a future
+ * refactor that starts inspecting status codes cannot quietly reintroduce the misleading logout.
+ */
+test("a 503 from a suspended backend is system-off, not an expired session", async () => {
+  const browser = installBrowser("/admin");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("", { status: 503 });
+  useTournamentStore.setState({ auth: authenticated("ROLE_ADMIN") });
+
+  try {
+    await useTournamentStore.getState().ensureSessionAlive();
+    assert.equal(useTournamentStore.getState().auth.authenticated, true);
+    assert.deepEqual(browser.redirects, [], "no redirect to a login page that cannot help");
+
+    await useTournamentStore.getState().refreshAuth();
+    assert.equal(useTournamentStore.getState().auth.authenticated, true,
+      "the privileged session survives the outage and resumes when the backend returns");
+    assert.deepEqual(browser.redirects, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    browser.restore();
+  }
+});
+
 test("a wrong confirmation password does not masquerade as an expired session", async () => {
   const browser = installBrowser("/admin");
   const originalFetch = globalThis.fetch;

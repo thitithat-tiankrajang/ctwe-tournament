@@ -32,6 +32,15 @@ export interface BackendSample {
   httpRequestTotalSec: number | null;
   httpRequestMaxSec: number | null;
   httpServerErrorCount: number | null;
+  /**
+   * Caffeine counters for the public card cache (Phase H ③).
+   *
+   * Micrometer publishes these because `CacheConfiguration` builds every cache with `recordStats()`.
+   * They are monotonic counters, so only the delta across a stage means anything — a ratio computed
+   * from the absolute values would be dominated by whatever happened before the stage began.
+   */
+  publicCardCacheHits: number | null;
+  publicCardCacheMisses: number | null;
 }
 
 export interface BackendWindowSummary {
@@ -59,6 +68,10 @@ export interface BackendWindowSummary {
   serverAvgLatencyMs: number | null;
   serverMaxLatencyMs: number | null;
   serverErrors: number | null;
+  /** Public-card cache hits/misses during this stage only, and their ratio (null when unavailable). */
+  publicCardCacheHits: number | null;
+  publicCardCacheMisses: number | null;
+  publicCardCacheHitRatio: number | null;
 }
 
 interface MetricResponse {
@@ -86,9 +99,13 @@ export class MetricsCollector {
     return await response.json() as { maxPublicSseConnections: number; heartbeatIntervalMs: number };
   }
 
-  private async metric(name: string, statistic: string, tag?: string): Promise<number | null> {
+  private async metric(name: string, statistic: string, tag?: string | string[]): Promise<number | null> {
     try {
-      const query = tag ? `?tag=${encodeURIComponent(tag)}` : "";
+      // Actuator selects a meter by repeating `tag`; `cache.gets` needs both the cache name and the
+      // hit/miss result, so one tag is not enough.
+      const tags = tag === undefined ? [] : Array.isArray(tag) ? tag : [tag];
+      const query = tags.length === 0
+        ? "" : `?${tags.map((value) => `tag=${encodeURIComponent(value)}`).join("&")}`;
       const response = await this.session.request(`/actuator/metrics/${name}${query}`);
       if (!response.ok) return null;
       const body = await response.json() as MetricResponse;
@@ -108,6 +125,7 @@ export class MetricsCollector {
       liveThreads, hikariActive, hikariPending, hikariMax,
       tomcatBusyThreads, tomcatConnections,
       httpRequestCount, httpRequestTotalSec, httpRequestMaxSec, httpServerErrorCount,
+      publicCardCacheHits, publicCardCacheMisses,
     ] = await Promise.all([
       this.metric("sse.streams.public", "VALUE"),
       this.metric("sse.streams.staff", "VALUE"),
@@ -132,6 +150,8 @@ export class MetricsCollector {
       this.metric("http.server.requests", "TOTAL_TIME"),
       this.metric("http.server.requests", "MAX"),
       this.metric("http.server.requests", "COUNT", "outcome:SERVER_ERROR"),
+      this.metric("cache.gets", "COUNT", ["cache:public-card-details", "result:hit"]),
+      this.metric("cache.gets", "COUNT", ["cache:public-card-details", "result:miss"]),
     ]);
     return {
       at: new Date().toISOString(),
@@ -142,20 +162,40 @@ export class MetricsCollector {
       liveThreads, hikariActive, hikariPending, hikariMax,
       tomcatBusyThreads, tomcatConnections,
       httpRequestCount, httpRequestTotalSec, httpRequestMaxSec, httpServerErrorCount,
+      publicCardCacheHits, publicCardCacheMisses,
     };
   }
 
   /** Collapse a stage's samples into the numbers the verdict and the runbook need. */
   static summarize(samples: BackendSample[], windowSeconds: number): BackendWindowSummary | null {
     if (samples.length === 0) return null;
-    const values = (pick: (sample: BackendSample) => number | null) =>
-      samples.map(pick).filter((value): value is number => value !== null);
-    const max = (pick: (sample: BackendSample) => number | null) => {
-      const list = values(pick);
+    /**
+     * CPU is a *rate*, and a stage's first sample cannot measure one.
+     *
+     * Micrometer derives `process.cpu.usage`/`system.cpu.usage` from the interval since the meter was
+     * last read. The orchestrator takes the previous stage's `finalSample()` and then opens the next
+     * stage's collect loop with an immediate `sample()`, so that interval is near-zero and the ratio
+     * quantizes toward 1.0. A stage with 800/800 streams attached, zero rejections, zero reconnects
+     * and a 14% average then reports `cpuMax` 100% and FAILs on it.
+     *
+     * What proves it is an artifact rather than load: the same 100% first sample appears in a
+     * published-fleet stage that sent the backend no requests at all (4.8 rps of Actuator polling,
+     * zero SSE), and `system.cpu.usage` spikes on the very same sample — the whole host reads
+     * saturated for one reading and idle immediately after.
+     *
+     * Only the rate-derived readings drop that sample. Level gauges (heap, RSS, threads, pool,
+     * Tomcat) and the cumulative counter deltas keep every sample, because they read correctly at
+     * any interval. The raw sample still goes to `backendSamples`, so the record hides nothing.
+     */
+    const rateSamples = samples.length > 1 ? samples.slice(1) : samples;
+    const values = (pick: (sample: BackendSample) => number | null, from: BackendSample[] = samples) =>
+      from.map(pick).filter((value): value is number => value !== null);
+    const max = (pick: (sample: BackendSample) => number | null, from: BackendSample[] = samples) => {
+      const list = values(pick, from);
       return list.length ? Math.max(...list) : null;
     };
-    const avg = (pick: (sample: BackendSample) => number | null) => {
-      const list = values(pick);
+    const avg = (pick: (sample: BackendSample) => number | null, from: BackendSample[] = samples) => {
+      const list = values(pick, from);
       return list.length ? list.reduce((sum, value) => sum + value, 0) / list.length : null;
     };
     const first = samples[0];
@@ -170,14 +210,18 @@ export class MetricsCollector {
     // The outcome:SERVER_ERROR tagged meter does not exist until the first 5xx. Treat an absent
     // first sample as zero when a later sample appears, otherwise the first error in a run would
     // be silently lost.
+    const cacheHits = delta((sample) => sample.publicCardCacheHits);
+    const cacheMisses = delta((sample) => sample.publicCardCacheMisses);
+    const cacheLookups = cacheHits === null || cacheMisses === null ? null : cacheHits + cacheMisses;
+
     const endingServerErrors = last.httpServerErrorCount;
     const serverErrorDelta = endingServerErrors === null
       ? null : Math.max(0, endingServerErrors - (first.httpServerErrorCount ?? 0));
     return {
       samples: samples.length,
-      cpuAvg: avg((sample) => sample.processCpu),
-      cpuMax: max((sample) => sample.processCpu),
-      systemCpuMax: max((sample) => sample.systemCpu),
+      cpuAvg: avg((sample) => sample.processCpu, rateSamples),
+      cpuMax: max((sample) => sample.processCpu, rateSamples),
+      systemCpuMax: max((sample) => sample.systemCpu, rateSamples),
       cpuCount: last.cpuCount,
       heapUsedMaxBytes: max((sample) => sample.heapUsedBytes),
       heapMaxBytes: last.heapMaxBytes,
@@ -201,6 +245,12 @@ export class MetricsCollector {
       serverMaxLatencyMs: max((sample) => sample.httpRequestMaxSec) === null
         ? null : Math.round(max((sample) => sample.httpRequestMaxSec)! * 10_000) / 10,
       serverErrors: serverErrorDelta,
+      publicCardCacheHits: cacheHits,
+      publicCardCacheMisses: cacheMisses,
+      // A stage with no cache lookups at all has no ratio; zero would read as "0% hit rate", which
+      // is a different and wrong claim.
+      publicCardCacheHitRatio: cacheLookups === null || cacheLookups === 0 || cacheHits === null
+        ? null : cacheHits / cacheLookups,
     };
   }
 }

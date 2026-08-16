@@ -27,7 +27,14 @@ Public UI เห็นเฉพาะ card menu และ overview ที่ส�
 
 ## ตั้งค่าครั้งแรก
 
-ต้องมี Java 17+, Maven, Node.js และ Docker Desktop
+ต้องมี Java 17+, Maven, Node.js 22 (ตาม `.nvmrc` และ `engines` ใน `package.json`) และ Docker Desktop
+
+ผู้ใช้ nvm รันคำสั่งนี้ที่ root ของโปรเจกต์ก่อนใช้ `npm` ทุกครั้ง (Node เก่ากว่า 22.13.0 จะทำให้
+`npm run lint` และ `npm test` ล้มด้วย error ที่ไม่เกี่ยวกับโค้ด เช่น `Object.hasOwn is not a function`):
+
+```bash
+nvm use
+```
 
 1. สร้างไฟล์ environment:
 

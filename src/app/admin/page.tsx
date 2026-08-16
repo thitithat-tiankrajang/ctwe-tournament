@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { toast } from "@/application/ui/toast";
 import { isAdmin } from "@/domain/tournament/roles";
-import type { ManagedUser, Tournament } from "@/domain/tournament/types";
+import type { ManagedUser, PublicSnapshotStatus, ShutdownReadiness, Tournament } from "@/domain/tournament/types";
 import { copyText } from "@/lib/clipboard";
 import { ArchiveList } from "@/ui/components/archive-list";
 import { Badge } from "@/ui/components/badge";
@@ -15,9 +15,11 @@ import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { PromptDialog } from "@/ui/components/prompt-dialog";
 import { RealtimeSettingsPanel } from "@/ui/components/realtime-settings-panel";
+import { ACKNOWLEDGMENT_REV, SnapshotPublicationPanel } from "@/ui/components/snapshot-publication-panel";
+import { ShutdownReadinessPanel } from "@/ui/components/shutdown-readiness-panel";
 
 interface ConfirmState { title: string; description: string; confirmLabel: string; danger?: boolean; run: () => Promise<unknown>; }
-interface PromptState { title: string; description?: string; label: string; placeholder?: string; type?: "text" | "password"; confirmLabel: string; minLength?: number; run: (value: string) => Promise<unknown>; }
+interface PromptState { title: string; description?: string; label: string; placeholder?: string; type?: "text" | "password"; confirmLabel: string; minLength?: number; danger?: boolean; confirmationPhrase?: string; confirmationLabel?: string; secondaryConfirmLabel?: string; runSecondary?: (value: string) => Promise<unknown>; run: (value: string) => Promise<unknown>; }
 
 export default function AdminConsolePage() {
   const auth = useTournamentStore((state) => state.auth);
@@ -36,8 +38,13 @@ export default function AdminConsolePage() {
   const resetAccountPassword = useTournamentStore((state) => state.resetAccountPassword);
   const deleteDirector = useTournamentStore((state) => state.deleteDirector);
   const setTournamentStatus = useTournamentStore((state) => state.setTournamentStatus);
+  const approveSnapshot = useTournamentStore((state) => state.approveSnapshot);
+  const retractSnapshot = useTournamentStore((state) => state.retractSnapshot);
+  const shelveTournament = useTournamentStore((state) => state.shelveTournament);
 
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  /** Snapshot state per tournament, reported by each row's panel — read by the close dialog (§4.6). */
+  const [snapshotStates, setSnapshotStates] = useState<Record<string, PublicSnapshotStatus>>({});
   const [directors, setDirectors] = useState<ManagedUser[]>([]);
   const [busy, setBusy] = useState(false);
   const [tName, setTName] = useState("");
@@ -77,10 +84,12 @@ export default function AdminConsolePage() {
     catch (error) { setDialogError(errorMessage(error)); }
     finally { setDialogBusy(false); }
   };
-  const submitPrompt = async (value: string) => {
+  const submitPrompt = async (value: string, secondary = false) => {
     if (!prompt) return;
+    const action = secondary ? prompt.runSecondary : prompt.run;
+    if (!action) return;
     setDialogBusy(true); setDialogError("");
-    try { await prompt.run(value); await refresh(); setPrompt(null); }
+    try { await action(value); await refresh(); setPrompt(null); }
     catch (error) { setDialogError(errorMessage(error)); }
     finally { setDialogBusy(false); }
   };
@@ -98,14 +107,85 @@ export default function AdminConsolePage() {
   };
   const toggleStatus = (t: Tournament) => {
     const open = t.status !== "OPEN";
+    // Architecture §4.6: CLOSED cannot gate a credential-free CDN object, so the two controls are
+    // surfaced together rather than pretending closing the link hides a published snapshot. The
+    // dialog says so plainly and offers the combined action in one click.
+    const publiclyVisible = !open && snapshotStates[t.id]?.state === "PUBLISHED";
     setDialogError("");
     setPrompt({
       title: `${open ? "เปิด" : "ปิด"}การใช้งานลิงก์`,
-      description: `ยืนยัน${open ? "เปิด" : "ปิด"}ลิงก์ของ "${t.name}" — ใส่รหัสผ่านผู้ดูแลระบบเพื่อยืนยัน`,
+      description: publiclyVisible
+        ? `ทัวร์นาเมนต์นี้มีฉบับเผยแพร่สาธารณะอยู่ — การปิดลิงก์จะไม่ลบฉบับเผยแพร่ ต้องการถอนการเผยแพร่ด้วยหรือไม่?`
+        : `ยืนยัน${open ? "เปิด" : "ปิด"}ลิงก์ของ "${t.name}" — ใส่รหัสผ่านผู้ดูแลระบบเพื่อยืนยัน`,
       label: "รหัสผ่านผู้ดูแลระบบ",
       type: "password",
-      confirmLabel: open ? "เปิดลิงก์" : "ปิดลิงก์",
+      confirmLabel: publiclyVisible ? "ปิดลิงก์อย่างเดียว" : open ? "เปิดลิงก์" : "ปิดลิงก์",
+      secondaryConfirmLabel: publiclyVisible ? "ปิดลิงก์และถอนการเผยแพร่" : undefined,
+      runSecondary: publiclyVisible
+        ? async (password: string) => {
+            await setTournamentStatus(t.id, open, password);
+            const retracted = await retractSnapshot(t.id);
+            setSnapshotStates((current) => ({ ...current, [t.id]: retracted }));
+          }
+        : undefined,
       run: (password) => setTournamentStatus(t.id, open, password),
+    });
+  };
+
+  /**
+   * ⚠️ Excel Export & Purge — exports to .xlsx and then PERMANENTLY DELETES the tournament's data.
+   * This is not "publishing" anything: it is the delete path. Two guards before it runs — the admin
+   * retypes the tournament name, and re-enters their password (the backend verifies both).
+   */
+  const exportAndPurge = (t: Tournament) => {
+    setDialogError("");
+    setPrompt({
+      title: `ส่งออก Excel แล้วลบ "${t.name}" ถาวร?`,
+      description: `ระบบจะเก็บเป็นไฟล์ Excel แล้วลบข้อมูลทั้งหมด (${t.cardCount} การ์ด) ออกจากฐานข้อมูลอย่างถาวร — กู้คืนไม่ได้ ไฟล์ Excel ยังดาวน์โหลดได้ภายหลัง`,
+      label: "รหัสผ่านผู้ดูแลระบบ",
+      type: "password",
+      confirmLabel: "ส่งออกและลบถาวร",
+      danger: true,
+      confirmationPhrase: t.name,
+      confirmationLabel: "พิมพ์ชื่อรายการแข่งขันให้ตรงเพื่อยืนยันการลบ",
+      run: (password) => archiveTournament(t.id, password, t.name),
+    });
+  };
+
+  /**
+   * Approve public publication (architecture §4.1 step one). Reuses the same two guards as the purge
+   * dialog — retype the name, re-enter the password — because this is the other decision in this
+   * console that cannot be taken back. The acknowledgment text itself is shown in the row's panel,
+   * above the button that opens this dialog, and its revision travels with the approval.
+   */
+  const approvePublication = (t: Tournament, onDone: (status: PublicSnapshotStatus) => void) => {
+    setDialogError("");
+    setPrompt({
+      title: `อนุมัติเผยแพร่ "${t.name}" สู่สาธารณะ?`,
+      description: "การเผยแพร่เป็นการถาวรและเรียกคืนไม่ได้ — โปรดอ่านข้อตกลงในแถวรายการก่อนยืนยัน การอนุมัติมีอายุ 7 วัน และจะใช้ไม่ได้ทันทีหากข้อมูลการ์ดเปลี่ยนแปลง",
+      label: "รหัสผ่านผู้ดูแลระบบ",
+      type: "password",
+      confirmLabel: "ยืนยันการอนุมัติ",
+      confirmationPhrase: t.name,
+      confirmationLabel: "พิมพ์ชื่อรายการแข่งขันให้ตรงเพื่อยืนยัน",
+      run: async (password) => onDone(await approveSnapshot(t.id, password, t.name, ACKNOWLEDGMENT_REV)),
+    });
+  };
+
+  /**
+   * Shelving says "this tournament will never be published", which is what lets a shutdown proceed
+   * without its results ever becoming public (architecture §19.1). Reversible, but deliberate — so
+   * it takes the same password re-auth as every other tournament-level state change here.
+   */
+  const shelveForShutdown = (tournamentId: string, name: string, onDone: (readiness: ShutdownReadiness) => void) => {
+    setDialogError("");
+    setPrompt({
+      title: `ระบุว่า "${name}" จะไม่ถูกเผยแพร่?`,
+      description: "รายการนี้จะไม่ค้างเงื่อนไขการปิดระบบอีกต่อไป ผลการแข่งขันจะไม่ถูกเผยแพร่สู่สาธารณะ — ย้อนกลับได้ภายหลัง",
+      label: "รหัสผ่านผู้ดูแลระบบ",
+      type: "password",
+      confirmLabel: "ยืนยัน",
+      run: async (password) => onDone(await shelveTournament(tournamentId, password)),
     });
   };
 
@@ -156,7 +236,7 @@ export default function AdminConsolePage() {
                 <span className="console-row__actions">
                   <Badge>{t.cardCount} การ์ด</Badge>
                   <Button variant="secondary" size="sm" disabled={busy} title={t.status === "OPEN" ? "ปิดลิงก์ (เข้าไม่ได้)" : "เปิดลิงก์ให้เข้าถึงได้"} onClick={() => toggleStatus(t)}>{t.status === "OPEN" ? <><Lock size={14} />ปิดลิงก์</> : <><LockOpen size={14} />เปิดลิงก์</>}</Button>
-                  <Button variant="danger" size="sm" disabled={busy} title="เก็บเป็น Excel แล้วลบข้อมูลออกจากฐานข้อมูลถาวร" onClick={() => setConfirm({ title: `เก็บทัวร์นาเมนต์ "${t.name}" เข้าคลัง?`, description: `ระบบจะเก็บเป็นไฟล์ Excel แล้วลบข้อมูลทั้งหมด (${t.cardCount} การ์ด) ออกจากฐานข้อมูลอย่างถาวร — ไฟล์ยังดาวน์โหลดได้ภายหลัง`, confirmLabel: "เก็บเข้าคลัง", danger: true, run: () => archiveTournament(t.id) })}><FileDown size={14} /> เก็บเข้าคลัง</Button>
+                  <Button variant="danger" size="sm" disabled={busy} title="ส่งออกเป็น Excel แล้วลบข้อมูลออกจากฐานข้อมูลถาวร (กู้คืนไม่ได้)" onClick={() => exportAndPurge(t)}><FileDown size={14} /> ส่งออก Excel และลบ</Button>
                 </span>
               </div>
               <div className="console-row__meta">
@@ -179,14 +259,16 @@ export default function AdminConsolePage() {
                   {directors.filter((d) => !t.directors.includes(d.username)).map((d) => <option key={d.username} value={d.username}>{d.username}</option>)}
                 </select>
               </div>
+              <SnapshotPublicationPanel tournament={t} busy={busy} onApprove={approvePublication} onError={(message) => toast.error(message)}
+                onStatus={(id, status) => setSnapshotStates((current) => ({ ...current, [id]: status }))} />
             </div>
           ))}
         </div>
       </Panel>
 
-      <Panel title="คลังที่เก็บถาวร (Excel)" description="เฉพาะผู้ดูแลระบบเท่านั้นที่ดาวน์โหลดหรือลบไฟล์ Excel ที่เก็บถาวรได้">
+      <Panel title="ไฟล์ Excel ที่ส่งออกแล้ว" description="ไฟล์สำรองของทัวร์นาเมนต์ที่ถูกส่งออกและลบข้อมูลออกจากฐานข้อมูลแล้ว — เฉพาะผู้ดูแลระบบเท่านั้นที่ดาวน์โหลดหรือลบไฟล์ได้">
         <div className="panel-padding">
-          <ArchiveList archives={archives} onDelete={(archive) => setConfirm({ title: `ลบไฟล์เก็บถาวร "${archive.tournamentName}"?`, description: "ไฟล์ Excel นี้จะถูกลบอย่างถาวร — กู้คืนไม่ได้", confirmLabel: "ลบถาวร", danger: true, run: () => deleteArchive(archive.id) })} />
+          <ArchiveList archives={archives} onDelete={(archive) => setConfirm({ title: `ลบไฟล์ Excel "${archive.tournamentName}"?`, description: "ไฟล์ Excel นี้จะถูกลบอย่างถาวร — กู้คืนไม่ได้", confirmLabel: "ลบถาวร", danger: true, run: () => deleteArchive(archive.id) })} />
         </div>
       </Panel>
 
@@ -235,6 +317,8 @@ export default function AdminConsolePage() {
       </Panel>
 
       {/* Infra tuning sits last — it is not part of the day-to-day tournament content flow. */}
+      <ShutdownReadinessPanel busy={busy} onShelve={shelveForShutdown} onError={(message) => toast.error(message)} />
+
       <RealtimeSettingsPanel />
 
       <ConfirmDialog
@@ -257,8 +341,13 @@ export default function AdminConsolePage() {
         type={prompt?.type}
         confirmLabel={prompt?.confirmLabel ?? "ยืนยัน"}
         minLength={prompt?.minLength}
+        danger={prompt?.danger}
+        confirmationPhrase={prompt?.confirmationPhrase}
+        confirmationLabel={prompt?.confirmationLabel}
         busy={dialogBusy}
         error={dialogError || undefined}
+        secondaryConfirmLabel={prompt?.secondaryConfirmLabel}
+        onSecondarySubmit={prompt?.runSecondary ? (value) => void submitPrompt(value, true) : undefined}
         onSubmit={(value) => void submitPrompt(value)}
         onCancel={closeDialogs}
       />

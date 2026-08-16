@@ -31,6 +31,26 @@ interface PublicSnapshotEvent {
   currentGame: number;
 }
 
+/**
+ * Whether this hook is about to need the realtime configuration.
+ *
+ * <p>`/api/public/realtime-config` is served by <b>Render</b>. Asking for it merely because a viewer
+ * hook mounted puts an origin request on the published path — and it lands before the snapshot probe
+ * has resolved, so "is this tournament published?" is still unknown and reads as `false`. That is one
+ * request more than zero on the path whose entire purpose is to make no origin requests at all.
+ *
+ * The rule is therefore: fetch the config exactly when a stream is about to be opened, which is the
+ * same condition the effects below already guard on. `target` (a token or a card id) is what makes
+ * "not yet" distinguishable from "live": by the time either is present, resolution has happened and
+ * `published` is known.
+ *
+ * Live tournaments are unaffected in substance — the config cannot be used before the bundle
+ * resolves anyway, because no stream is opened until then.
+ */
+export function shouldUseRealtime(enabled: boolean, target: string | undefined, published: boolean): boolean {
+  return enabled && target != null && target !== "" && !published;
+}
+
 /** Spread broadcast-triggered full refetches so thousands of viewers do not hit the origin in the same second. */
 const REFETCH_JITTER_MS = 4_000;
 /** Ceiling for the re-subscribe backoff after a fatal SSE refusal (e.g. 503 over capacity). */
@@ -77,10 +97,14 @@ export function usePublicBundleSync(token: string | undefined, enabled: boolean)
   const enterPublicTournament = useTournamentStore((state) => state.enterPublicTournament);
   const applyPublicSummary = useTournamentStore((state) => state.applyPublicSummary);
   const removePublicCard = useTournamentStore((state) => state.removePublicCard);
-  const config = useRealtimeConfig();
+  // A published tournament is finished and immutable: nothing can arrive on a stream, so no stream
+  // is opened, no bundle is refetched, and no realtime config is requested. Checked here rather
+  // than at the call site so a future caller cannot reintroduce origin traffic by forgetting to.
+  const published = useTournamentStore((state) => state.activeTournament?.published === true);
+  const config = useRealtimeConfig(shouldUseRealtime(enabled, token, published));
 
   useEffect(() => {
-    if (!token || !enabled || !config.realtimeEnabled) return;
+    if (!token || !enabled || published || !config.realtimeEnabled) return;
 
     let disposed = false;
     let source: EventSource | null = null;
@@ -150,7 +174,7 @@ export function usePublicBundleSync(token: string | undefined, enabled: boolean)
       document.removeEventListener("visibilitychange", onVisible);
       source?.close();
     };
-  }, [token, enabled, config.realtimeEnabled, config.sseEnabled, config.reconnectDelayMs, enterPublicTournament, applyPublicSummary, removePublicCard]);
+  }, [token, enabled, published, config.realtimeEnabled, config.sseEnabled, config.reconnectDelayMs, enterPublicTournament, applyPublicSummary, removePublicCard]);
 }
 
 export function usePublicSync(cardId: string | undefined, enabled: boolean) {
@@ -159,17 +183,20 @@ export function usePublicSync(cardId: string | undefined, enabled: boolean) {
   const applyResultPatch = useTournamentStore((state) => state.applyResultPatch);
   const applyPairingsPatch = useTournamentStore((state) => state.applyPairingsPatch);
   const applySnapshotPublish = useTournamentStore((state) => state.applySnapshotPublish);
-  const config = useRealtimeConfig();
+  // See usePublicBundleSync: a snapshot carries every card in full, so there is nothing to stream,
+  // nothing to poll, and no summaryOnly card left to fetch.
+  const published = useTournamentStore((state) => state.activeTournament?.published === true);
+  const config = useRealtimeConfig(shouldUseRealtime(enabled, cardId, published));
   const versionsRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     versionsRef.current = new Map(cards.map((card) => [card.id, card.version]));
     const openCard = cardId ? cards.find((card) => card.id === cardId) : undefined;
-    if (enabled && cardId && openCard?.summaryOnly) void syncCard(cardId);
-  }, [cardId, cards, enabled, syncCard]);
+    if (enabled && !published && cardId && openCard?.summaryOnly) void syncCard(cardId);
+  }, [cardId, cards, enabled, published, syncCard]);
 
   useEffect(() => {
-    if (!enabled || !cardId || !config.realtimeEnabled) return;
+    if (!enabled || published || !cardId || !config.realtimeEnabled) return;
 
     let disposed = false;
     let source: EventSource | null = null;

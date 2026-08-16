@@ -54,11 +54,17 @@ export async function getRealtimeConfig(): Promise<RealtimeConfig> {
 /**
  * Admin-tunable sync strategy for the current browser. Starts with safe defaults, resolves from
  * the config endpoint once, and then relies exclusively on SSE for the lifetime of the page.
+ *
+ * @param enabled pass false to skip the request entirely and keep the defaults. A published
+ *                tournament has no realtime to configure, and this endpoint is served by Render —
+ *                fetching it would put an origin request back on the path whose entire purpose is
+ *                not to have one.
  */
-export function useRealtimeConfig(): RealtimeConfig {
+export function useRealtimeConfig(enabled = true): RealtimeConfig {
   const [config, setConfig] = useState<RealtimeConfig>(cached ?? REALTIME_DEFAULTS);
 
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     const refresh = () => void getRealtimeConfig().then((next) => {
       if (!active) return;
@@ -72,7 +78,7 @@ export function useRealtimeConfig(): RealtimeConfig {
     });
     refresh();
     return () => { active = false; };
-  }, []);
+  }, [enabled]);
 
   return config;
 }
