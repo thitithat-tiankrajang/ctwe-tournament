@@ -16,6 +16,16 @@ export interface Thresholds {
   maxProcessCpu: number;
   /** Highest acceptable heap-used / heap-max ratio during the hold. */
   maxHeapRatio: number;
+  /**
+   * Highest acceptable metaspace-used / metaspace-max ratio during the hold.
+   *
+   * Metaspace has its own ceiling and its own failure mode, so it needs its own budget. A breach is
+   * not a slow request: class loading throws `OutOfMemoryError: Metaspace` on whichever thread hits
+   * it, the JVM keeps running, and the container passes health checks while every request fails.
+   * A stage that ends near this ratio has no room left for the next path to be exercised for the
+   * first time — the Excel export loading POI is enough.
+   */
+  maxMetaspaceRatio: number;
   /** Highest acceptable SSE error rate: (rejected+dropped+stalled)/target, in %. */
   maxErrorRatePct: number;
   /** Highest acceptable finite HTTP request error rate, in %. */
@@ -272,6 +282,7 @@ export function loadConfig(): Config {
     thresholds: {
       maxProcessCpu: numberEnv("THRESHOLD_MAX_CPU", 0.75),
       maxHeapRatio: numberEnv("THRESHOLD_MAX_HEAP_RATIO", 0.70),
+      maxMetaspaceRatio: numberEnv("THRESHOLD_MAX_METASPACE_RATIO", 0.80),
       maxErrorRatePct: numberEnv("THRESHOLD_MAX_ERROR_PCT", 0.5),
       maxHttpErrorRatePct: numberEnv("THRESHOLD_MAX_HTTP_ERROR_PCT", 0.5),
       maxHttpP99Ms: numberEnv("THRESHOLD_MAX_HTTP_P99_MS", 2_000),

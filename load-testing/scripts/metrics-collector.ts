@@ -17,6 +17,17 @@ export interface BackendSample {
   heapUsedBytes: number | null;
   heapMaxBytes: number | null;
   nonHeapUsedBytes: number | null;
+  /**
+   * Metaspace on its own, NOT folded into `nonHeapUsedBytes`.
+   *
+   * Aggregate non-heap is metaspace + code cache + compressed class space, so it cannot say which
+   * ceiling is the one being approached. That blind spot is what let `-XX:MaxMetaspaceSize=96m` ship
+   * against a boot-time reading: every stage reported non-heap pinned at ~140 MB, which looked like
+   * a comfortable plateau and was actually metaspace running full against its own cap. Sample the
+   * pool directly, and compare `metaspaceUsedBytes` to `metaspaceMaxBytes`, not to non-heap.
+   */
+  metaspaceUsedBytes: number | null;
+  metaspaceMaxBytes: number | null;
   processRssBytes: number | null;
   directBufferUsedBytes: number | null;
   gcPauseCount: number | null;
@@ -52,6 +63,8 @@ export interface BackendWindowSummary {
   heapUsedMaxBytes: number | null;
   heapMaxBytes: number | null;
   nonHeapUsedMaxBytes: number | null;
+  metaspaceUsedMaxBytes: number | null;
+  metaspaceMaxBytes: number | null;
   processRssMaxBytes: number | null;
   directBufferUsedMaxBytes: number | null;
   gcPauses: number | null;
@@ -120,7 +133,8 @@ export class MetricsCollector {
     const [
       ssePublicStreams, sseStaffStreams,
       processCpu, systemCpu, cpuCount,
-      heapUsedBytes, heapMaxBytes, nonHeapUsedBytes, processRssBytes, directBufferUsedBytes,
+      heapUsedBytes, heapMaxBytes, nonHeapUsedBytes, metaspaceUsedBytes, metaspaceMaxBytes,
+      processRssBytes, directBufferUsedBytes,
       gcPauseCount, gcPauseTotalSec, gcPauseMaxSec,
       liveThreads, hikariActive, hikariPending, hikariMax,
       tomcatBusyThreads, tomcatConnections,
@@ -135,6 +149,8 @@ export class MetricsCollector {
       this.metric("jvm.memory.used", "VALUE", "area:heap"),
       this.metric("jvm.memory.max", "VALUE", "area:heap"),
       this.metric("jvm.memory.used", "VALUE", "area:nonheap"),
+      this.metric("jvm.memory.used", "VALUE", "id:Metaspace"),
+      this.metric("jvm.memory.max", "VALUE", "id:Metaspace"),
       this.metric("process.memory.rss", "VALUE"),
       this.metric("jvm.buffer.memory.used", "VALUE", "id:direct"),
       this.metric("jvm.gc.pause", "COUNT"),
@@ -157,7 +173,8 @@ export class MetricsCollector {
       at: new Date().toISOString(),
       ssePublicStreams, sseStaffStreams,
       processCpu, systemCpu, cpuCount,
-      heapUsedBytes, heapMaxBytes, nonHeapUsedBytes, processRssBytes, directBufferUsedBytes,
+      heapUsedBytes, heapMaxBytes, nonHeapUsedBytes, metaspaceUsedBytes, metaspaceMaxBytes,
+      processRssBytes, directBufferUsedBytes,
       gcPauseCount, gcPauseTotalSec, gcPauseMaxSec,
       liveThreads, hikariActive, hikariPending, hikariMax,
       tomcatBusyThreads, tomcatConnections,
@@ -226,6 +243,8 @@ export class MetricsCollector {
       heapUsedMaxBytes: max((sample) => sample.heapUsedBytes),
       heapMaxBytes: last.heapMaxBytes,
       nonHeapUsedMaxBytes: max((sample) => sample.nonHeapUsedBytes),
+      metaspaceUsedMaxBytes: max((sample) => sample.metaspaceUsedBytes),
+      metaspaceMaxBytes: max((sample) => sample.metaspaceMaxBytes),
       processRssMaxBytes: max((sample) => sample.processRssBytes),
       directBufferUsedMaxBytes: max((sample) => sample.directBufferUsedBytes),
       gcPauses: delta((sample) => sample.gcPauseCount),

@@ -19,6 +19,7 @@ const sample = (overrides: Partial<BackendSample>): BackendSample => ({
   ssePublicStreams: null, sseStaffStreams: null,
   processCpu: null, systemCpu: null, cpuCount: 1,
   heapUsedBytes: null, heapMaxBytes: null, nonHeapUsedBytes: null,
+  metaspaceUsedBytes: null, metaspaceMaxBytes: null,
   processRssBytes: null, directBufferUsedBytes: null,
   gcPauseCount: null, gcPauseTotalSec: null, gcPauseMaxSec: null,
   liveThreads: null, hikariActive: null, hikariPending: null, hikariMax: null,
