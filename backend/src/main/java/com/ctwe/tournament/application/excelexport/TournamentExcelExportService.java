@@ -8,16 +8,20 @@ import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -50,6 +54,10 @@ import java.util.UUID;
 @Service
 public class TournamentExcelExportService {
     private static final ZoneId BANGKOK = ZoneId.of("Asia/Bangkok");
+    /** Rows kept in memory per sheet before SXSSF flushes them to disk. */
+    private static final int ROW_WINDOW = 100;
+    /** How much of an archive is held in heap at a time while it is being downloaded. */
+    private static final int CHUNK_BYTES = 1 << 20;
     private final JdbcTemplate jdbc;
     private final TournamentCardService cardService;
 
@@ -65,7 +73,8 @@ public class TournamentExcelExportService {
     private static final java.util.Set<String> PURGEABLE_SNAPSHOT_STATES =
         java.util.Set.of("NOT_PUBLISHED", "RETRACTED");
 
-    public record ArchiveFile(String fileName, byte[] content) {}
+    /** What the download endpoints need before a single byte of the blob is read. */
+    public record ArchiveMetadata(String fileName, long byteSize) {}
 
     /**
      * Exports the tournament to .xlsx and then PERMANENTLY DELETES its live rows, in one transaction.
@@ -92,15 +101,21 @@ public class TournamentExcelExportService {
             "SELECT count(*) FROM players WHERE card_id IN (SELECT id FROM tournament_cards WHERE tournament_id = ?)",
             Integer.class, tournamentId);
 
-        byte[] content = buildWorkbook(tournamentName, cards);
         String safeName = tournamentName.replaceAll("[^\\p{L}\\p{N}_-]+", "_");
         String fileName = safeName + "_" + DateTimeFormatter.ofPattern("yyyyMMdd_HHmm").withZone(BANGKOK).format(Instant.now()) + ".xlsx";
 
+        Path workbookFile = buildWorkbook(tournamentName, cards);
         UUID archiveId = UUID.randomUUID();
-        jdbc.update("""
-            INSERT INTO tournament_archives (id, tournament_name, file_name, content, byte_size, card_count, player_count, archived_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, archiveId, tournamentName, fileName, content, (long) content.length, cards.size(), playerCount == null ? 0 : playerCount, actor);
+        long byteSize;
+        try {
+            byteSize = Files.size(workbookFile);
+            storeArchive(archiveId, tournamentName, fileName, workbookFile, byteSize,
+                cards.size(), playerCount == null ? 0 : playerCount, actor);
+        } catch (IOException error) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "เก็บไฟล์ Excel ไม่สำเร็จ", error);
+        } finally {
+            deleteQuietly(workbookFile);
+        }
 
         // Remove the live data only AFTER the archive blob is safely stored (same transaction).
         for (Map<String, Object> card : cards) cardService.delete((UUID) card.get("id"));
@@ -108,7 +123,7 @@ public class TournamentExcelExportService {
         jdbc.update("INSERT INTO audit_logs (card_id, actor, action) VALUES (NULL, ?, 'ARCHIVE_TOURNAMENT')",
             actor == null ? "system" : actor);
 
-        return new TenantDtos.ArchiveSummary(archiveId, tournamentName, fileName, content.length,
+        return new TenantDtos.ArchiveSummary(archiveId, tournamentName, fileName, byteSize,
             cards.size(), playerCount == null ? 0 : playerCount, actor, Instant.now());
     }
 
@@ -175,12 +190,46 @@ public class TournamentExcelExportService {
                 rs.getString("archived_by"), rs.getObject("archived_at", OffsetDateTime.class).toInstant()));
     }
 
-    public ArchiveFile download(UUID id) {
+    public ArchiveMetadata metadata(UUID id) {
         try {
-            return jdbc.queryForObject("SELECT file_name, content FROM tournament_archives WHERE id = ?",
-                (rs, row) -> new ArchiveFile(rs.getString("file_name"), rs.getBytes("content")), id);
+            return jdbc.queryForObject("SELECT file_name, byte_size FROM tournament_archives WHERE id = ?",
+                (rs, row) -> new ArchiveMetadata(rs.getString("file_name"), rs.getLong("byte_size")), id);
         } catch (EmptyResultDataAccessException notFound) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "ไม่พบไฟล์");
+        }
+    }
+
+    /**
+     * Copies the stored .xlsx to {@code out} in fixed-size pieces, so a download costs
+     * {@link #CHUNK_BYTES} of heap rather than the size of the file.
+     *
+     * <p>The pieces are cut in SQL on purpose. A {@code BYTEA} column arrives inside the row, so the
+     * driver materialises the whole value the moment the row is read — {@code getBytes} and
+     * {@code getBinaryStream} both cost the full file, and on this container's ~215 MB heap a large
+     * archive is enough to end the request. {@code substring} makes the database send only the piece
+     * being asked for, which is the only form of "streaming" a BYTEA column actually has.
+     *
+     * <p>Archive rows are immutable once written, so reading them across several statements is safe.
+     * The exception is deletion racing a download: the loop then stops early rather than padding the
+     * response, and the client sees a short file against the declared Content-Length.
+     */
+    public void writeContentTo(UUID id, OutputStream out) throws IOException {
+        // An int offset is sufficient by construction: PostgreSQL caps a BYTEA value at 1 GB, and the
+        // driver would have to hand substring() a bigint (which has no bytea overload) to go past it.
+        int offset = 0;
+        while (true) {
+            int from = offset + 1; // substring() is 1-based
+            byte[] piece = jdbc.query(
+                "SELECT substring(content FROM ? FOR ?) FROM tournament_archives WHERE id = ?",
+                (ResultSetExtractor<byte[]>) rs -> rs.next() ? rs.getBytes(1) : null,
+                from, CHUNK_BYTES, id);
+            if (piece == null) {
+                if (offset == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "ไม่พบไฟล์");
+                return; // deleted mid-download; nothing left to send
+            }
+            if (piece.length == 0) return;
+            out.write(piece);
+            offset += piece.length;
         }
     }
 
@@ -192,8 +241,26 @@ public class TournamentExcelExportService {
 
     // ---- Excel building (Apache POI) ----
 
-    private byte[] buildWorkbook(String tournamentName, List<Map<String, Object>> cards) {
-        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+    /**
+     * Builds the .xlsx onto disk, never into the heap.
+     *
+     * <p>This used to build an in-memory {@code XSSFWorkbook} and return a {@code byte[]}. On the
+     * 512 MB container (~215 MB max heap) a large tournament blew the heap while POI serialised the
+     * sheets: the request died with an {@code OutOfMemoryError} → HTTP 500, and the transaction
+     * rolled back — no data lost, but the tournament could never be deleted. {@code SXSSFWorkbook}
+     * keeps only {@code ROW_WINDOW} rows per sheet resident and flushes the rest to temp files, so
+     * peak heap no longer scales with tournament size.
+     */
+    private Path buildWorkbook(String tournamentName, List<Map<String, Object>> cards) {
+        SXSSFWorkbook workbook = new SXSSFWorkbook(ROW_WINDOW);
+        Path target;
+        try {
+            target = Files.createTempFile("tournament-archive-", ".xlsx");
+        } catch (IOException error) {
+            workbook.dispose();
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "สร้างไฟล์ Excel ไม่สำเร็จ", error);
+        }
+        try (workbook; OutputStream out = Files.newOutputStream(target)) {
             CellStyle header = headerStyle(workbook);
 
             Sheet summary = workbook.createSheet("สรุป");
@@ -225,9 +292,45 @@ public class TournamentExcelExportService {
             }
 
             workbook.write(out);
-            return out.toByteArray();
+            return target;
         } catch (IOException error) {
+            deleteQuietly(target);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "สร้างไฟล์ Excel ไม่สำเร็จ", error);
+        } catch (RuntimeException error) {
+            deleteQuietly(target);
+            throw error;
+        } finally {
+            workbook.dispose(); // removes SXSSF's own row-spill temp files
+        }
+    }
+
+    /** Streams the finished file straight into the BYTEA column, so the blob never lands in the heap. */
+    private void storeArchive(UUID archiveId, String tournamentName, String fileName, Path file, long byteSize,
+                              int cardCount, int playerCount, String actor) throws IOException {
+        try (InputStream content = Files.newInputStream(file)) {
+            jdbc.update(connection -> {
+                var statement = connection.prepareStatement("""
+                    INSERT INTO tournament_archives (id, tournament_name, file_name, content, byte_size, card_count, player_count, archived_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """);
+                statement.setObject(1, archiveId);
+                statement.setString(2, tournamentName);
+                statement.setString(3, fileName);
+                statement.setBinaryStream(4, content, byteSize);
+                statement.setLong(5, byteSize);
+                statement.setInt(6, cardCount);
+                statement.setInt(7, playerCount);
+                statement.setString(8, actor);
+                return statement;
+            });
+        }
+    }
+
+    private void deleteQuietly(Path file) {
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException ignored) {
+            // A leftover temp file is not worth failing (or masking) a purge over; the OS reclaims it.
         }
     }
 
