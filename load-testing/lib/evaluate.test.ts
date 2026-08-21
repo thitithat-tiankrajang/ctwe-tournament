@@ -18,6 +18,7 @@ import type { Distribution, SnapshotFleetSnapshot } from "./metrics-hub.js";
 const THRESHOLDS: Thresholds = {
   maxProcessCpu: 0.75,
   maxHeapRatio: 0.7,
+  maxMetaspaceRatio: 0.8,
   maxErrorRatePct: 0.5,
   maxHttpErrorRatePct: 0.5,
   maxHttpP99Ms: 2_000,

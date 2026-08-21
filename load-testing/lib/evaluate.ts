@@ -253,6 +253,11 @@ export function evaluateStage(
       if (heapRatio > thresholds.maxHeapRatio) breaches.push(`heap peaked at ${pct(heapRatio)} of max`);
       else near(heapRatio, thresholds.maxHeapRatio, "heap usage");
     }
+    if (backend.metaspaceUsedMaxBytes !== null && backend.metaspaceMaxBytes) {
+      const metaspaceRatio = backend.metaspaceUsedMaxBytes / backend.metaspaceMaxBytes;
+      if (metaspaceRatio > thresholds.maxMetaspaceRatio) breaches.push(`metaspace peaked at ${pct(metaspaceRatio)} of max`);
+      else near(metaspaceRatio, thresholds.maxMetaspaceRatio, "metaspace usage");
+    }
     if ((backend.hikariPendingMax ?? 0) > 0) {
       warnings.push(`database pool had ${backend.hikariPendingMax} pending acquisition(s)`);
     }
