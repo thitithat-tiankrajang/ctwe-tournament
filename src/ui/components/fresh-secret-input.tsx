@@ -38,11 +38,15 @@ export const FreshSecretInput = forwardRef<HTMLInputElement, FreshSecretInputPro
         data-protonpass-ignore="true"
       />
       {!revealed && <span className="fresh-secret-input__mask" aria-hidden="true">{"•".repeat(Array.from(value).length)}</span>}
+      {/* A toggle button, so it carries its state rather than renaming itself: a screen reader
+          announces "แสดงรหัสผ่าน, ปุ่มสลับ, ถูกกด" the moment it is pressed, instead of only
+          describing the next action the next time the control is reached. `title` stays dynamic —
+          it is a pointer tooltip for the action, not the accessible name. */}
       <button
         type="button"
         className="fresh-secret-input__toggle"
-        tabIndex={-1}
-        aria-label={revealed ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+        aria-label="แสดงรหัสผ่าน"
+        aria-pressed={revealed}
         title={revealed ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
         disabled={props.disabled}
         onMouseDown={(event) => event.preventDefault()}
