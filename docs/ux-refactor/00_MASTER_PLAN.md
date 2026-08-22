@@ -22,6 +22,12 @@ Baseline commit: `6ce756c9d77590f1e482d23b25ccea360db9c0a6` (branch `main`)
 > recovery, actor identity — the gate was re-run and **passed** (`17_`), and only then was the warning
 > built. Two frozen items changed, both owner-approved and minimal: `use-card-sync.ts` (forward the
 > actor) and `applyResultPatch` (one contiguity line).
+> **P5 IS PARTIAL BY DECISION** (2026-08-22) — `19_P5_PARTIAL_CLOSURE.md`. P5 never had a plan
+> document; the preflight found most of its scope should not be built. **D21 shipped** (folders you
+> are not working in now collapse: 3 of 3 expanded → 1 of 3, sidebar page links 15 → 5). **D16 and
+> "URL state" were declined**, not deferred — no measured problem, and no staging with a competition
+> ~3 weeks out. P5 moves none of the tracked success metrics; the only unmet one (35 sub-11px fonts)
+> belongs to P6/P7.
 > **B7 is carved out of this refactor entirely** — see `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md`.
 > Read `10_P1_CLOSURE.md`, then `11_P2_PLAN.md` and `12_P2_CLOSURE.md`.
 > `05_HANDOFF.md` remains the P0 record.
@@ -66,7 +72,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | **P2** | Auth + login request consolidation (frontend) | **CLOSED** — final gate PASS (`12_P2_CLOSURE.md`); re-auth round trips 2 → 1. `HttpSessionEventPublisher` deferred to the owner |
 | **P3** | Data layer, summaries consumption, URL scope authority, query layer, selectors | **CLOSED** — all six chunks A/B/C/D1/D2/E, final gate PASS (`15_P3_CLOSURE.md`); /admin 15→10, refocus 7→1 and 4→1, card list 9,592→854 B, **shell renders per SSE result 1→0**. D2's query migration measured and declined; M1's ≤8-request target NOT met (needs backend batch or D3) |
 | **P4** | UI primitives, concurrency warning, viewer view-picker | **CLOSED** — final gate PASS (`18_P4_CLOSURE.md`). D15/UX-F3, retract wording and the concurrent-draft warning all shipped, the last one only after an SSE proof gate it first FAILED forced three transport fixes (`16_`, `17_`) |
-| **P5** | Information architecture + URL state | not started |
+| **P5** | Information architecture + URL state | **PARTIAL BY DECISION** — D21 (collapse unused sidebar folders) shipped and measured, 3 of 3 folders expanded → 1 of 3 (`19_P5_PARTIAL_CLOSURE.md`). **D16 and "URL state" declined**: D16 is a relocation with no measured problem, and URL state was never specified — the parts that mattered shipped in P3-C and the viewer hash |
 | **P6** | Performance + accessibility remainder | not started |
 | **P7** | Visual tokens | not started |
 
