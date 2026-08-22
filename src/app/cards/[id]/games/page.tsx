@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, Gamepad2, Gavel, LockKeyhole, Megaphone, Trophy } from "lucide-react";
 import { useState } from "react";
-import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { isBadPassword, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, isOperator } from "@/domain/tournament/roles";
 import { allResultBlocks, isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
@@ -264,14 +264,15 @@ export default function GamesPage() {
     try { await publishResults(id); router.push(finalGame ? `/cards/${id}` : `/cards/${id}/tables`); }
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ", "Publish ผลไม่สำเร็จ", true); } finally { setBusy(false); }
   };
-  // Director edit-pairing during result collection. The API verifies the password again as well.
+  // Director edit-pairing during result collection. The swap verifies the password itself, so a
+  // wrong one returns 403 + BAD_PASSWORD from that request rather than from a pre-flight.
   const onSwapPairing = async (gameNumber: number, a: string, b: string, password: string): Promise<boolean> => {
-    if (!await verifyPassword(password)) {
-      await appDialog.alert("รหัสผ่านไม่ถูกต้อง", "ยืนยันตัวตนไม่สำเร็จ", true);
-      return false;
-    }
     try { await swapPlayers(id, a, b, password, false, gameNumber); return true; }
     catch (error) {
+      if (isBadPassword(error)) {
+        await appDialog.alert(error.message, "ยืนยันตัวตนไม่สำเร็จ", true);
+        return false;
+      }
       const message = error instanceof Error ? error.message : "สลับผู้เล่นไม่สำเร็จ";
       if (message.includes("SCHOOL_CONFLICT") && await appDialog.confirm(message.replace("SCHOOL_CONFLICT: ", ""), {
         title: "พบผู้เล่นสถาบันเดียวกัน",

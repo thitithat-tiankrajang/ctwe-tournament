@@ -278,7 +278,7 @@ export class ApiError extends Error {
 }
 
 /** True when `error` is the backend reporting a mistyped confirmation password, and nothing else. */
-export function isBadPassword(error: unknown): boolean {
+export function isBadPassword(error: unknown): error is ApiError {
   return error instanceof ApiError && error.code === BAD_PASSWORD;
 }
 
