@@ -4,9 +4,13 @@ Status date: 2026-08-22
 Baseline commit: `6ce756c9d77590f1e482d23b25ccea360db9c0a6` (branch `main`)
 
 > **P0 IS CLOSED** (2026-08-22, owner acceptance) — evidence frozen, see `07_P0_CLOSURE.md`.
-> **P1 PLAN IS SUBMITTED AND AWAITING APPROVAL** — see `08_P1_PLAN.md`. **No P1 code has been written.**
+> **P1 IS CLOSED** (2026-08-22) — approved, implemented, committed (`40ee7f4..1bd0604`) and its
+> final gate executed and measured. See `10_P1_CLOSURE.md`. **P1-D was deferred; P1-C was a
+> measurement only (`09_...`).**
+> **P2 IS NOT STARTED** — its prerequisites are satisfied; it awaits owner approval.
 > **B7 is carved out of this refactor entirely** — see `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md`.
-> Read `07_P0_CLOSURE.md`, then `08_P1_PLAN.md`. `05_HANDOFF.md` remains the P0 record.
+> Read `07_P0_CLOSURE.md`, then `08_P1_PLAN.md`, then `10_P1_CLOSURE.md`.
+> `05_HANDOFF.md` remains the P0 record.
 
 ---
 
@@ -44,8 +48,8 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | Phase | Scope | Status |
 |---|---|---|
 | **P0** | Baseline capture + safe prune (no production behaviour change) | **CLOSED** — evidence frozen; 2 gaps waived as environment-bound |
-| **P1** | Backend-only additive migration | **PLAN SUBMITTED — awaiting approval** (`08_P1_PLAN.md`) |
-| **P2** | Auth + login request consolidation (frontend) | not started |
+| **P1** | Backend-only additive migration | **CLOSED** — P1-A + P1-B shipped, final gate PASS (`10_P1_CLOSURE.md`); P1-C measurement only, P1-D deferred |
+| **P2** | Auth + login request consolidation (frontend) | **not started — unblocked**, awaiting owner approval |
 | **P3** | Data layer, summaries consumption, URL scope authority, query layer, selectors | not started |
 | **P4** | UI primitives, concurrency warning, viewer view-picker | not started |
 | **P5** | Information architecture + URL state | not started |
@@ -88,6 +92,11 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 > `06_P0_RUNTIME_BASELINE.md` R6 (login page: 4 requests, 2x `/api/auth/me`), R9 (admin card list:
 > 58 statements / 120.9 KB / `1 + 7N`), R8 (400-player import: 800 INSERTs / 285 ms), R10 (SSE).
 > Where the two disagree, the measurement wins.
+>
+> **P1 outcome, measured 2026-08-22** (`10_P1_CLOSURE.md` §3): `GET /api/card-summaries` costs
+> **1 SQL SELECT** and **2,392 bytes for 7 cards**, against **53 SELECTs / 154,504 bytes** for
+> `GET /api/cards` on the same data — a **64.6x** payload reduction. The endpoint has no callers
+> until P3-B consumes it, so none of the login-flow metrics below have moved yet.
 
 | Metric | Current (read from source, **UNVERIFIED at runtime**) | Target |
 |---|---|---|
@@ -114,5 +123,6 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | `07_P0_CLOSURE.md` | **P0 closed.** Waived gaps, B7 carve-out, evidence freeze manifest |
 | `08_P1_PLAN.md` | **The revised P1 plan.** B3 re-scoped, B2 ordering, B4 incorporation, rollback |
 | `09_B4_SESSION_REGISTRY_MEASUREMENT.md` | Logout does **not** free a session-registry slot — measured; routed to P2 |
+| `10_P1_CLOSURE.md` | **P1 closed.** Final gate executed: §9.4 measurement, Invariants A/B/D, public API regression, remaining gaps |
 | `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md` | B7, carved out — pre-existing, owner decision required |
 | `EVIDENCE.sha256` | Checksums of the frozen evidence set (`shasum -c`) |

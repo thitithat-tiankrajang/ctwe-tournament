@@ -4,8 +4,15 @@
 
 ```
 P0 STATUS: CLOSED
-P1 STATUS: PLAN SUBMITTED (08_P1_PLAN.md) — AWAITING OWNER APPROVAL — NO CODE WRITTEN
+P1 STATUS: CLOSED — approved, implemented, committed 40ee7f4..1bd0604,
+           final gate executed and measured (see 10_P1_CLOSURE.md)
+P2 STATUS: NOT STARTED — prerequisites satisfied, awaiting owner approval
 ```
+
+> **Status line updated 2026-08-22.** The P1 line above originally read "PLAN SUBMITTED — AWAITING
+> OWNER APPROVAL — NO CODE WRITTEN". That was true when P0 closed and is no longer. Everything else
+> in this document is unchanged and still describes P0. This file is **not** part of the
+> checksum-frozen set (`EVIDENCE.sha256` covers `01`–`06` + `fixtures/`).
 
 ---
 

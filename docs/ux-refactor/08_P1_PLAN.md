@@ -1,8 +1,19 @@
 # P1 — Backend-only additive migration. REVISED PLAN.
 
 ```
-STATUS: PLAN ONLY — AWAITING OWNER APPROVAL — NO P1 CODE WRITTEN
+STATUS: EXECUTED AND CLOSED (2026-08-22)
+  approved -> implemented -> committed 40ee7f4..1bd0604 -> final gate PASS
+  P1-A shipped · P1-B shipped · P1-C measurement only (09_...) · P1-D DEFERRED
+  Results and measurements: 10_P1_CLOSURE.md
 ```
+
+> **Status line updated 2026-08-22.** It originally read "PLAN ONLY — AWAITING OWNER APPROVAL — NO
+> P1 CODE WRITTEN". **The plan body below is left exactly as written and is still the specification**
+> — read it for intent, and `10_P1_CLOSURE.md` for what was actually measured. The five decisions in
+> §11 were answered: (1) **Option B**, (2) **defer P1-D**, (3) **yes** — run the logout probe
+> (result: `09_...`), (4) **yes** — P0 committed first, (5) **confirmed** — ADMIN stays unrestricted.
+> This file is **not** part of the checksum-frozen set (`EVIDENCE.sha256` covers `01`–`06` +
+> `fixtures/`).
 
 Supersedes the P1 sketch in `00_MASTER_PLAN.md` §3 and the "Required fix" sections of
 `04_BLOCKERS.md` B2 and B3, both of which are frozen and cited here rather than edited.
