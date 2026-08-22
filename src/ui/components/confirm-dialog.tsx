@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, LoaderCircle, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { type ReactNode } from "react";
 import { Button } from "@/ui/components/button";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
@@ -76,8 +76,8 @@ export function ConfirmDialog({
         {error && <div className="confirm-dialog__error" role="alert">{error}</div>}
         <footer>
           {!hideCancel && <Button variant="secondary" disabled={busy} onClick={onCancel}>{cancelLabel}</Button>}
-          <Button variant={danger ? "danger" : "primary"} disabled={busy} onClick={onConfirm}>
-            {busy && <LoaderCircle className="loading-spinner" size={16} />}{busy ? busyLabel : confirmLabel}
+          <Button variant={danger ? "danger" : "primary"} loading={busy} loadingLabel={busyLabel} onClick={onConfirm}>
+            {confirmLabel}
           </Button>
         </footer>
       </section>

@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, LoaderCircle, X } from "lucide-react";
+import { KeyRound, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/ui/components/button";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
@@ -144,8 +144,8 @@ export function PromptDialog({
               {secondaryConfirmLabel}
             </Button>
           )}
-          <Button disabled={busy || !valid} onClick={submit}>
-            {busy && <LoaderCircle className="loading-spinner" size={16} />}{busy ? "กำลังดำเนินการ…" : confirmLabel}
+          <Button disabled={!valid} loading={busy} loadingLabel="กำลังดำเนินการ…" onClick={submit}>
+            {confirmLabel}
           </Button>
         </footer>
       </section>
