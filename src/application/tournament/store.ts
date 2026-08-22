@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, BackOfficeCardSummary, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
 import { comparePlayerCodes } from "@/domain/tournament/player-code";
@@ -64,8 +64,23 @@ export interface SnapshotPublishPatch {
   currentGame: number;
 }
 
+/** A card as a list or sidebar needs it: the twelve summary fields plus where the row came from. */
+export type CardListRow = Omit<BackOfficeCardSummary, "scope"> & {
+  /** True when a full, SSE-patched card backs this row rather than a summary. */
+  full: boolean;
+};
+
 interface TournamentState {
   cards: TournamentCard[];
+  /**
+   * Lean rows from `GET /api/card-summaries`, for the authenticated card list and sidebar.
+   *
+   * A SEPARATE FIELD, not a different container for `cards` — `04_BLOCKERS.md` B1 rejected turning
+   * `cards` into a Record because it would force rewriting the four frozen SSE patch functions,
+   * whose correctness rests on untyped version guards and reference-equality preservation. The array
+   * stays; this sits beside it, and `selectCardList` merges the two for display.
+   */
+  summaries: BackOfficeCardSummary[];
   auth: AuthState;
   loading: boolean;
   error: string | null;
@@ -306,7 +321,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     clearCsrfCookie();
     publicScopeToken = null;
     if (typeof window !== "undefined") window.localStorage.removeItem(ACTIVE_TOURNAMENT_KEY);
-    set({ auth: anonymous, cards: [], activeTournament: null, loading: false, error: null });
+    set({ auth: anonymous, cards: [], summaries: [], activeTournament: null, loading: false, error: null });
     redirectToLoginOnSessionLoss();
   };
 
@@ -603,6 +618,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 
   return {
     cards: [],
+    summaries: [],
     auth: anonymous,
     loading: true,
     error: null,
@@ -1071,4 +1087,48 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 });
 
 export const selectCard = (cards: TournamentCard[], cardId: string) => cards.find((card) => card.id === cardId);
+
+/**
+ * One row per card for a list or sidebar, merging the two sources without conflating them.
+ *
+ * A full card always wins over a summary: it is the SSE-patched copy, so it is at least as fresh,
+ * and during live scoring it is fresher. Summaries fill in the cards this client has not opened.
+ * Returns a plain array so `cards` keeps the container B1 requires.
+ */
+export const selectCardList = (
+  cards: TournamentCard[],
+  summaries: BackOfficeCardSummary[],
+): CardListRow[] => {
+  const rows = new Map<string, CardListRow>();
+  for (const summary of summaries) rows.set(summary.id, { ...summary, full: false });
+  for (const card of cards) {
+    if (card.summaryOnly && rows.has(card.id)) continue;
+    rows.set(card.id, {
+      id: card.id,
+      tournamentId: card.tournamentId,
+      name: card.name,
+      division: card.division,
+      status: card.status,
+      runtimeStage: card.runtimeStage,
+      currentGame: card.currentGame,
+      gameCount: card.gameCount ?? card.games.length,
+      playerCount: card.playerCount ?? card.players.length,
+      publishedGameCount: card.publishedGameCount ?? 0,
+      version: card.version,
+      createdAt: card.createdAt,
+      full: !card.summaryOnly,
+    });
+  }
+  return [...rows.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+};
+
+/** Cards belonging to one tournament, in the order a list should show them. */
+export const selectTournamentCardList = (
+  cards: TournamentCard[],
+  summaries: BackOfficeCardSummary[],
+  tournamentId: string | undefined,
+): CardListRow[] => {
+  const rows = selectCardList(cards, summaries);
+  return tournamentId ? rows.filter((row) => row.tournamentId === tournamentId) : rows;
+};
 export const rankPlayers = (players: Player[]) => [...players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || comparePlayerCodes(a.id, b.id));
