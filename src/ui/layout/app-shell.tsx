@@ -29,6 +29,7 @@ import { useCardSync } from "@/application/tournament/use-card-sync";
 import { useFullCard } from "@/application/tournament/use-full-card";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
 import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
+import { foldersAfterOpening } from "@/ui/layout/card-folders";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
 import { Button } from "@/ui/components/button";
@@ -213,11 +214,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     setHydrated(true);
   }, []);
 
-  // Opening a card adds it as a tab and expands its folder.
+  // Opening a card adds it as a tab, expands its folder and collapses the others (D21).
+  // Keyed on `id` alone, so a folder the user opened by hand to peek at stays open until they
+  // actually navigate somewhere else.
   useEffect(() => {
     if (!id) return;
     setOpenedIds((prev) => prev.includes(id) ? prev : [...prev, id]);
-    setExpandedIds((prev) => prev.has(id) ? prev : new Set(prev).add(id));
+    setExpandedIds((prev) => foldersAfterOpening(prev, id) as Set<string>);
   }, [id]);
 
   // Follow a remote workflow transition only when this browser is still on the old workflow page.
