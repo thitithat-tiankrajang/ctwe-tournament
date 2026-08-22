@@ -4,20 +4,49 @@ import test from "node:test";
 /**
  * The snapshot probe: key derivation, and the fail-open contract.
  *
- * `snapshot-api.ts` reads `NEXT_PUBLIC_SNAPSHOT_ORIGIN` at module load, so each group below imports
- * a fresh copy with the environment already set. The cache-busting query string is what makes that
- * possible without a module-registry reset.
+ * `snapshot-api.ts` reads `NEXT_PUBLIC_SNAPSHOT_ORIGIN` at module load (`configured`, :31), so the
+ * environment has to be set before the first import and cannot be changed afterwards.
+ *
+ * This used to import `./snapshot-api.ts?case=N` per case for a "fresh" copy. That never isolated
+ * anything: this package has no `"type": "module"`, so tsx compiles these files to CommonJS and the
+ * query string does not key the require cache — every case shared the origin bound by the first one.
+ * The module is therefore loaded exactly once here, with the fixture origin.
+ *
+ * The one case that needs a *different* origin — unset — cannot share this process at all, so it
+ * lives in `snapshot-api-origin-unset.test.ts`; the node test runner gives each file its own process.
  */
 
 const FIXTURE_ORIGIN = "https://snapshot.example.com";
 
-let moduleCounter = 0;
-async function loadModule(origin: string | undefined) {
-  if (origin === undefined) delete process.env.NEXT_PUBLIC_SNAPSHOT_ORIGIN;
-  else process.env.NEXT_PUBLIC_SNAPSHOT_ORIGIN = origin;
-  return import(`./snapshot-api.ts?case=${moduleCounter++}`) as Promise<
-    typeof import("./snapshot-api")
-  >;
+/**
+ * The session memo goes through the browser's `sessionStorage`. Node does not provide one unless
+ * `--experimental-webstorage` is passed, and `readMemo`/`writeMemo` deliberately swallow the
+ * resulting ReferenceError (private browsing, disabled storage, quota — the memo is an optimisation,
+ * never a requirement). Without this stub the memo silently does nothing and the two memo cases below
+ * assert against dead code rather than against the behaviour they name.
+ */
+function installSessionStorage() {
+  if (typeof (globalThis as { sessionStorage?: unknown }).sessionStorage !== "undefined") return;
+  const store = new Map<string, string>();
+  (globalThis as { sessionStorage?: unknown }).sessionStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, String(value)),
+    removeItem: (key: string) => void store.delete(key),
+    clear: () => store.clear(),
+    key: (index: number) => [...store.keys()][index] ?? null,
+    get length() { return store.size; },
+  };
+}
+installSessionStorage();
+
+/** Loaded once, with the fixture origin bound at that first load. */
+let modulePromise: Promise<typeof import("./snapshot-api")> | null = null;
+async function loadModule(origin: string) {
+  if (!modulePromise) {
+    process.env.NEXT_PUBLIC_SNAPSHOT_ORIGIN = origin;
+    modulePromise = import("./snapshot-api") as Promise<typeof import("./snapshot-api")>;
+  }
+  return modulePromise;
 }
 
 /** A published document as the CDN would serve it. */
@@ -91,21 +120,6 @@ test("the object URL is one object per tournament under /s/", async () => {
 });
 
 // =========================================================== the kill switch
-
-test("with the origin unset, the probe never runs and no request is made", async () => {
-  const { fetchSnapshotBundle, SNAPSHOT_ORIGIN } = await loadModule(undefined);
-  const previous = globalThis.fetch;
-  let called = false;
-  globalThis.fetch = (async () => { called = true; return jsonResponse(envelope()); }) as typeof fetch;
-
-  try {
-    assert.equal(SNAPSHOT_ORIGIN, "");
-    assert.equal(await fetchSnapshotBundle("tok-off"), null);
-    assert.equal(called, false, "the live path must be byte-identical to today when the flag is off");
-  } finally {
-    globalThis.fetch = previous;
-  }
-});
 
 // =========================================================== published path
 

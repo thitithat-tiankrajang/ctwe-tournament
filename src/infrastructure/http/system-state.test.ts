@@ -13,19 +13,25 @@ import test from "node:test";
  * §17.5 is the other half: this file is never a security control. It says what the operator
  * intends, and Spring Security remains the only thing enforcing anything.
  *
- * `system-state.ts` reads `NEXT_PUBLIC_SNAPSHOT_ORIGIN` at module load and memoizes per session, so
- * each case below imports a fresh copy with the environment already set.
+ * `system-state.ts` resolves `NEXT_PUBLIC_SNAPSHOT_ORIGIN` lazily inside `origin()`, so the only
+ * state that leaks between cases is the module-level `cached` memo. `resetSystemStateCache()` is the
+ * seam the module exports for exactly that, and `loadModule` below calls it on every case.
+ *
+ * This used to import `./system-state.ts?case=N` for a "fresh" copy. That never isolated anything:
+ * this package has no `"type": "module"`, so tsx compiles these files to CommonJS and the query
+ * string does not key the require cache. Every case shared one module — and one `cached` value.
  */
 
 const FIXTURE_ORIGIN = "https://snapshot.example.com";
 
-let moduleCounter = 0;
+import * as systemState from "./system-state";
+
+/** Sets the environment for this case and clears the memo the previous case left behind. */
 async function loadModule(origin: string | undefined) {
   if (origin === undefined) delete process.env.NEXT_PUBLIC_SNAPSHOT_ORIGIN;
   else process.env.NEXT_PUBLIC_SNAPSHOT_ORIGIN = origin;
-  return import(`./system-state.ts?case=${moduleCounter++}`) as Promise<
-    typeof import("./system-state")
-  >;
+  systemState.resetSystemStateCache();
+  return systemState;
 }
 
 function withFetch(handler: (url: string) => Promise<Response> | Response) {
