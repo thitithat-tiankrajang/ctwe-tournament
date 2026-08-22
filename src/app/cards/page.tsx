@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronRight, DoorOpen, Plus, Trash2, Trophy } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useTournamentStore } from "@/application/tournament/store";
+import { useEffect, useMemo, useState } from "react";
+import { selectCardList, useTournamentStore, type CardListRow } from "@/application/tournament/store";
 import { canManageTournament, hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import type { TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
@@ -16,6 +16,11 @@ import { cardStageInfo } from "@/ui/components/stage-info";
 export default function CardsPage() {
   const router = useRouter();
   const cards = useTournamentStore((state) => state.cards);
+  // Select the two sources separately — both are stable references — and merge in a memo. Selecting
+  // the merged array inside the store selector would build a new array on every store read and
+  // re-render forever under zustand's Object.is equality.
+  const summaries = useTournamentStore((state) => state.summaries);
+  const cardRows = useMemo(() => selectCardList(cards, summaries), [cards, summaries]);
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
   const error = useTournamentStore((state) => state.error);
@@ -29,7 +34,7 @@ export default function CardsPage() {
   // Only directors manage cards (create/delete); admins watch, staff/viewers only read.
   const canManage = canManageTournament(auth);
   const createHref = director ? "/director" : "/cards/create";
-  const [deleting, setDeleting] = useState<TournamentCard | null>(null);
+  const [deleting, setDeleting] = useState<CardListRow | null>(null);
   const [pending, setPending] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
@@ -45,11 +50,11 @@ export default function CardsPage() {
 
   // Back-office users must enter a tournament first; public viewers see all published cards.
   const needsTournament = isStaff && !activeTournament;
-  const visibleCards = activeTournament ? cards.filter((card) => card.tournamentId === activeTournament.id) : cards;
+  const visibleCards = activeTournament ? cardRows.filter((card) => card.tournamentId === activeTournament.id) : cardRows;
   const groupedCards = [...visibleCards]
     .sort((a, b) => a.name.localeCompare(b.name, "th", { numeric: true })
       || a.division.localeCompare(b.division, "th", { numeric: true }))
-    .reduce<Map<string, TournamentCard[]>>((groups, card) => {
+    .reduce<Map<string, CardListRow[]>>((groups, card) => {
       const group = groups.get(card.name) ?? [];
       group.push(card);
       groups.set(card.name, group);
@@ -63,7 +68,7 @@ export default function CardsPage() {
     catch (failure) { setDeleteError(failure instanceof Error ? failure.message : "ลบการ์ดไม่สำเร็จ"); }
     finally { setPending(false); }
   };
-  const cardHref = (card: typeof cards[number]) => {
+  const cardHref = (card: CardListRow) => {
     // Only operators (director/staff) go straight to the workspace; admins and viewers watch the overview.
     if (!operator || card.runtimeStage === "FINAL_PUBLISHED") return `/cards/${card.id}`;
     if (card.runtimeStage === "PLAYER_REGISTRATION") return `/cards/${card.id}/players`;

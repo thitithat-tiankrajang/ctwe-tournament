@@ -23,9 +23,10 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
-import { readActiveTournament, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { readActiveTournament, selectCard, selectTournamentCardList, useTournamentStore } from "@/application/tournament/store";
 import { useCardSync } from "@/application/tournament/use-card-sync";
+import { useFullCard } from "@/application/tournament/use-full-card";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
 import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import type { RuntimeStage } from "@/domain/tournament/types";
@@ -122,6 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
   const cards = useTournamentStore((state) => state.cards);
+  const summaries = useTournamentStore((state) => state.summaries);
   const activeTournament = useTournamentStore((state) => state.activeTournament);
   const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
   const logout = useTournamentStore((state) => state.logout);
@@ -155,6 +157,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   // `03_INVARIANTS.md` §1 pre-agreed for P2; neither hook's own code is touched.
   useCardSync(!loading && isStaff ? id : undefined);
   usePublicSync(loading ? undefined : id, !isStaff);
+  // P3-B: the authenticated list is summaries now, so an opened card must be fetched in full once.
+  useFullCard(id, !loading && isStaff);
   const onTournamentViewer = pathname.startsWith("/tour/") || pathname.startsWith("/t/");
   // Read-only overviews have no primary mobile navigation underneath their
   // Ranking/Pairing/Result bar, including tournament viewer routes without an `id` param.
@@ -167,7 +171,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     ...(isDirector(auth) ? [{ href: "/director", label: "คอนโซลผู้อำนวยการ", icon: UserCog }] : []),
     ...(isAdmin(auth) ? [{ href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : []),
   ];
-  const tournamentCards = activeTournament ? cards.filter((card) => card.tournamentId === activeTournament.id) : [];
+  // Merged in a memo, not inside the store selector: selectTournamentCardList builds a new array,
+  // which under zustand's Object.is equality would re-render the shell on every store read.
+  const tournamentCards = useMemo(
+    () => activeTournament ? selectTournamentCardList(cards, summaries, activeTournament.id) : [],
+    [activeTournament, cards, summaries]);
 
   // Restore the opened-card tabs and collapse state for this browser session.
   useEffect(() => {

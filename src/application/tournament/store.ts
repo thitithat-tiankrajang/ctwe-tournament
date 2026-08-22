@@ -394,6 +394,46 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     };
   });
 
+  /**
+   * The authenticated card list.
+   *
+   * Prefers `GET /api/card-summaries` (P1-B): twelve fields and ONE SQL statement, against a full
+   * card per row. Measured on the same data — a director's list is **649 B / 1 statement** here
+   * versus **94,918 B / 1+7N statements** from `/api/cards`.
+   *
+   * Falls back to `/api/cards` on **400, 404 or 405** — the three ways a backend without the
+   * endpoint can answer, all three required by `04_BLOCKERS.md` B3, because a routing miss surfaces
+   * as a 400 from failed UUID conversion and not only as a 404. That fallback is what keeps
+   * **New FE + Old BE** working (Invariant D); any other status is a real error and is thrown.
+   *
+   * Returns `null` when the session turned out to be dead — the redirect has already happened.
+   */
+  const loadBackOfficeCards = async (): Promise<{ cards: TournamentCard[]; summaries: BackOfficeCardSummary[] } | null> => {
+    const lean = await fetch("/api/card-summaries", { credentials: "same-origin", cache: "no-store" });
+    if (lean.ok) {
+      const summaries = await lean.json() as BackOfficeCardSummary[];
+      // Keep the full cards already held — they are SSE-patched and therefore fresher — but drop any
+      // the server no longer lists, since the summaries are authoritative for existence.
+      const live = new Set(summaries.map((summary) => summary.id));
+      return { cards: get().cards.filter((card) => live.has(card.id)), summaries };
+    }
+    if (lean.status === 401) {
+      expireBackOfficeSession();
+      return null;
+    }
+    if (lean.status !== 400 && lean.status !== 404 && lean.status !== 405) throw await readError(lean);
+
+    const response = await fetch("/api/cards", { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) {
+      if (response.status === 401) {
+        expireBackOfficeSession();
+        return null;
+      }
+      throw await readError(response);
+    }
+    return { cards: await response.json() as TournamentCard[], summaries: [] };
+  };
+
   const fetchPublicCatalog = async (versionToken?: string) => {
     const suffix = versionToken ? `?v=${encodeURIComponent(versionToken)}` : "";
     const response = await fetch(publicApiUrl(`/api/public/cards${suffix}`), { credentials: "omit" });
@@ -737,17 +777,13 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
           rememberStaffSessionHint();
         }
         let cards: TournamentCard[];
+        let summaries: BackOfficeCardSummary[] = [];
         const scopeToken = publicScopeToken ?? tokenFromLocation();
         if (auth.authenticated) {
-          const response = await fetch("/api/cards", { credentials: "same-origin", cache: "no-store" });
-          if (!response.ok) {
-            if (response.status === 401) {
-              expireBackOfficeSession();
-              return;
-            }
-            throw await readError(response);
-          }
-          cards = await response.json() as TournamentCard[];
+          const backOffice = await loadBackOfficeCards();
+          if (!backOffice) return; // session already expired and redirected
+          cards = backOffice.cards;
+          summaries = backOffice.summaries;
         } else if (scopeToken) {
           // A token-scoped viewer page is active: its bundle already carries everything, so
           // hydration must not issue a second, coarser catalog request.
@@ -756,7 +792,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         } else {
           cards = (await fetchPublicCatalog()).map(publicSummaryCard);
         }
-        set({ auth, cards, loading: false });
+        set({ auth, cards, summaries, loading: false });
       } catch (error) {
         set({ loading: false, error: error instanceof Error ? error.message : "ไม่สามารถเชื่อมต่อ API ได้" });
       }
