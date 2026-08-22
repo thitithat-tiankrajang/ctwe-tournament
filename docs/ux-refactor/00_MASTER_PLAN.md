@@ -10,9 +10,12 @@ Baseline commit: `6ce756c9d77590f1e482d23b25ccea360db9c0a6` (branch `main`)
 > **P2 IS CLOSED** (2026-08-22) — implemented, committed (`1bd0604..87f2e5a`) and its final gate
 > executed. See `12_P2_CLOSURE.md`. One item is left open as an **owner decision**:
 > `HttpSessionEventPublisher` (`11_P2_PLAN.md` §6).
-> **P3 IS PARTIAL** (2026-08-22) — plan `13_P3_PLAN.md`. A, B, C, D1 and E are complete and
-> measured; **P3-D2's query-layer half is deliberately deferred** (`14_P3_HANDOFF.md` §5).
-> **Not closed.**
+> **P3 IS CLOSED** (2026-08-22) — plan `13_P3_PLAN.md`, closure `15_P3_CLOSURE.md`. All six
+> chunks A/B/C/D1/D2/E are complete and measured. **P3-D2's query migration was measured and
+> declined** — the consoles have no duplicate to collapse on cold load and are already at one
+> request per focus, while every console read sits on a mutation's refresh path
+> (`15_P3_CLOSURE.md` §2). M1's "≤ 8 requests on /admin" is **not met** and needs a backend
+> batch endpoint or D3 — both outside P3.
 > **B7 is carved out of this refactor entirely** — see `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md`.
 > Read `10_P1_CLOSURE.md`, then `11_P2_PLAN.md` and `12_P2_CLOSURE.md`.
 > `05_HANDOFF.md` remains the P0 record.
@@ -55,7 +58,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | **P0** | Baseline capture + safe prune (no production behaviour change) | **CLOSED** — evidence frozen; 2 gaps waived as environment-bound |
 | **P1** | Backend-only additive migration | **CLOSED** — P1-A + P1-B shipped, final gate PASS (`10_P1_CLOSURE.md`); P1-C measurement only, P1-D deferred |
 | **P2** | Auth + login request consolidation (frontend) | **CLOSED** — final gate PASS (`12_P2_CLOSURE.md`); re-auth round trips 2 → 1. `HttpSessionEventPublisher` deferred to the owner |
-| **P3** | Data layer, summaries consumption, URL scope authority, query layer, selectors | **PARTIAL** — A/B/C/D1/E done, D2 half (`14_P3_HANDOFF.md`): /admin 15→10, refocus 7→1 and 4→1, card list 9,592→854 B, **shell renders per SSE result 1→0** |
+| **P3** | Data layer, summaries consumption, URL scope authority, query layer, selectors | **CLOSED** — all six chunks A/B/C/D1/D2/E, final gate PASS (`15_P3_CLOSURE.md`); /admin 15→10, refocus 7→1 and 4→1, card list 9,592→854 B, **shell renders per SSE result 1→0**. D2's query migration measured and declined; M1's ≤8-request target NOT met (needs backend batch or D3) |
 | **P4** | UI primitives, concurrency warning, viewer view-picker | not started |
 | **P5** | Information architecture + URL state | not started |
 | **P6** | Performance + accessibility remainder | not started |
