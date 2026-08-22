@@ -887,6 +887,17 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .egrid-score:focus { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: -2px; }
 .egrid-score:disabled { background: #eef0f3; color: #9aa1a9; }
 
+/* Below the desktop breakpoint the grid sizes to its CONTENT and overflows into
+   .entry-grid-scroll, instead of DataGrid distributing the container width across the columns.
+   Distributing is right on a desktop and impossible on a phone: at 375px it produced 5.81px
+   headers, and once type holds the 11px floor the same layout truncates 59 cells at 768px. A
+   name or a player code must be scrollable, never ellipsed away. Desktop keeps table-layout:
+   fixed and its resizable columns untouched. */
+@media (max-width: 768px) {
+  .entry-grid { table-layout: auto; width: max-content; min-width: 100%; }
+  .entry-grid td.egrid-td, .entry-grid thead th { padding-inline: 4px; }
+}
+
 /* Grid TYPE scales fluidly with width in the base rules, so no stepped size override is needed
    here. What remains is a pointer concern, not a reading one: a mouse can hit a shorter control. */
 @media (min-width: 769px) and (hover: hover) {
@@ -1062,12 +1073,6 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   .entry-grid td.egrid-td { height: 24px; padding: 1px; }
   .entry-grid .cell-id { letter-spacing: -.04em; }
   .entry-grid .egrid-score { height: 26px; padding: 1px; }
-  /* DataGrid distributes the container's width across its columns, which is right on a desktop
-     but cannot hold legible type in 349px. Here the columns take their content width instead and
-     the table overflows into .entry-grid-scroll, so a name or code is scrolled to rather than
-     truncated. Desktop keeps table-layout: fixed and its resizable columns untouched. */
-  .entry-grid { table-layout: auto; width: max-content; min-width: 100%; }
-  .entry-grid td.egrid-td, .entry-grid thead th { padding-inline: 4px; }
   .game-flow { grid-auto-columns: 122px; }
   .game-flow__item { min-height: 78px; padding: 8px; }
 }

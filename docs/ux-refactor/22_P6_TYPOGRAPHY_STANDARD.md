@@ -66,10 +66,16 @@ that cannot be read.
 
 The rule: **type holds the floor and the table overflows into its scroller.** `.entry-grid-scroll`
 already had `overflow-x: auto`; it was simply never reached, because `table-layout: fixed` made the
-table exactly as wide as its container. At ≤560px the grid now uses `table-layout: auto;
-width: max-content`, so columns take their content width and the overflow is real.
+table exactly as wide as its container. Below the desktop breakpoint the grid now uses
+`table-layout: auto; width: max-content`, so columns take their content width and the overflow is
+real.
 
-Desktop is untouched — it keeps `table-layout: fixed` and its resizable columns.
+**The boundary is ≤768px, not ≤560px** — found by measuring, not by reasoning. Scoped to ≤560 first,
+the fix left **59 clipped cells at 768px**: wide enough that `table-layout: fixed` still tried to
+distribute the container width, narrow enough that legible type no longer fitted. Truncating a
+player's name is the same data loss as shrinking it to 7px.
+
+Desktop (≥769px) is untouched — it keeps `table-layout: fixed` and its resizable columns.
 
 Measured outcome, public viewer, `/tour/bkk`:
 
@@ -82,6 +88,18 @@ Measured outcome, public viewer, `/tour/bkk`:
 | Cells clipped by ellipsis | — | **0** | 0 | 0 | 0 |
 | Grid scrolls horizontally | no | yes (436 in 364) | yes (473 in 364) | no | no |
 | Page overflows horizontally | no | **no** | no | no | no |
+
+Swept across the range after the boundary fix — smallest rendered text and clipped cells:
+
+| Viewport | 375 | 390 | 768 | 1024 | 1280 |
+|---|---|---|---|---|---|
+| Smallest rendered text | 11px | 11px | 11px | 11px | 11px |
+| Cells clipped | 0 | 0 | **0** (59 before the boundary fix) | 0 | 0 |
+| Page overflows horizontally | no | no | no | no | no |
+
+1024px is the interesting column: a touch tablet there reports `hover: none`, so under the old
+pointer gate it fell through to phone sizing at desktop width. It now renders 11.6–12px like any
+other 1024px viewport.
 
 Desktop lands within ~1px of where it was: the change lifts the floor, it does not resize the app.
 The one real desktop movement is the school line, which was **9.64px** and is now above the floor.
