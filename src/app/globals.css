@@ -49,17 +49,15 @@ body {
 }
 button, input, select, textarea { font: inherit; }
 
-/* Text-backed masked secrets prevent browsers from offering to save credentials. */
+/* Masking is the platform's job now: the control is type="password" while masked (D6), so CSS only
+   has to keep the dots evenly spaced and leave room for the reveal button. */
 .fresh-secret-input { display: block; min-width: 0; position: relative; width: 100%; }
 .fresh-secret-input__control {
-  -webkit-text-security: disc;
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   letter-spacing: .08em;
   padding-right: 36px;
   width: 100%;
 }
-.fresh-secret-input--revealed .fresh-secret-input__control { -webkit-text-security: none; }
-.fresh-secret-input__mask { display: none; }
 .fresh-secret-input__toggle {
   align-items: center;
   background: none;
@@ -79,25 +77,6 @@ button, input, select, textarea { font: inherit; }
 }
 .fresh-secret-input__toggle:hover:not(:disabled) { background: var(--surface); color: var(--ink); }
 .fresh-secret-input__toggle:disabled { cursor: default; opacity: .45; }
-@supports not (-webkit-text-security: disc) {
-  .fresh-secret-input__control { caret-color: var(--ink); color: transparent !important; }
-  .fresh-secret-input--revealed .fresh-secret-input__control { color: inherit !important; }
-  .fresh-secret-input__control::placeholder { color: #8b929c; opacity: 1; }
-  .fresh-secret-input__mask {
-    display: block;
-    font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-    inset-inline: 11px 36px;
-    letter-spacing: .08em;
-    line-height: 1;
-    overflow: hidden;
-    pointer-events: none;
-    position: absolute;
-    text-overflow: clip;
-    top: 50%;
-    transform: translateY(-50%);
-    white-space: nowrap;
-  }
-}
 button, a { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; text-decoration: none; }
 svg { flex: 0 0 auto; }
