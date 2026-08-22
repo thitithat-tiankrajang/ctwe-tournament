@@ -4,23 +4,20 @@ import { useTournamentStore } from "./store";
 import type { Pairing, TournamentCard } from "@/domain/tournament/types";
 
 /**
- * P4 SSE PROOF GATE — what happens to the STAFF path when a `result` event is lost?
+ * P4 SSE proof gate, fix A — the staff path must not trust a gapped `result` event.
  *
  * `SseDropReachabilityTest` (backend) proves the loss is reachable: `CardEventPublisher` writes from
- * one bounded thread under `DiscardOldestPolicy`, so a single stalled socket makes the queue overflow
- * and events are discarded **while the stream stays open** — no error, no completion, no EventSource
- * reconnect. The server also never reads `Last-Event-ID`, so there is no replay.
+ * one bounded thread and can drop a queued send while the stream stays open — no error, no
+ * completion, no EventSource reconnect — and the server never reads `Last-Event-ID`, so nothing
+ * replays the hole. Before fix A the staff path merged the surviving delta and adopted its version,
+ * silently losing every result in between.
  *
- * That leaves the client as the only line of defence, and the two clients do not agree:
+ * The guard lives in `applyResultPatch` rather than in `use-card-sync.ts` because that is the only
+ * place holding BOTH the version we believe we have (`card.version`) and the version that arrived —
+ * and because every caller already treats a `false` return as "pull the whole card". That existing
+ * contract is why the fix leaves both frozen sync hooks byte-identical.
  *
- * - **Viewer** (`use-public-sync.ts` `applyDelta`) — "apply exactly `known + 1`, resync on any gap".
- * - **Staff** (`use-card-sync.ts` `result` handler) — applies whatever version arrives and refetches
- *   only when `applyResultPatch` returns false.
- *
- * These are CHARACTERIZATION tests. They pin what the code does today, and today's staff behaviour
- * is a defect, not a design: they are written so that fixing it makes the intent obvious rather than
- * making a green test look like approval. Do not "fix" the tests to keep them passing — fix the
- * client and rewrite the expectations.
+ * `false` here therefore means exactly one thing to every caller: **resync**.
  */
 
 const CARD = "card-1";
@@ -45,55 +42,80 @@ function seed(version: number) {
   });
 }
 
+const apply = (version: number, changed: Pairing[]) =>
+  useTournamentStore.getState().applyResultPatch(CARD, version, changed);
 const card = () => useTournamentStore.getState().cards.find((item) => item.id === CARD)!;
 const row = (id: string) => card().snapshots[0].pairings.find((item) => item.id === id)!;
 
-/** The viewer's guard, quoted from `use-public-sync.ts` so the asymmetry is pinned, not described. */
-const viewerWouldResync = (known: number, incoming: number) => incoming !== known + 1;
-
-test("KNOWN DEFECT: a gapped result patch is applied instead of triggering a resync", () => {
+test("a dropped event leaves a version gap, which is detected and reported as unpatched", () => {
   seed(10);
 
-  // Versions 11 and 12 were persisted and then discarded by the stalled writer. 13 arrives.
-  const patched = useTournamentStore.getState().applyResultPatch(CARD, 13, [
-    pairing("t2", { scoreOne: 300, scoreTwo: 250, winner: "A" } as Partial<Pairing>),
-  ]);
+  // Versions 11 and 12 were persisted, then discarded by a stalled writer. 13 arrives.
+  const patched = apply(13, [pairing("t2", { scoreOne: 300, scoreTwo: 250, winner: "A" } as Partial<Pairing>)]);
 
-  assert.equal(patched, true,
-    "applyResultPatch reports success, so use-card-sync.ts:84 does NOT call syncCard()");
-  assert.equal(card().version, 13,
-    "the card jumps 10 -> 13, adopting a version whose intermediate deltas it never received");
-  assert.equal(row("t1").scoreOne, null,
-    "table 1's persisted v11 result is absent from the client and nothing will ever fetch it");
-  assert.equal(row("t2").scoreOne, 300, "only the surviving v13 delta was applied");
+  assert.equal(patched, false,
+    "false is the resync signal: use-card-sync.ts:84 and submitResult both call syncCard on it");
+  assert.equal(card().version, 10,
+    "the card must NOT adopt a version whose intermediate deltas it never received");
+  assert.equal(row("t2").scoreOne, null,
+    "and must not merge a delta it cannot place — the full refetch is the source of truth");
 });
 
-test("the viewer path WOULD have resynced on the same sequence — the guard exists in this repo", () => {
-  assert.equal(viewerWouldResync(10, 13), true,
-    "known + 1 = 11, incoming = 13: use-public-sync.ts syncs the whole card instead of patching");
-  assert.equal(viewerWouldResync(10, 11), false, "the contiguous case still patches in place");
+test("the local state is left untouched by a gapped event, so nothing is half-applied", () => {
+  seed(10);
+  const before = card();
+
+  apply(15, [pairing("t1", { scoreOne: 999, scoreTwo: 1, winner: "A" } as Partial<Pairing>)]);
+
+  assert.equal(card(), before,
+    "same object reference — a rejected patch must not re-render the grid either");
 });
 
-test("a contiguous result patch applies cleanly — the defect is the gap, not the patching", () => {
+test("the contiguous event still patches in place — the fix must not cost the fast path", () => {
   seed(10);
 
-  const patched = useTournamentStore.getState().applyResultPatch(CARD, 11, [
-    pairing("t1", { scoreOne: 500, scoreTwo: 433, winner: "A" } as Partial<Pairing>),
-  ]);
+  const patched = apply(11, [pairing("t1", { scoreOne: 500, scoreTwo: 433, winner: "A" } as Partial<Pairing>)]);
 
-  assert.equal(patched, true);
+  assert.equal(patched, true, "no refetch: the delta landed exactly on the version we held");
   assert.equal(card().version, 11);
-  assert.equal(row("t1").scoreOne, 500, "the delta that was actually delivered is applied");
+  assert.equal(row("t1").scoreOne, 500);
 });
 
-test("an already-seen version is a no-op — the writer's own echo must not double-apply", () => {
+test("a run of consecutive events applies without a single refetch", () => {
+  seed(10);
+
+  for (let i = 1; i <= 4; i++) {
+    const patched = apply(10 + i, [pairing("t1", { scoreOne: 400 + i, scoreTwo: 100, winner: "A" } as Partial<Pairing>)]);
+    assert.equal(patched, true, `event ${10 + i} should patch in place`);
+  }
+
+  assert.equal(card().version, 14);
+  assert.equal(row("t1").scoreOne, 404, "the last delta wins");
+});
+
+test("the writer's own echo is still a no-op, not a gap — no refetch storm on save", () => {
   seed(12);
 
-  const patched = useTournamentStore.getState().applyResultPatch(CARD, 11, [
-    pairing("t1", { scoreOne: 999, scoreTwo: 1, winner: "A" } as Partial<Pairing>),
-  ]);
+  const patched = apply(11, [pairing("t1", { scoreOne: 999, scoreTwo: 1, winner: "A" } as Partial<Pairing>)]);
 
-  assert.equal(patched, true, "reported handled, so no refetch storm on the writer's own echo");
+  assert.equal(patched, true, "already at/after this version: handled, so no resync is triggered");
   assert.equal(card().version, 12, "version never goes backwards");
   assert.equal(row("t1").scoreOne, null, "and the stale payload is not applied");
+});
+
+test("re-delivery of the exact current version is a no-op too", () => {
+  seed(12);
+
+  const patched = apply(12, [pairing("t1", { scoreOne: 777, scoreTwo: 1, winner: "A" } as Partial<Pairing>)]);
+
+  assert.equal(patched, true);
+  assert.equal(card().version, 12);
+  assert.equal(row("t1").scoreOne, null);
+});
+
+test("an unknown card is reported unpatched rather than silently ignored", () => {
+  seed(10);
+
+  assert.equal(useTournamentStore.getState().applyResultPatch("nope", 11, []), false,
+    "a result for a card we do not hold must not report success");
 });

@@ -570,6 +570,20 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
           patched = true;
           return card;
         }
+        // GAP GUARD (P4 SSE proof gate, fix A). A result event carries a DELTA, so it is only
+        // meaningful when it lands exactly on the version we already hold. `CardEventPublisher`
+        // writes from one bounded thread under DiscardOldestPolicy and can drop a queued send while
+        // the stream stays open — no error, no completion, no EventSource reconnect — and the server
+        // never reads Last-Event-ID, so nothing replays the hole. Before this guard the staff path
+        // merged the surviving delta and ADOPTED its version, silently losing every result in
+        // between; measured, 8 persisted results in and 2 delivered.
+        //
+        // Returning false (rather than patching) is deliberate: every caller already treats false as
+        // "pull the whole card" — `use-card-sync.ts` at the `result` handler, `submitResult` below,
+        // and `use-public-sync.ts`'s applyDelta. That existing contract is why this fix needs no
+        // change to either frozen sync hook. The viewer has enforced the same rule all along
+        // ("apply exactly known + 1, resync on any gap"); this brings staff up to it.
+        if (version !== card.version + 1) return card;
         const index = card.snapshots.findIndex((snapshot) => !snapshot.confirmedAt);
         if (index < 0) return card;
         patched = true;
