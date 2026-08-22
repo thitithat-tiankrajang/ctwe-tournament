@@ -58,14 +58,19 @@ export default function AdminConsolePage() {
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
 
+  // Depend on the BOOLEAN, not the auth object. `ensureSessionAlive()` runs on every window focus
+  // and stores a fresh AuthState object even when nothing changed; depending on `auth` here made
+  // this callback — and therefore the effect below — new on every focus, refetching tournaments,
+  // directors and archives each time. Measured: 7 requests per refocus.
+  const isAdminUser = isAdmin(auth);
   const refresh = useCallback(async () => {
-    if (!isAdmin(auth)) return;
+    if (!isAdminUser) return;
     try {
       const [t, d] = await Promise.all([loadTournaments(), listDirectors(), loadArchives()]);
       setTournaments(t);
       setDirectors(d);
     } catch { /* surfaced via store.error */ }
-  }, [auth, listDirectors, loadArchives, loadTournaments]);
+  }, [isAdminUser, listDirectors, loadArchives, loadTournaments]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
