@@ -1158,6 +1158,43 @@ export const selectCardList = (
   return [...rows.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 };
 
+/**
+ * The only card fields `AppShell` reads: sidebar folders, the workflow nudge, and the stage-change
+ * redirect. Everything else the shell renders comes from `auth`, `activeTournament` or local state.
+ *
+ * **A result save changes none of these** — `submitResult` touches scores and the card version, not
+ * the stage (`03_INVARIANTS.md` §3.4). That is what lets the shell skip re-rendering on the SSE
+ * patches that dominate live scoring, while still reacting to a stage change, which it must.
+ */
+export type ShellCard = Pick<CardListRow, "id" | "tournamentId" | "name" | "division" | "runtimeStage">;
+
+export const selectShellCards = (
+  cards: TournamentCard[],
+  summaries: BackOfficeCardSummary[],
+): ShellCard[] => selectCardList(cards, summaries).map((row) => ({
+  id: row.id,
+  tournamentId: row.tournamentId,
+  name: row.name,
+  division: row.division,
+  runtimeStage: row.runtimeStage,
+}));
+
+/**
+ * A value-signature of {@link selectShellCards}, for subscribing to *what the shell renders* rather
+ * than to the `cards` array.
+ *
+ * Zustand compares with `Object.is`, so selecting `state.cards` re-renders on every SSE patch —
+ * `applyResultPatch` necessarily builds a new array. Selecting a string means the shell re-renders
+ * only when a field it actually shows changes. Returning the derived array directly would not work:
+ * its row objects are rebuilt each call and would never compare equal, shallowly or otherwise.
+ */
+export const shellCardsSignature = (
+  cards: TournamentCard[],
+  summaries: BackOfficeCardSummary[],
+): string => selectShellCards(cards, summaries)
+  .map((card) => `${card.id}\u0000${card.tournamentId}\u0000${card.name}\u0000${card.division}\u0000${card.runtimeStage}`)
+  .join("\u0001");
+
 /** Cards belonging to one tournament, in the order a list should show them. */
 export const selectTournamentCardList = (
   cards: TournamentCard[],
