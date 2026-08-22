@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -215,6 +216,36 @@ class CardEventPublisherTest {
 
         assertThat(publicFrame).doesNotContain("actor").doesNotContain("director-a").doesNotContain("ROLE_");
         assertThat(staffFrame).contains("\"actor\":\"director-a\"").contains("ROLE_DIRECTOR");
+    }
+
+    @Test
+    @DisplayName("an idle heartbeat tick reads no runtime settings, and a subscribed one still does")
+    void idleHeartbeatDoesNotReadRuntimeSettings() {
+        // settings.get() is evaluated inside the heartbeat-interval guard, so before this it ran on
+        // every 5s tick whether or not anyone was listening -- a database round trip a second and a
+        // half of every minute, forever, on a deployment serving nobody (04_BLOCKERS.md B8).
+        AtomicInteger reads = new AtomicInteger();
+        Supplier<RuntimeSettings> counting = () -> {
+            reads.incrementAndGet();
+            return new RuntimeSettings(true, true, false, 8, 8, 60_000, 0, 2_000, null);
+        };
+        CapturingEmitter emitter = new CapturingEmitter();
+        CardEventPublisher publisher = new CardEventPublisher(counting, Runnable::run) {
+            @Override SseEmitter createEmitter() { return emitter; }
+        };
+
+        publisher.heartbeat();
+        publisher.heartbeat();
+        publisher.heartbeat();
+        assertThat(reads.get()).as("no subscribers: the tick has no work and must not touch the database").isZero();
+
+        // A real subscriber must restore the old behaviour exactly -- the guard is about idleness,
+        // not about beating less often.
+        int afterSubscribe = reads.get();
+        publisher.subscribe(UUID.randomUUID(), () -> 1L);
+        publisher.heartbeat();
+        assertThat(reads.get()).as("with a subscriber the interval guard reads settings as before")
+            .isGreaterThan(afterSubscribe);
     }
 
     private static CardDtos.CardResponse card(UUID id, long version) {

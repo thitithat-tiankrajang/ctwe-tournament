@@ -307,6 +307,12 @@ public class CardEventPublisher {
         // Every tick, not on the heartbeat interval: an owed resync bounds how long a subscriber can
         // sit on state it does not know is stale, so it must not inherit the slower beat cadence.
         flushResyncDebt();
+        // Nothing subscribed means no socket to prune and no client to beat, so the tick has no
+        // work to do. The early return exists for the guard on the next line: settings.get() is
+        // evaluated as part of that condition, so without this an idle deployment read
+        // runtime_settings every 5s forever - roughly 17,280 transactions a day serving nobody.
+        // remove() prunes a card's entry once its last emitter goes, so isEmpty() is exact.
+        if (emitters.isEmpty() && publicEmitters.isEmpty() && tournamentEmitters.isEmpty()) return;
         long now = System.currentTimeMillis();
         if (now - lastHeartbeatAt < settings.get().heartbeatIntervalMs()) return;
         lastHeartbeatAt = now;
