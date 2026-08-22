@@ -8,6 +8,7 @@ import com.ctwe.tournament.domain.pairing.PairingStrategy;
 import com.ctwe.tournament.domain.pairing.SchoolAwarePairing;
 import com.ctwe.tournament.infrastructure.cache.EvictPublicCard;
 import com.ctwe.tournament.infrastructure.cache.TournamentCaches;
+import com.ctwe.tournament.web.dto.BackOfficeCardDtos;
 import com.ctwe.tournament.web.dto.CardDtos;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -58,6 +59,55 @@ public class TournamentCardService {
         Object[] args = restrictTournaments == null ? new Object[0] : restrictTournaments.toArray();
         return jdbc.query("SELECT id FROM tournament_cards" + where + " ORDER BY created_at DESC",
             (rs, row) -> get(rs.getObject("id", UUID.class), staffView), args);
+    }
+
+    /**
+     * Lean back-office card rows in ONE statement, scoped to the caller's tournaments.
+     *
+     * <p>{@link #list(boolean, Set)} loads a full card per id, which measured 58 statements and
+     * 120.9 KB for 6 cards ({@code 1 + 7N}); a single 400-player card serialises to 68 KB on its own.
+     * A sidebar and a card list need twelve fields.
+     *
+     * <p>This is the public catalog query minus its two public projections: the real
+     * {@code runtime_stage} instead of the derived public stage, and the real player count instead of
+     * the 0 the public view reports during registration — the one moment staff most need it. It also
+     * returns {@code version}, not {@code public_version}.
+     *
+     * <p>Deliberately NOT routed through {@code PublicCardReadCache}: those caches are keyed
+     * {@code 'all'} and shared with anonymous callers, so a tenant-scoped, staff-valued result placed
+     * there would leak across principals. Per-request cost here is one statement.
+     *
+     * @param restrictTournaments {@code null} means unrestricted (ADMIN); an empty set means the
+     *                            caller has access to nothing and gets an empty list
+     */
+    @Transactional(readOnly = true)
+    public List<BackOfficeCardDtos.CardSummary> summaries(Set<UUID> restrictTournaments) {
+        if (restrictTournaments != null && restrictTournaments.isEmpty()) return List.of();
+        String where = restrictTournaments == null ? ""
+            : " WHERE c.tournament_id IN (" + String.join(", ", Collections.nCopies(restrictTournaments.size(), "?")) + ")";
+        Object[] args = restrictTournaments == null ? new Object[0] : restrictTournaments.toArray();
+        return jdbc.query("""
+            SELECT c.id, c.tournament_id, c.name, c.division, c.status, c.runtime_stage,
+                   c.current_game, c.number_of_games,
+                   (SELECT count(*) FROM players p WHERE p.card_id = c.id) AS player_count,
+                   (SELECT count(*) FROM games g WHERE g.card_id = c.id AND g.status = 'COMPLETED')
+                       AS published_game_count,
+                   c.version, c.created_at
+            FROM tournament_cards c""" + where + " ORDER BY c.created_at DESC",
+            (rs, row) -> new BackOfficeCardDtos.CardSummary(
+                rs.getObject("id", UUID.class),
+                rs.getObject("tournament_id", UUID.class),
+                rs.getString("name"),
+                rs.getString("division"),
+                CardStatus.valueOf(rs.getString("status")),
+                RuntimeStage.valueOf(rs.getString("runtime_stage")),
+                rs.getInt("current_game"),
+                rs.getInt("number_of_games"),
+                rs.getInt("player_count"),
+                rs.getInt("published_game_count"),
+                rs.getLong("version"),
+                rs.getTimestamp("created_at").toInstant()
+            ), args);
     }
 
     @Transactional(readOnly = true)
