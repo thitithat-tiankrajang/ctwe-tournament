@@ -7,9 +7,12 @@ Baseline commit: `6ce756c9d77590f1e482d23b25ccea360db9c0a6` (branch `main`)
 > **P1 IS CLOSED** (2026-08-22) — approved, implemented, committed (`40ee7f4..1bd0604`) and its
 > final gate executed and measured. See `10_P1_CLOSURE.md`. **P1-D was deferred; P1-C was a
 > measurement only (`09_...`).**
-> **P2 IS NOT STARTED** — its prerequisites are satisfied; it awaits owner approval.
+> **P2 IS CLOSED** (2026-08-22) — implemented, committed (`1bd0604..87f2e5a`) and its final gate
+> executed. See `12_P2_CLOSURE.md`. One item is left open as an **owner decision**:
+> `HttpSessionEventPublisher` (`11_P2_PLAN.md` §6).
+> **P3 IS NOT STARTED.**
 > **B7 is carved out of this refactor entirely** — see `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md`.
-> Read `07_P0_CLOSURE.md`, then `08_P1_PLAN.md`, then `10_P1_CLOSURE.md`.
+> Read `10_P1_CLOSURE.md`, then `11_P2_PLAN.md` and `12_P2_CLOSURE.md`.
 > `05_HANDOFF.md` remains the P0 record.
 
 ---
@@ -49,8 +52,8 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 |---|---|---|
 | **P0** | Baseline capture + safe prune (no production behaviour change) | **CLOSED** — evidence frozen; 2 gaps waived as environment-bound |
 | **P1** | Backend-only additive migration | **CLOSED** — P1-A + P1-B shipped, final gate PASS (`10_P1_CLOSURE.md`); P1-C measurement only, P1-D deferred |
-| **P2** | Auth + login request consolidation (frontend) | **not started — unblocked**, awaiting owner approval |
-| **P3** | Data layer, summaries consumption, URL scope authority, query layer, selectors | not started |
+| **P2** | Auth + login request consolidation (frontend) | **CLOSED** — final gate PASS (`12_P2_CLOSURE.md`); re-auth round trips 2 → 1. `HttpSessionEventPublisher` deferred to the owner |
+| **P3** | Data layer, summaries consumption, URL scope authority, query layer, selectors | **not started — unblocked** |
 | **P4** | UI primitives, concurrency warning, viewer view-picker | not started |
 | **P5** | Information architecture + URL state | not started |
 | **P6** | Performance + accessibility remainder | not started |
@@ -105,7 +108,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | Login payload, admin | every card platform-wide (no tournament filter) | 0 cards |
 | Requests on window refocus (console) | 4 | ≤1 |
 | `shutdown-readiness` calls per admin page load, N tournaments | N+1 | 1 |
-| Password re-auth round trips | 2 (pre-flight + mutation) | 1 |
+| Password re-auth round trips | 2 (pre-flight + mutation) | 1 — **DONE, measured** (`12_P2_CLOSURE.md` §3) |
 | AppShell renders per SSE result event | 1 | 0 |
 | Font sizes below 11px | 31 occurrences | 0 |
 
@@ -124,5 +127,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | `08_P1_PLAN.md` | **The revised P1 plan.** B3 re-scoped, B2 ordering, B4 incorporation, rollback |
 | `09_B4_SESSION_REGISTRY_MEASUREMENT.md` | Logout does **not** free a session-registry slot — measured; routed to P2 |
 | `10_P1_CLOSURE.md` | **P1 closed.** Final gate executed: §9.4 measurement, Invariants A/B/D, public API regression, remaining gaps |
+| `11_P2_PLAN.md` | The P2 plan, derived from the evidence set. §6 holds the one owner decision |
+| `12_P2_CLOSURE.md` | **P2 closed.** Final gate executed: re-auth 2 → 1 measured, Invariant D re-run, R6 duplicate characterised |
 | `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md` | B7, carved out — pre-existing, owner decision required |
 | `EVIDENCE.sha256` | Checksums of the frozen evidence set (`shasum -c`) |
