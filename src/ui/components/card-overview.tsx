@@ -289,6 +289,11 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const viewState = overviewViewState(card);
   const enteredCardRef = useRef<string | null>(null);
   const appliedForcedKeyRef = useRef<string | null>(null);
+  // The player-history dialog is rendered inline far below, past the loading and not-found early
+  // returns — so its hook belongs up here with the others rather than beside its JSX. Declared next
+  // to the markup it drives, it ran on some renders and not others, and the first render that got
+  // past those returns crashed the whole overview with React #310. It is inert while the id is null.
+  const historyDialog = useModalDialog({ open: historyPlayerId !== null, onDismiss: () => setHistoryPlayerId(null) });
 
   useEffect(() => {
     setRecordFilter({ mode: "player", playerIds: [], schools: [] });
@@ -379,9 +384,6 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     result: "Result จะเปิดให้ดูเมื่อมีการบันทึกคะแนนคู่แรกของเกมนี้",
   };
   const historyPlayer = historyPlayerId ? players.get(historyPlayerId) : undefined;
-  // The player-history dialog is rendered inline further down, so its modal behaviour is declared
-  // here where hooks are unconditional. It is inert while historyPlayerId is null.
-  const historyDialog = useModalDialog({ open: historyPlayerId !== null, onDismiss: () => setHistoryPlayerId(null) });
   const historyUpToGame = selectedResultSummary ? Number.MAX_SAFE_INTEGER : selectedGame;
   const historyCard = { ...rankingCard, snapshots: publishedSnapshots.filter((snapshot) => Math.max(...snapshot.gameNumbers) <= historyUpToGame) };
   const final = card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED";
