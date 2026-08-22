@@ -114,6 +114,18 @@ export function OverviewRecordFilter({
   const closingRef = useRef(false);
   const dragRef = useRef({ pointerId: -1, startY: 0, originY: 0, currentY: 0, lastY: 0, lastTime: 0, velocity: 0, sheetHeight: 1 });
   const [open, setOpen] = useState(false);
+  // Below MOBILE_PICKER_QUERY this control is a bottom sheet with a real backdrop, and it IS modal.
+  // Above it, the backdrop is display:none, the page stays live and scrollable, and 13 controls
+  // remain reachable behind it — so claiming aria-modal there tells a screen reader to confine the
+  // user to a boundary nothing enforces. The attribute now follows the actual mode.
+  const [isSheet, setIsSheet] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia(MOBILE_PICKER_QUERY);
+    const sync = () => setIsSheet(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
   const [query, setQuery] = useState("");
   // Keep row positions stable while the picker is open. Live SSE result updates may replace the
   // players array, but those updates must not move a different row underneath an active tap.
@@ -374,7 +386,7 @@ export function OverviewRecordFilter({
             ref={sheetRef}
             className="overview-record-filter__popup"
             role="dialog"
-            aria-modal="true"
+            aria-modal={isSheet ? "true" : undefined}
             aria-label="เลือกตัวกรองข้อมูลภาพรวม"
             onTransitionEnd={(event) => {
               if (closingRef.current && event.currentTarget === event.target && event.propertyName === "transform") finishClose();

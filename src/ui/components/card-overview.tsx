@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ClipboardCheck, Hourglass, LockKeyhole, Trophy, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowRight, ClipboardCheck, Hourglass, LockKeyhole, Megaphone, Trophy, X } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, hasStaffAccess, isAdmin } from "@/domain/tournament/roles";
@@ -17,11 +17,12 @@ import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
 import { DocumentDownloadPanel } from "@/ui/components/document-download-panel";
 import { PlayerHistoryTable } from "@/ui/components/player-history-table";
+import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 import { SelectMenu } from "@/ui/components/select-menu";
 import { stageLabels } from "@/ui/components/stage-info";
 import { OverviewRecordFilter, type OverviewRecordFilterValue } from "@/ui/components/overview-record-filter";
 
-type OverviewView = "ranking" | "pairing" | "result";
+export type OverviewView = "ranking" | "pairing" | "result";
 
 const publishedAtText = (iso: string) =>
   `เผยแพร่ผลเมื่อ ${new Date(iso).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}`;
@@ -85,7 +86,7 @@ function RankingTable({ players, rankingPositions, selectedId, onPlayerClick, re
     { key: "wp", label: "คะแนนสะสม", min: 76, width: 90, align: "center", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
     { key: "diff", label: "ผลต่างสะสม", min: 82, width: 96, align: "center", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
   ];
-  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" emptyText="ไม่พบผู้เล่นตามตัวกรอง" resizableColumns={resizableColumns} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
+  return <DataGrid ariaLabel="ตารางอันดับ" columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" emptyText="ไม่พบผู้เล่นตามตัวกรอง" resizableColumns={resizableColumns} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
 }
 
 /**
@@ -103,7 +104,7 @@ function FinalResultsList({ standings, onPlayerClick, resizableColumns }: {
     { key: "name", label: "ชื่อ - นามสกุล", min: 140, width: 300, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
     { key: "school", label: "โรงเรียน/สถาบัน", min: 140, width: 320, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
   ];
-  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:final-result" tableClassName="entry-grid--ranking" emptyText="ยังไม่มีผลการแข่งขัน" resizableColumns={resizableColumns} onRowClick={(row) => onPlayerClick(row.player.id)} />;
+  return <DataGrid ariaLabel="ผลรอบชิงชนะเลิศ" columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:final-result" tableClassName="entry-grid--ranking" emptyText="ยังไม่มีผลการแข่งขัน" resizableColumns={resizableColumns} onRowClick={(row) => onPlayerClick(row.player.id)} />;
 }
 
 function PairingGrid({ pairings, players, resizableColumns }: { pairings: Pairing[]; players: Map<string, Player>; resizableColumns: boolean }) {
@@ -117,7 +118,7 @@ function PairingGrid({ pairings, players, resizableColumns }: { pairings: Pairin
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
     { key: "name2", label: "นักกีฬา", min: 150, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} gibsonized={pairing.playerTwoGibsonized} /> },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
+  return <DataGrid ariaLabel="ตารางประกบคู่" columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
 function ResultTable({ pairings, players, storageKey, resizableColumns }: { pairings: Pairing[]; players: Map<string, Player>; storageKey: string; resizableColumns: boolean }) {
@@ -142,7 +143,7 @@ function ResultTable({ pairings, players, storageKey, resizableColumns }: { pair
     { key: "score", label: "คะแนน", min: 36, width: 68, fitContent: true, align: "center", cellClassName: "cell-score", value: (pairing) => scoreText(pairing), filterable: false, render: (pairing) => scoreText(pairing) },
     { key: "diff", label: "ผลต่าง", min: 56, width: 68, align: "center", cellClassName: (pairing) => `cell-diff cell-diff--${pairing.resultType === "PENALTY" ? "penalty" : "win"}`, value: (pairing) => diffOf(pairing) ?? -1, filterable: false, render: (pairing) => diffText(pairing) },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
+  return <DataGrid ariaLabel="ตารางผลการแข่งขัน" columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
 function FinalHistoryDialog({ slot, players, onClose }: { slot: FinalSlot; players: Map<string, Player>; onClose: () => void }) {
@@ -152,19 +153,20 @@ function FinalHistoryDialog({ slot, players, onClose }: { slot: FinalSlot; playe
   };
   const school = (id: string) => players.get(id)?.school ?? "—";
   const winnerName = slot.winnerId ? name(slot.winnerId) : "ยังไม่สรุป";
+  const dialog = useModalDialog({ open: true, onDismiss: onClose });
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="history-table-dialog final-history-dialog" role="dialog" aria-modal="true" aria-labelledby="final-history-title" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
+      <section ref={dialog.ref as React.RefObject<HTMLElement>} tabIndex={-1} className="history-table-dialog final-history-dialog" role="dialog" aria-modal="true" aria-labelledby={dialog.titleId} onMouseDown={(event) => event.stopPropagation()}>
         <header>
-          <div><span>ประวัติรอบชิง</span><h2 id="final-history-title">{slot.slot === 0 ? "คู่ชิงอันดับ 1 - 2" : "คู่ชิงอันดับ 3 - 4"}</h2></div>
+          <div><span>ประวัติรอบชิง</span><h2 id={dialog.titleId}>{slot.slot === 0 ? "คู่ชิงอันดับ 1 - 2" : "คู่ชิงอันดับ 3 - 4"}</h2></div>
           <button type="button" className="confirm-dialog__close" aria-label="ปิดประวัติรอบชิง" onClick={onClose}><X size={18} /></button>
         </header>
         <div className="final-history-matchup">
           <strong>{name(slot.playerOneId)}</strong><span>พบ</span><strong>{name(slot.playerTwoId)}</strong>
           <small>{school(slot.playerOneId)} · {school(slot.playerTwoId)}</small>
         </div>
-        <table className="data-table final-history-table">
-          <thead><tr><th>เกม</th><th className="numeric">คะแนน</th><th>ผู้ชนะเกม</th><th className="numeric">diff</th></tr></thead>
+        <table className="data-table final-history-table" aria-label="ประวัติเกมรอบชิงชนะเลิศ">
+          <thead><tr><th scope="col">เกม</th><th scope="col" className="numeric">คะแนน</th><th scope="col">ผู้ชนะเกม</th><th scope="col" className="numeric">diff</th></tr></thead>
           <tbody>
             {slot.games.map((game) => (
               <tr key={game.gameIndex}>
@@ -200,7 +202,7 @@ function CrownBadge() {
  *   applied only when (re)entering the card — a result trickling in never yanks the viewer away
  *   from whatever they chose to look at.
  */
-function overviewViewState(card: TournamentCard | undefined): { forcedKey: string; forcedView: OverviewView; entryView: OverviewView } | null {
+function overviewViewState(card: TournamentCard | undefined): { forcedKey: string; forcedView: OverviewView; entryView: OverviewView; activeGame: number } | null {
   if (!card) return null;
   const visibleSnapshots = card.snapshots.filter((snapshot) =>
     Boolean(snapshot.confirmedAt)
@@ -210,12 +212,61 @@ function overviewViewState(card: TournamentCard | undefined): { forcedKey: strin
   const activeGame = latestGame > 0 ? latestGame : card.currentGame;
   const snapshot = visibleSnapshots.find((item) => overviewGames(item).includes(activeGame));
   if (!snapshot) return null;
-  if (snapshot.confirmedAt) return { forcedKey: `ranking:${activeGame}`, forcedView: "ranking", entryView: "ranking" };
+  if (snapshot.confirmedAt) return { forcedKey: `ranking:${activeGame}`, forcedView: "ranking", entryView: "ranking", activeGame };
   const currentPairings = overviewPairings(snapshot).filter((pairing) => (pairing.gameNumber ?? activeGame) === activeGame);
   // Loose != : an unscored pairing arrives with the score fields OMITTED (undefined), not null.
   const hasFirstResult = currentPairings.some((pairing) => pairing.scoreOne != null || pairing.scoreTwo != null);
-  return { forcedKey: `pairing:${activeGame}`, forcedView: "pairing", entryView: hasFirstResult ? "result" : "pairing" };
+  return { forcedKey: `pairing:${activeGame}`, forcedView: "pairing", entryView: hasFirstResult ? "result" : "pairing", activeGame };
 }
+
+/**
+ * True on phone-width screens (D15/UX-F3).
+ *
+ * `useSyncExternalStore` rather than an effect so the very first client render already has the right
+ * answer and hydration does not warn: the server snapshot is the desktop default, which is also the
+ * safe one — multi-select degrades to "you can open more than one panel", never to a lost view.
+ */
+function useNarrowViewport() {
+  return useSyncExternalStore(
+    (onChange) => {
+      const query = window.matchMedia(NARROW_VIEWPORT);
+      query.addEventListener("change", onChange);
+      return () => query.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(NARROW_VIEWPORT).matches,
+    () => false,
+  );
+}
+
+const NARROW_VIEWPORT = "(max-width: 768px)";
+
+/**
+ * What the view picker shows after tapping `view` (D15/UX-F3).
+ *
+ * Desktop keeps multi-select: the panels sit side by side, and comparing Pairing against Ranking is
+ * the whole reason a spectator opens both. A phone shows one panel per screenful, so "adding" a
+ * second only buries the first under a scroll — there, picking a view REPLACES the current one.
+ * Deselecting the only open view is allowed in both modes, so the tables can be collapsed away.
+ *
+ * Pure and exported so the rule is testable without a DOM; the component only supplies `narrow`.
+ */
+export function nextOverviewViews(
+  current: ReadonlySet<OverviewView>,
+  view: OverviewView,
+  narrow: boolean,
+): Set<OverviewView> {
+  if (narrow) return current.has(view) ? new Set<OverviewView>() : new Set<OverviewView>([view]);
+  const next = new Set(current);
+  if (next.has(view)) next.delete(view); else next.add(view);
+  return next;
+}
+
+/** What a publish announcement says. The viewer chooses to follow it; nothing moves on its own. */
+const announcementCopy: Record<OverviewView, (game: number) => { text: string; action: string }> = {
+  ranking: (game) => ({ text: `ประกาศอันดับของเกม ${game} แล้ว`, action: "ดูอันดับ" }),
+  pairing: (game) => ({ text: `ประกาศคู่แข่งขันของเกม ${game} แล้ว`, action: "ดูคู่แข่งขัน" }),
+  result: (game) => ({ text: `มีผลการแข่งขันใหม่ของเกม ${game}`, action: "ดูผล" }),
+};
 
 /** Read-only card overview (ranking / pairing / results) shared by /cards/[id] and the /tour viewer. */
 export function CardOverview({ cardId: id }: { cardId: string }) {
@@ -232,6 +283,9 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const [finalHistorySlot, setFinalHistorySlot] = useState<FinalSlot | null>(null);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [recordFilter, setRecordFilter] = useState<OverviewRecordFilterValue>({ mode: "player", playerIds: [], schools: [] });
+  /** A publish the viewer has been TOLD about but has not chosen to follow yet (D15/UX-F3). */
+  const [announcement, setAnnouncement] = useState<{ view: OverviewView; game: number } | null>(null);
+  const narrow = useNarrowViewport();
   const viewState = overviewViewState(card);
   const enteredCardRef = useRef<string | null>(null);
   const appliedForcedKeyRef = useRef<string | null>(null);
@@ -240,22 +294,29 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     setRecordFilter({ mode: "player", playerIds: [], schools: [] });
   }, [id]);
 
-  // Entering a card applies the entry default (Result once a first score exists); after that, only
-  // the big publishes steer the screen: pairing publish -> Pairing, ranking publish -> Ranking.
-  // A result being recorded mid-game deliberately never forces a view change. Steering happens only
-  // when forcedKey actually advances — a re-run with the same key (StrictMode double-invoke, an
-  // unrelated re-render) must not overwrite what the entry default or the visitor chose.
+  // Entering a card still applies the entry default (Result once a first score exists) — that is the
+  // opening state, not a jump.
+  //
+  // What a publish does has CHANGED (D15/UX-F3). It used to replace the viewer's selection outright:
+  // whatever you were reading was swapped for Pairing or Ranking the instant the director published.
+  // For a spectator following one player mid-table that is the screen being taken away, and it is
+  // worse on a phone where the swapped-in panel fills the viewport. A publish now raises a banner and
+  // the viewer decides. Nothing moves until they tap it.
+  //
+  // Still keyed on forcedKey advancing, so a re-run with the same key (StrictMode double-invoke, an
+  // unrelated re-render) neither re-announces nor disturbs the current selection.
   useEffect(() => {
     if (!viewState) return;
     if (enteredCardRef.current !== id) {
       enteredCardRef.current = id;
       appliedForcedKeyRef.current = viewState.forcedKey;
+      setAnnouncement(null);
       setViews(new Set<OverviewView>([viewState.entryView]));
       return;
     }
     if (appliedForcedKeyRef.current === viewState.forcedKey) return;
     appliedForcedKeyRef.current = viewState.forcedKey;
-    setViews(new Set<OverviewView>([viewState.forcedView]));
+    setAnnouncement({ view: viewState.forcedView, game: viewState.activeGame });
   }, [id, viewState?.forcedKey]);
 
   useEffect(() => {
@@ -318,6 +379,9 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     result: "Result จะเปิดให้ดูเมื่อมีการบันทึกคะแนนคู่แรกของเกมนี้",
   };
   const historyPlayer = historyPlayerId ? players.get(historyPlayerId) : undefined;
+  // The player-history dialog is rendered inline further down, so its modal behaviour is declared
+  // here where hooks are unconditional. It is inert while historyPlayerId is null.
+  const historyDialog = useModalDialog({ open: historyPlayerId !== null, onDismiss: () => setHistoryPlayerId(null) });
   const historyUpToGame = selectedResultSummary ? Number.MAX_SAFE_INTEGER : selectedGame;
   const historyCard = { ...rankingCard, snapshots: publishedSnapshots.filter((snapshot) => Math.max(...snapshot.gameNumbers) <= historyUpToGame) };
   const final = card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED";
@@ -328,15 +392,28 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     .map((game) => ({ value: String(game), label: `เกม ${game}` }))
     .concat(hasFinalRound ? [{ value: "final", label: "รอบชิง" }] : [])
     .concat(final ? [{ value: "result", label: "ผลการแข่งขัน" }] : []);
+  // Desktop keeps multi-select: the panels sit side by side, and comparing Pairing against Ranking
+  // is the whole reason a spectator opens both. A phone shows one panel per screenful, so "adding" a
+  // second only buries the first under a scroll — there, picking a view REPLACES the current one
+  // (D15/UX-F3). Deselecting the only open view is allowed on both, so the tables can be collapsed.
   const toggleView = (view: OverviewView) => {
     const opening = !views.has(view);
-    setViews((prev) => {
-      const next = new Set(prev);
-      if (next.has(view)) next.delete(view); else next.add(view);
-      return next;
-    });
-    if (opening && window.matchMedia("(max-width: 768px)").matches) {
+    setViews((prev) => nextOverviewViews(prev, view, narrow));
+    // Opening the view a banner was offering answers it; leaving it up would be nagging.
+    if (opening && announcement?.view === view) setAnnouncement(null);
+    if (opening && narrow) {
       window.setTimeout(() => document.getElementById(`overview-view-${view}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    }
+  };
+
+  /** Follow a publish announcement: go to the game it is about, open its view, clear the banner. */
+  const followAnnouncement = () => {
+    if (!announcement) return;
+    setHistoryGame(null);
+    setViews((prev) => narrow ? new Set<OverviewView>([announcement.view]) : new Set(prev).add(announcement.view));
+    setAnnouncement(null);
+    if (narrow) {
+      window.setTimeout(() => document.getElementById(`overview-view-${announcement.view}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     }
   };
   const selectRankingPlayer = (player: Player) => {
@@ -370,12 +447,28 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
                     />
                   </div>
                 </div>
-                {!selectedFinal && !selectedResultSummary && <div className="segmented overview-view-picker" role="group" aria-label="เลือกมุมมอง">
+                {/*
+                  The roles follow the behaviour rather than the other way round: a phone picks ONE
+                  view, which is a radio group, while desktop toggles several, which is aria-pressed.
+                  Announcing a multi-select as radios (or the reverse) is exactly the mismatch UX-F3
+                  filed — "a segmented picker that is really multi-select".
+                */}
+                {!selectedFinal && !selectedResultSummary && <div className="segmented overview-view-picker" role={narrow ? "radiogroup" : "group"} aria-label="เลือกมุมมอง">
                   {(["ranking", "pairing", "result"] as const).map((view) => {
                     const unavailable = viewUnavailable[view];
                     const active = views.has(view) && !unavailable;
+                    const label = view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result";
                     return (
-                      <button key={view} type="button" className={`segment${active ? " segment--on" : ""}`} aria-pressed={active} disabled={unavailable} title={unavailable ? viewUnavailableTitle[view] : undefined} onClick={() => toggleView(view)}>{view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result"}</button>
+                      <button
+                        key={view}
+                        type="button"
+                        className={`segment${active ? " segment--on" : ""}`}
+                        role={narrow ? "radio" : undefined}
+                        {...(narrow ? { "aria-checked": active } : { "aria-pressed": active })}
+                        disabled={unavailable}
+                        title={unavailable ? viewUnavailableTitle[view] : undefined}
+                        onClick={() => toggleView(view)}
+                      >{label}</button>
                     );
                   })}
                 </div>}
@@ -385,6 +478,30 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
           </div>
         ) : undefined}
       />
+
+      {/*
+        D15/UX-F3: a publish used to swap the viewer's screen out from under them. It now announces
+        itself and waits. `aria-live="polite"` so a screen reader hears it without being interrupted,
+        and the dismiss is a real control rather than a timeout — an announcement the viewer has not
+        acted on should still be there when they look up from the board.
+      */}
+      {announcement && !viewUnavailable[announcement.view] && (
+        <div className="notice notice--info overview-announcement" role="status" aria-live="polite">
+          <Megaphone size={20} />
+          <p><strong>{announcementCopy[announcement.view](announcement.game).text}</strong></p>
+          <div className="overview-announcement-actions">
+            <Button size="sm" onClick={followAnnouncement}>
+              {announcementCopy[announcement.view](announcement.game).action} <ArrowRight size={15} />
+            </Button>
+            <button
+              type="button"
+              className="overview-announcement-dismiss"
+              aria-label="ปิดการแจ้งเตือน"
+              onClick={() => setAnnouncement(null)}
+            ><X size={16} /></button>
+          </div>
+        </div>
+      )}
 
       {selectedFinal && card.finalRound && <FinalRoundBoard card={card} readOnly onSlotHistory={setFinalHistorySlot} />}
 
@@ -465,10 +582,10 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
       )}
 
       {historyPlayer && (
-        <div className="dialog-backdrop" role="presentation" onMouseDown={() => setHistoryPlayerId(null)}>
-          <section className="history-table-dialog" role="dialog" aria-modal="true" aria-labelledby="player-history-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="dialog-backdrop" role="presentation" onMouseDown={historyDialog.onBackdropMouseDown}>
+          <section ref={historyDialog.ref as React.RefObject<HTMLElement>} tabIndex={-1} className="history-table-dialog" role="dialog" aria-modal="true" aria-labelledby={historyDialog.titleId} onMouseDown={(event) => event.stopPropagation()}>
             <header>
-              <div><span>ประวัติการแข่งขัน</span><h2 id="player-history-title">{historyPlayer.id} · {historyPlayer.firstName} {historyPlayer.lastName}</h2></div>
+              <div><span>ประวัติการแข่งขัน</span><h2 id={historyDialog.titleId}>{historyPlayer.id} · {historyPlayer.firstName} {historyPlayer.lastName}</h2></div>
               <button type="button" className="confirm-dialog__close" aria-label="ปิดประวัติ" onClick={() => setHistoryPlayerId(null)}><X size={18} /></button>
             </header>
             <div className="history-table-dialog__summary">{historyPlayer.school} · แสดงประวัติถึงเกม {selectedGame}</div>

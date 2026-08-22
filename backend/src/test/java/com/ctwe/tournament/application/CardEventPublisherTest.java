@@ -3,6 +3,7 @@ package com.ctwe.tournament.application;
 import com.ctwe.tournament.domain.model.CardStatus;
 import com.ctwe.tournament.domain.model.RuntimeStage;
 import com.ctwe.tournament.web.dto.CardDtos;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -68,7 +70,7 @@ class CardEventPublisherTest {
             UUID.randomUUID().toString(), 2, 7, "P0001", "P0002",
             "P0001", 100, 70, "WIN", 30, false, false, true));
 
-        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed));
+        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed), "director-a", List.of("ROLE_DIRECTOR"));
 
         assertThat(emitter.resultEvents()).singleElement().satisfies(event -> {
             assertThat(event.cardId()).isEqualTo(cardId);
@@ -95,14 +97,17 @@ class CardEventPublisherTest {
             "P0001", 100, 70, "WIN", 30, false, false, true));
 
         publisher.publish(card(cardId, 5));
-        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed));
+        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed), "director-a", List.of("ROLE_DIRECTOR"));
 
         assertThat(publicEmitter.stateEvents()).isEmpty();
         assertThat(publicEmitter.resultEvents()).isEmpty();
         publisher.publishPublicResult(cardId, 6, changed);
         publisher.publishPublic(cardId, 7);
 
-        assertThat(publicEmitter.resultEvents()).singleElement().satisfies(event -> {
+        // publicResultEvents(), not resultEvents(): since fix D the staff delta is its own type, and
+        // `resultEvents()` above asserting EMPTY is exactly the guarantee that matters here — no
+        // staff-shaped event, and therefore no actor, ever reaches a viewer stream.
+        assertThat(publicEmitter.publicResultEvents()).singleElement().satisfies(event -> {
             assertThat(event.version()).isEqualTo(6);
             assertThat(event.changedPairings()).isSameAs(changed);
         });
@@ -144,6 +149,103 @@ class CardEventPublisherTest {
         publisher.subscribePublic(cardId, () -> 1);
         assertThatThrownBy(() -> publisher.subscribe(cardId, () -> 1)).isInstanceOf(ResponseStatusException.class);
         assertThatThrownBy(() -> publisher.subscribePublic(cardId, () -> 1)).isInstanceOf(ResponseStatusException.class);
+    }
+
+    // ---- P4 SSE proof gate, fix D: the actor rides the staff event and ONLY the staff event ----
+
+    @Test
+    @DisplayName("the staff result event names the acting account and its roles")
+    void staffResultEventCarriesTheActor() {
+        UUID cardId = UUID.randomUUID();
+        CapturingEmitter emitter = new CapturingEmitter();
+        CardEventPublisher publisher = new CardEventPublisher(8, 8, Runnable::run) {
+            @Override SseEmitter createEmitter() { return emitter; }
+        };
+        publisher.subscribe(cardId, () -> 4);
+
+        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, List.of()),
+            "director-a", List.of("ROLE_DIRECTOR"));
+
+        assertThat(emitter.resultEvents()).singleElement().satisfies(event -> {
+            assertThat(event.actor())
+                .as("same identity that lands in audit_logs.user and matches.submitted_by")
+                .isEqualTo("director-a");
+            assertThat(event.actorRoles())
+                .as("the authorities exactly as GET /api/auth/me reports them")
+                .containsExactly("ROLE_DIRECTOR");
+        });
+    }
+
+    @Test
+    @DisplayName("the PUBLIC result event carries no actor — a staff account never reaches viewers")
+    void publicResultEventHasNoActorField() {
+        UUID cardId = UUID.randomUUID();
+        CapturingEmitter publicEmitter = new CapturingEmitter();
+        CardEventPublisher publisher = new CardEventPublisher(8, 8, Runnable::run) {
+            @Override SseEmitter createEmitter() { return publicEmitter; }
+        };
+        publisher.subscribePublic(cardId, () -> 4);
+
+        publisher.publishPublicResult(cardId, 6, List.of());
+
+        // Separate types, so this is structural rather than a nulling convention: the public record
+        // has no actor component at all and the staff one can never be sent down this stream.
+        assertThat(publicEmitter.publicResultEvents()).singleElement()
+            .isInstanceOf(CardEventPublisher.ResultChangeEvent.class)
+            .isNotInstanceOf(CardEventPublisher.StaffResultChangeEvent.class);
+        assertThat(CardEventPublisher.ResultChangeEvent.class.getRecordComponents())
+            .extracting(java.lang.reflect.RecordComponent::getName)
+            .doesNotContain("actor", "actorRoles");
+    }
+
+    @Test
+    @DisplayName("SERIALISED: the public result frame has no actor key, the staff one does")
+    void serialisedPublicFrameCarriesNoActor() throws Exception {
+        // Reflection proves the component is absent; this proves the BYTES are, which is what a
+        // viewer's browser actually receives. Jackson is configured non_null app-wide, so a nulled
+        // field would also vanish — the point of the separate record is that there is nothing to null.
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        UUID cardId = UUID.randomUUID();
+
+        String publicFrame = mapper.writeValueAsString(
+            new CardEventPublisher.ResultChangeEvent(cardId, 6, Instant.EPOCH, List.of()));
+        String staffFrame = mapper.writeValueAsString(
+            new CardEventPublisher.StaffResultChangeEvent(cardId, 6, Instant.EPOCH, List.of(),
+                "director-a", List.of("ROLE_DIRECTOR")));
+
+        assertThat(publicFrame).doesNotContain("actor").doesNotContain("director-a").doesNotContain("ROLE_");
+        assertThat(staffFrame).contains("\"actor\":\"director-a\"").contains("ROLE_DIRECTOR");
+    }
+
+    @Test
+    @DisplayName("an idle heartbeat tick reads no runtime settings, and a subscribed one still does")
+    void idleHeartbeatDoesNotReadRuntimeSettings() {
+        // settings.get() is evaluated inside the heartbeat-interval guard, so before this it ran on
+        // every 5s tick whether or not anyone was listening -- a database round trip a second and a
+        // half of every minute, forever, on a deployment serving nobody (04_BLOCKERS.md B8).
+        AtomicInteger reads = new AtomicInteger();
+        Supplier<RuntimeSettings> counting = () -> {
+            reads.incrementAndGet();
+            return new RuntimeSettings(true, true, false, 8, 8, 60_000, 0, 2_000, null);
+        };
+        CapturingEmitter emitter = new CapturingEmitter();
+        CardEventPublisher publisher = new CardEventPublisher(counting, Runnable::run) {
+            @Override SseEmitter createEmitter() { return emitter; }
+        };
+
+        publisher.heartbeat();
+        publisher.heartbeat();
+        publisher.heartbeat();
+        assertThat(reads.get()).as("no subscribers: the tick has no work and must not touch the database").isZero();
+
+        // A real subscriber must restore the old behaviour exactly -- the guard is about idleness,
+        // not about beating less often.
+        int afterSubscribe = reads.get();
+        publisher.subscribe(UUID.randomUUID(), () -> 1L);
+        publisher.heartbeat();
+        assertThat(reads.get()).as("with a subscriber the interval guard reads settings as before")
+            .isGreaterThan(afterSubscribe);
     }
 
     private static CardDtos.CardResponse card(UUID id, long version) {
@@ -190,12 +292,21 @@ class CardEventPublisherTest {
                 .toList();
         }
 
-        List<CardEventPublisher.ResultChangeEvent> resultEvents() {
+        List<CardEventPublisher.ResultChangeEvent> publicResultEvents() {
             return events.stream()
                 .flatMap(event -> event.build().stream())
                 .map(ResponseBodyEmitter.DataWithMediaType::getData)
                 .filter(CardEventPublisher.ResultChangeEvent.class::isInstance)
                 .map(CardEventPublisher.ResultChangeEvent.class::cast)
+                .toList();
+        }
+
+        List<CardEventPublisher.StaffResultChangeEvent> resultEvents() {
+            return events.stream()
+                .flatMap(event -> event.build().stream())
+                .map(ResponseBodyEmitter.DataWithMediaType::getData)
+                .filter(CardEventPublisher.StaffResultChangeEvent.class::isInstance)
+                .map(CardEventPublisher.StaffResultChangeEvent.class::cast)
                 .toList();
         }
     }

@@ -64,8 +64,8 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
         return (
           <Panel key={game} title={`แก้ไขผล เกม ${game} (ย้อนหลัง)`} description="แก้คะแนนได้หลายคู่ แล้วกด “บันทึกการแก้ไขทั้งหมด” ครั้งเดียว · standing จะคำนวณใหม่ตอนยืนยัน">
             <div className="dense-table-wrap">
-              <table className="data-table">
-                <thead><tr><th className="numeric">คู่</th><th>ฝ่ายที่ 1</th><th>ฝ่ายที่ 2</th><th className="numeric">เดิม</th><th className="numeric">คะแนน 1</th><th className="numeric">คะแนน 2</th></tr></thead>
+              <table className="data-table" aria-label={`ผลการแข่งขัน เกม ${game} (แก้ไขย้อนหลัง)`}>
+                <thead><tr><th scope="col" className="numeric">คู่</th><th scope="col">ฝ่ายที่ 1</th><th scope="col">ฝ่ายที่ 2</th><th scope="col" className="numeric">เดิม</th><th scope="col" className="numeric">คะแนน 1</th><th scope="col" className="numeric">คะแนน 2</th></tr></thead>
                 <tbody>
                   {pairings.length === 0 ? <tr><td colSpan={6} className="egrid-empty"><strong>ยังไม่มีผลที่เผยแพร่</strong></td></tr> : pairings.map((pairing) => {
                     const penalty = pairing.resultType === "PENALTY";
@@ -107,8 +107,8 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
         onCancel={() => { if (!committing) setConfirmOpen(false); }}
       >
         <div className="dense-table-wrap">
-          <table className="data-table">
-            <thead><tr><th className="numeric">เกม</th><th className="numeric">คู่</th><th>ฝ่ายที่ 1</th><th>ฝ่ายที่ 2</th><th className="numeric">เดิม</th><th className="numeric">ใหม่</th></tr></thead>
+          <table className="data-table" aria-label="สรุปผลที่จะถูกแก้ไข">
+            <thead><tr><th scope="col" className="numeric">เกม</th><th scope="col" className="numeric">คู่</th><th scope="col">ฝ่ายที่ 1</th><th scope="col">ฝ่ายที่ 2</th><th scope="col" className="numeric">เดิม</th><th scope="col" className="numeric">ใหม่</th></tr></thead>
             <tbody>
               {changes.map((change) => (
                 <tr key={change.pairing.id}>

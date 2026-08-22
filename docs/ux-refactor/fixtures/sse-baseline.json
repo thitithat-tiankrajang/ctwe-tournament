@@ -1,0 +1,54 @@
+{
+  "_comment": "P0 SSE baseline, Invariant B. Captured 2026-08-22 at commit 6ce756c on the staff stream GET /api/cards/{cardId}/events. Timestamps and updatedAt are normalised out. Card: isolated 'P0 SSE Fixture', 8 players, 4 games, SWISS edges. Diff future phases against eventOrder + payloadKeys + changedPairings.",
+  "cardId": "a8eeefbf-cb62-4b68-84c9-97903016a610",
+  "eventOrder": [
+    "0:connected@v2",
+    "1:state@v3",
+    "2:state@v4",
+    "3:result@v5",
+    "4:result@v6",
+    "5:result@v7",
+    "6:result@v8",
+    "7:state@v9",
+    "8:state@v10"
+  ],
+  "versionSequence": [2,3,4,5,6,7,8,9,10],
+  "versionGaps": "none - strictly monotonic, +1 per mutation",
+  "payloadKeysByEvent": {
+    "connected": ["cardId","updatedAt","version"],
+    "state":     ["card","cardId","updatedAt","version"],
+    "result":    ["cardId","changedPairings","updatedAt","version"]
+  },
+  "traces": {
+    "TRACE_1_resultSave": {
+      "action": "PUT /api/cards/{id}/matches/g1t1/result {scoreOne:420,scoreTwo:385,editExisting:false}",
+      "events": ["result@v5"],
+      "eventCount": 1,
+      "shape": "DELTA - changedPairings only, NOT the full card",
+      "mutationResponseBytes": 287,
+      "changedPairings": [
+        {"id":"g1t1","gameNumber":1,"tableNumber":1,"playerOneId":"B004","playerTwoId":"B002",
+         "winnerId":"B004","scoreOne":420,"scoreTwo":385,"resultType":"WIN","calculatedDiff":35,
+         "playerOneGibsonized":false,"playerTwoGibsonized":false,"pairingPublished":true}
+      ],
+      "diffRule": "calculatedDiff = min(|scoreOne-scoreTwo|, maxDiff=350) = 35  VERIFIED"
+    },
+    "TRACE_2_pairingConfirm": {
+      "action": "POST /api/cards/{id}/pairings/preview then POST /api/cards/{id}/pairings/confirm",
+      "events": ["state@v3 (preview, PAIRING_PREVIEW)","state@v4 (confirm, RESULT_COLLECTION)"],
+      "eventCount": 2,
+      "shape": "FULL CARD on the staff stream - confirms 02_ARCHITECTURE_DECISIONS.md 2.2",
+      "stageTransition": "TABLE_PAIRING -> PAIRING_PREVIEW -> RESULT_COLLECTION"
+    },
+    "TRACE_3_resultsPublish": {
+      "action": "POST /api/cards/{id}/results/review then POST /api/cards/{id}/results/publish",
+      "events": ["state@v9 (review, RESULT_REVIEW)","state@v10 (publish, TABLE_PAIRING currentGame=2)"],
+      "eventCount": 2,
+      "shape": "FULL CARD",
+      "stageTransition": "RESULT_COLLECTION -> RESULT_REVIEW -> TABLE_PAIRING (currentGame 1 -> 2)"
+    }
+  },
+  "cardTopLevelKeys": ["audit","codePrefix","createdAt","currentGame","division","finalGames","finalType","games","gibsonEnabled","id","initialPairingRule","name","players","rules","runtimeStage","snapshots","status","tables","tournamentId","version"],
+  "keyAsymmetry": "A result save emits a DELTA ('result'); every stage transition emits a FULL CARD ('state'). Any phase that changes this asymmetry has broken Invariant B.",
+  "sequentialSaveTimings_ms_local": [73, 39, 44]
+}

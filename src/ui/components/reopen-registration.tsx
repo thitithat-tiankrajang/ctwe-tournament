@@ -17,7 +17,6 @@ import { PromptDialog } from "@/ui/components/prompt-dialog";
  */
 export function ReopenRegistration({ card }: { card: TournamentCard }) {
   const reopenRegistration = useTournamentStore((state) => state.reopenRegistration);
-  const verifyPassword = useTournamentStore((state) => state.verifyPassword);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -49,10 +48,12 @@ export function ReopenRegistration({ card }: { card: TournamentCard }) {
     if (!password) { setError("กรอกรหัสผ่านผู้อำนวยการ"); return; }
     setBusy(true); setError("");
     try {
-      if (!await verifyPassword(password)) { setError("รหัสผ่านไม่ถูกต้อง"); return; }
       await reopenRegistration(card.id, password);
       setDialogOpen(false);
     } catch (failure) {
+      // reopenRegistration verifies the password itself, so a wrong one arrives here as
+      // 403 + BAD_PASSWORD instead of costing a pre-flight request, and its message is already the
+      // Thai text this dialog used to hard-code.
       setError(failure instanceof Error ? failure.message : "ลงทะเบียนเพิ่มไม่สำเร็จ");
     } finally {
       setBusy(false);

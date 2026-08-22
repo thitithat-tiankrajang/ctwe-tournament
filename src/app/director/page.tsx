@@ -42,14 +42,19 @@ export default function DirectorConsolePage() {
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
 
+  // Depend on the BOOLEAN, not the auth object — the same defect P3-D1 fixed on /admin.
+  // `ensureSessionAlive()` runs on every window focus and stores a fresh AuthState even when nothing
+  // changed, so depending on `auth` here re-created this callback and re-fired the effect below,
+  // refetching staff and tournaments each time. Measured: 4 requests per refocus.
+  const isDirectorUser = isDirector(auth);
   const refresh = useCallback(async () => {
-    if (!isDirector(auth)) return;
+    if (!isDirectorUser) return;
     try {
       const [s, t] = await Promise.all([listStaff(), loadTournaments()]);
       setStaff(s);
       setTournaments(t);
     } catch { /* surfaced via store.error */ }
-  }, [auth, listStaff, loadTournaments]);
+  }, [isDirectorUser, listStaff, loadTournaments]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 

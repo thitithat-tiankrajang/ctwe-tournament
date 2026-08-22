@@ -230,6 +230,12 @@ export interface TournamentCard {
 }
 
 export interface PublicCardSummary {
+  /**
+   * Discriminator, never sent by the server. It exists so a {@link BackOfficeCardSummary} cannot be
+   * passed where a public summary is expected — TypeScript is structural, and these two carry the
+   * same twelve fields with *different values*.
+   */
+  readonly scope?: "public";
   id: string;
   tournamentId: string;
   name: string;
@@ -240,6 +246,36 @@ export interface PublicCardSummary {
   gameCount: number;
   playerCount: number;
   publishedGameCount: number;
+  version: number;
+  createdAt: string;
+}
+
+/**
+ * `GET /api/card-summaries` — the authenticated back-office card list (P1-B).
+ *
+ * **Structurally identical to {@link PublicCardSummary} and deliberately a separate type**, mirroring
+ * the backend's `BackOfficeCardDtos.CardSummary`. The public summary carries public-projected
+ * *values*: a derived public stage, `playerCount` forced to 0 during registration, and
+ * `public_version` in place of `version` (measured divergence: staff stage `PAIRING_PREVIEW` vs
+ * public `TABLE_PAIRING`, staff version 11 vs public 7).
+ *
+ * Sharing one type would let `publicSummaryCard()` convert one of these into a card bound for the
+ * staff store, where the wrong `version` would then meet `replaceCard`'s guard. The `scope`
+ * discriminator makes that a compile error rather than a silent divergence during live scoring.
+ */
+export interface BackOfficeCardSummary {
+  readonly scope?: "back-office";
+  id: string;
+  tournamentId: string;
+  name: string;
+  division: string;
+  status: CardStatus;
+  runtimeStage: RuntimeStage;
+  currentGame: number;
+  gameCount: number;
+  playerCount: number;
+  publishedGameCount: number;
+  /** `tournament_cards.version` — the staff version, never `public_version`. */
   version: number;
   createdAt: string;
 }

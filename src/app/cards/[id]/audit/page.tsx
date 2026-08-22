@@ -61,6 +61,7 @@ export default function AuditPage() {
 
       {loadingAudit ? <div className="panel panel-padding">กำลังโหลดบันทึกกิจกรรม…</div> : entries.length === 0 ? <div className="panel"><EmptyState icon={<FileClock size={25} />} title="ยังไม่มีบันทึกกิจกรรม" description="การเปลี่ยนแปลงข้อมูลจะปรากฏที่นี่" /></div> : (
         <DataGrid
+          ariaLabel="บันทึกกิจกรรม"
           columns={auditColumns}
           rows={entries}
           getRowKey={(entry) => entry.id}

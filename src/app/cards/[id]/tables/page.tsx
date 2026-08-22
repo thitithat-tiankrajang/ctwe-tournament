@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowRight, LockKeyhole, RefreshCw, Shuffle, Sparkles, Undo2 } from "lucide-react";
 import { useState } from "react";
-import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { isBadPassword, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament } from "@/domain/tournament/roles";
 import type { Pairing, Player } from "@/domain/tournament/types";
@@ -27,7 +27,6 @@ export default function TablesPage() {
   const generatePairings = useTournamentStore((state) => state.generatePairings);
   const confirmPairing = useTournamentStore((state) => state.confirmPairingPreview);
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
-  const verifyPassword = useTournamentStore((state) => state.verifyPassword);
   const undoPairing = useTournamentStore((state) => state.undoPairing);
   const card = selectCard(cards, id);
   const [firstId, setFirstId] = useState("");
@@ -98,13 +97,15 @@ export default function TablesPage() {
     }
     setBusy(true);
     try {
-      if (!await verifyPassword(pairingPassword)) {
-        await appDialog.alert("รหัสผ่านไม่ถูกต้อง", "ยืนยันตัวตนไม่สำเร็จ", true);
-        return;
-      }
       await swapPlayers(id, firstId, secondId, pairingPassword, false);
       setFirstId(""); setSecondId(""); setPairingPassword("");
     } catch (error) {
+      // The swap verifies the password itself, so a wrong one lands here instead of costing a
+      // separate pre-flight request. `code` identifies it — a rejected CSRF token is also a 403.
+      if (isBadPassword(error)) {
+        await appDialog.alert(error.message, "ยืนยันตัวตนไม่สำเร็จ", true);
+        return;
+      }
       const message = error instanceof Error ? error.message : "สลับผู้เล่นไม่สำเร็จ";
       if (message.includes("SCHOOL_CONFLICT") && await appDialog.confirm(message.replace("SCHOOL_CONFLICT: ", ""), {
         title: "พบผู้เล่นสถาบันเดียวกัน",

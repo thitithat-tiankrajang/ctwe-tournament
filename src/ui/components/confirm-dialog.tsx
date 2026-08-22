@@ -1,8 +1,9 @@
 "use client";
 
-import { AlertTriangle, LoaderCircle, X } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { AlertTriangle, X } from "lucide-react";
+import { type ReactNode } from "react";
 import { Button } from "@/ui/components/button";
+import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -48,38 +49,35 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  useEffect(() => {
-    if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) onCancel();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [busy, onCancel, open]);
+  // Escape, focus trap, focus restore, scroll lock and unique ids all come from the one modal
+  // behaviour; see 24_P7_DESIGN_SYSTEM.md. `busy` is what makes a dialog temporarily undismissable.
+  const dialog = useModalDialog({ open, onDismiss: onCancel, dismissible: !busy });
 
   if (!open) return null;
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={() => !busy && onCancel()}>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
       <section
+        ref={dialog.ref as React.RefObject<HTMLElement>}
+        tabIndex={-1}
         className={`confirm-dialog${danger ? " confirm-dialog--danger" : ""}${className ? ` ${className}` : ""}`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="confirm-dialog-title"
-        aria-describedby={description ? "confirm-dialog-description" : undefined}
+        aria-labelledby={dialog.titleId}
+        aria-describedby={description ? dialog.descriptionId : undefined}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
           <div className="confirm-dialog__icon">{icon ?? <AlertTriangle size={20} />}</div>
-          <div><span>{eyebrow}</span><h2 id="confirm-dialog-title">{title}</h2></div>
+          <div><span>{eyebrow}</span><h2 id={dialog.titleId}>{title}</h2></div>
           <button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={busy} onClick={onCancel}><X size={18} /></button>
         </header>
-        {description && <p id="confirm-dialog-description">{description}</p>}
+        {description && <p id={dialog.descriptionId}>{description}</p>}
         {children}
         {error && <div className="confirm-dialog__error" role="alert">{error}</div>}
         <footer>
           {!hideCancel && <Button variant="secondary" disabled={busy} onClick={onCancel}>{cancelLabel}</Button>}
-          <Button variant={danger ? "danger" : "primary"} disabled={busy} onClick={onConfirm}>
-            {busy && <LoaderCircle className="loading-spinner" size={16} />}{busy ? busyLabel : confirmLabel}
+          <Button variant={danger ? "danger" : "primary"} loading={busy} loadingLabel={busyLabel} onClick={onConfirm}>
+            {confirmLabel}
           </Button>
         </footer>
       </section>

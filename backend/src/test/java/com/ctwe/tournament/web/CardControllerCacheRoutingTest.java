@@ -19,6 +19,8 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -120,7 +122,7 @@ class CardControllerCacheRoutingTest {
 
         assertThat(controller.submitResult(cardId, "g1-t1", request, authentication)).isSameAs(patch);
 
-        verify(events).publishResult(cardId, patch);
+        verify(events).publishResult(eq(cardId), eq(patch), anyString(), anyList());
         verify(events).publishPublicResult(eq(cardId), eq(5L), eq(List.of(publishedSource)));
         verify(cards).submitResult(cardId, "g1-t1", request, "staff");
     }

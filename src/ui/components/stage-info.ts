@@ -19,9 +19,21 @@ export type StageTone = BadgeTone;
  * Compact stage/progress summary for a card-list row. `audience` picks the wording:
  * back-office users see the operational step, public viewers see spectator language.
  */
-export function cardStageInfo(card: TournamentCard, audience: "staff" | "viewer"): { label: string; tone: StageTone } {
-  const playerCount = card.playerCount ?? card.players.length;
-  const gameCount = card.gameCount ?? card.games.length;
+/**
+ * The minimum a stage badge needs. Widened for P3-B so a lean `CardListRow` works as well as a full
+ * `TournamentCard` — `02_ARCHITECTURE_DECISIONS.md` §2.3 records that the `??` fallbacks below were
+ * written for exactly this summary case.
+ */
+export type StageSource = Pick<TournamentCard, "status" | "runtimeStage" | "currentGame"> & {
+  playerCount?: number;
+  gameCount?: number;
+  players?: readonly unknown[];
+  games?: readonly unknown[];
+};
+
+export function cardStageInfo(card: StageSource, audience: "staff" | "viewer"): { label: string; tone: StageTone } {
+  const playerCount = card.playerCount ?? card.players?.length ?? 0;
+  const gameCount = card.gameCount ?? card.games?.length ?? 0;
   const finished = card.status === "FINISHED" || card.status === "CLOSED" || card.runtimeStage === "FINAL_PUBLISHED";
   if (finished) return { label: "จบการแข่งขันแล้ว", tone: "success" };
   if (card.runtimeStage === "PLAYER_REGISTRATION") {

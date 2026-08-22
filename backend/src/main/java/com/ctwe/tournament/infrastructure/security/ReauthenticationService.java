@@ -32,7 +32,9 @@ public class ReauthenticationService {
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
         }
+        // A wrong password is NOT a lost session: 403 + a body code, so the client can tell it apart
+        // from CSRF rejection (also 403) and from the genuine no-session 401s above.
         if (hash == null || !passwordEncoder.matches(password, hash))
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "รหัสผ่านไม่ถูกต้อง");
+            throw new BadReauthenticationException();
     }
 }

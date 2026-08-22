@@ -1,7 +1,7 @@
 "use client";
 
 import { CircleCheck, CircleSlash, LoaderCircle, PackageOpen, RefreshCw, ServerCog } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import type { ShutdownReadiness } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
@@ -34,13 +34,21 @@ export function ShutdownReadinessPanel({
   const [readiness, setReadiness] = useState<ShutdownReadiness | null>(null);
   const [working, setWorking] = useState(false);
 
+  // `onError` arrives as an inline arrow from /admin, so it is a new function on every render of
+  // that page. Depending on it directly made `refresh` — and therefore the effect below — new each
+  // time, and the admin page re-renders several times while tournaments, directors, archives and one
+  // snapshot status per row land. Measured: FIVE readiness requests for a single page load.
+  // Same fix, same reason, as SnapshotPublicationPanel's onStatusRef/onErrorRef.
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onErrorRef.current = onError; });
+
   const refresh = useCallback(async () => {
     try {
       setReadiness(await loadShutdownReadiness());
     } catch (error) {
-      onError(error instanceof Error ? error.message : "โหลดสถานะการปิดระบบไม่สำเร็จ");
+      onErrorRef.current(error instanceof Error ? error.message : "โหลดสถานะการปิดระบบไม่สำเร็จ");
     }
-  }, [loadShutdownReadiness, onError]);
+  }, [loadShutdownReadiness]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 

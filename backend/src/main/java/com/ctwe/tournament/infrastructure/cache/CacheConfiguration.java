@@ -44,8 +44,12 @@ public class CacheConfiguration {
             .expireAfterWrite(Duration.ofSeconds(publicCardVersionsTtlSeconds))
             .recordStats()
             .build());
-        // Short TTL = admin changes propagate within seconds even without the explicit evict,
-        // while SSE subscribes/heartbeats/config reads stay a map lookup instead of a DB query.
+        // The evict on update() is what makes an admin change apply, not this TTL: it fires on the
+        // same instance within milliseconds, and update() is the only code path that writes the
+        // table (the two migrations run before the cache exists). The TTL is therefore a backstop
+        // for an out-of-band write nothing performs, which is why it is 60s rather than 5s -- at 5s
+        // it sat exactly on the heartbeat tick and re-read the database for the entire lifetime of
+        // an idle deployment. SSE subscribes/heartbeats/config reads stay a map lookup either way.
         caffeine.registerCustomCache(TournamentCaches.RUNTIME_SETTINGS, Caffeine.newBuilder()
             .maximumSize(1)
             .expireAfterWrite(Duration.ofSeconds(runtimeSettingsTtlSeconds))

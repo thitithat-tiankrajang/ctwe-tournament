@@ -137,9 +137,19 @@ export function SnapshotPublicationPanel({ tournament, busy, onApprove, onError,
         </p>
       )}
 
+      {/*
+        The old copy said the file "was deleted from the CDN" and stopped there, which reads as
+        "it is gone now". It is not: the object is removed and the edge is purged BEST EFFORT
+        (PublicSnapshotPublisher), but the promoted object carries `max-age=300`, so a viewer who
+        already opened the page keeps serving it from their own browser cache for up to five
+        minutes. An operator who retracts because something is wrong needs to know the page is
+        still reachable during that window — 04_BLOCKERS.md scheduled this wording fix for P4.
+      */}
       {status.state === "RETRACTED" && (
         <p className="console-note">
-          · ถอนการเผยแพร่แล้ว — ไฟล์สาธารณะถูกลบออกจาก CDN ส่วนสำเนาที่ถูกดาวน์โหลดไปก่อนหน้านี้เรียกคืนไม่ได้
+          · ถอนการเผยแพร่แล้ว — ลบไฟล์สาธารณะออกจาก CDN แล้ว แต่ผู้ชมที่เปิดหน้าไปก่อนหน้านี้
+          อาจยังเห็นข้อมูลเดิมต่อได้ <strong>นานถึงประมาณ 5 นาที</strong> เพราะเบราว์เซอร์เก็บแคชไว้
+          · สำเนาที่ถูกดาวน์โหลดไปแล้วเรียกคืนไม่ได้
         </p>
       )}
       {!status.approval.valid && status.state !== "RETRACTED" && <SnapshotAcknowledgment />}
@@ -170,7 +180,7 @@ export function SnapshotPublicationPanel({ tournament, busy, onApprove, onError,
             variant="secondary"
             size="sm"
             disabled={disabled}
-            title="ลบไฟล์ที่เผยแพร่ออกจาก CDN — ข้อมูลในระบบยังอยู่ครบ"
+            title="ลบไฟล์ที่เผยแพร่ออกจาก CDN — ข้อมูลในระบบยังอยู่ครบ ผู้ชมที่เปิดหน้าไปแล้วอาจยังเห็นข้อมูลเดิมได้นานถึงประมาณ 5 นาที"
             onClick={() => void run(() => retractSnapshot(tournament.id))}
           >
             <CloudOff size={14} />ถอนการเผยแพร่

@@ -181,7 +181,7 @@ export interface ExcelHeadControls {
   onStartTextFilter: (key: string) => void;
   onTextFilter: (key: string, value: string) => void;
   onStopTextFilter: () => void;
-  onOpenFilter: (key: string, rect: DOMRect) => void;
+  onOpenFilter: (key: string, rect: DOMRect, trigger?: HTMLElement | null) => void;
   onApply: (key: string, values: string[]) => void;
   onClear: (key: string) => void;
   onClose: () => void;
@@ -202,7 +202,7 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
             const filterActive = (excel.filters[column.key]?.length ?? 0) > 0
               || Boolean(excel.textFilters[column.key]);
             return (
-              <th key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}${filterActive ? " egrid-th--filtered" : ""}${sorted ? " egrid-th--sorted" : ""}${excel.openKey === column.key ? " egrid-th--popup" : ""}`}>
+              <th scope="col" key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}${filterActive ? " egrid-th--filtered" : ""}${sorted ? " egrid-th--sorted" : ""}${excel.openKey === column.key ? " egrid-th--popup" : ""}`}>
                 <div className="egrid-th-bar">
                   {excel.editingKey === column.key ? (
                     <input
@@ -241,7 +241,7 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
                         if (excel.openKey === column.key) return;
                         const anchor = event.currentTarget.closest("th")?.getBoundingClientRect()
                           ?? event.currentTarget.getBoundingClientRect();
-                        excel.onOpenFilter(column.key, anchor);
+                        excel.onOpenFilter(column.key, anchor, event.currentTarget);
                       }}
                     >
                       <span className="egrid-th__text">{column.label}</span>
@@ -269,7 +269,7 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
             );
           }
           return (
-            <th key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}`}>
+            <th scope="col" key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}`}>
               <span className="egrid-th__label">{column.label}</span>
               {columnFilters?.[column.key] ? <span className="egrid-th__filterwrap">{columnFilters[column.key]}</span> : null}
               {resizer}
@@ -303,7 +303,15 @@ export function useColumnControls() {
   const [openAnchor, setOpenAnchor] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const setColumnSort = (key: string, direction: SortDir | null) =>
     setSort(direction ? { key, dir: direction } : null);
-  const openFilter = (key: string, rect: DOMRect) => { setOpenAnchor({ top: rect.bottom + 4, left: rect.left }); setOpenKey((current) => current === key ? null : key); };
+  // The header button that opened the popup, so Escape (or applying a filter) hands focus back to
+  // it instead of dropping the operator on <body> — the same restore rule modal dialogs follow.
+  const filterTriggerRef = useRef<HTMLElement | null>(null);
+  const openFilter = (key: string, rect: DOMRect, trigger?: HTMLElement | null) => {
+    filterTriggerRef.current = trigger ?? null;
+    setOpenAnchor({ top: rect.bottom + 4, left: rect.left });
+    setOpenKey((current) => current === key ? null : key);
+  };
+  const closeFilter = () => { setOpenKey(null); filterTriggerRef.current?.focus(); };
   const applyFilter = (key: string, values: string[], total: number) => setFilters((prev) => { const next = { ...prev }; if (values.length === 0 || values.length >= total) delete next[key]; else next[key] = values; return next; });
   const clearFilter = (key: string) => setFilters((prev) => { const next = { ...prev }; delete next[key]; return next; });
   const setTextFilter = (key: string, value: string) => setTextFilters((prev) => {
@@ -320,7 +328,7 @@ export function useColumnControls() {
   const activeTextKeys = Object.keys(textFilters).filter((key) => textFilters[key]?.trim());
   return {
     sort, filters, textFilters, openKey, openAnchor, editingKey,
-    setOpenKey, setEditingKey, setTextFilter, startTextFilter, setColumnSort, openFilter, applyFilter, clearFilter, clearAll,
+    setOpenKey, closeFilter, setEditingKey, setTextFilter, startTextFilter, setColumnSort, openFilter, applyFilter, clearFilter, clearAll,
     activeFilterKeys, activeTextKeys,
     active: sort !== null || activeFilterKeys.length > 0 || activeTextKeys.length > 0,
   };
@@ -448,7 +456,7 @@ export function ColumnFilterDropdown({ label, values, selected, anchor, filterab
 }
 
 /** Generic Excel-style grid: responsive columns, optional resizing, and multi-field filters. */
-export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, resetKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, onRowClick, onFilterActiveChange }: {
+export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, resetKey, filterResetKey, rowClassName, tableClassName = "", ariaLabel, emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, onRowClick, onFilterActiveChange }: {
   columns: DataColumn<T>[];
   rows: T[];
   getRowKey: (row: T) => string;
@@ -459,6 +467,9 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
   filterResetKey?: number;
   rowClassName?: (row: T) => string | undefined;
   tableClassName?: string;
+  /** Names the table for assistive tech. Every grid is a different dataset; without it a screen
+   *  reader announces four identical "table"s on the overview and cannot tell them apart. */
+  ariaLabel?: string;
   emptyText?: string;
   inlineClear?: boolean;
   resizableColumns?: boolean;
@@ -524,7 +535,7 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
         </div>
       </div>
       <div className="entry-grid-scroll" ref={scrollRef}>
-        <table className={`entry-grid${tableClassName ? ` ${tableClassName}` : ""}`} style={{ width: totalWidth }}>
+        <table className={`entry-grid${tableClassName ? ` ${tableClassName}` : ""}`} style={{ width: totalWidth }} aria-label={ariaLabel}>
           <GridHead columns={columns} colWidths={colWidths} startResize={startResize} resizable={resizableColumns} excel={{
             sortable: (key) => { const column = colByKey.get(key); return Boolean(column?.value) && (column?.sortable ?? true); },
             filterable: (key) => { const column = colByKey.get(key); return Boolean(column?.value) && (column?.filterable ?? true); },
@@ -540,9 +551,9 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
             onTextFilter: controls.setTextFilter,
             onStopTextFilter: () => controls.setEditingKey(null),
             onOpenFilter: controls.openFilter,
-            onApply: (key, values) => { controls.applyFilter(key, values, uniqueValues[key]?.length ?? 0); controls.setOpenKey(null); },
-            onClear: (key) => { controls.clearFilter(key); controls.setOpenKey(null); },
-            onClose: () => controls.setOpenKey(null),
+            onApply: (key, values) => { controls.applyFilter(key, values, uniqueValues[key]?.length ?? 0); controls.closeFilter(); },
+            onClear: (key) => { controls.clearFilter(key); controls.closeFilter(); },
+            onClose: () => controls.closeFilter(),
           }} />
           <tbody>
             {visibleRows.length === 0

@@ -23,11 +23,13 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
-import { readActiveTournament, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { readActiveTournament, selectShellCards, shellCardsSignature, useTournamentStore } from "@/application/tournament/store";
 import { useCardSync } from "@/application/tournament/use-card-sync";
+import { useFullCard } from "@/application/tournament/use-full-card";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
 import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
+import { foldersAfterOpening } from "@/ui/layout/card-folders";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
 import { Button } from "@/ui/components/button";
@@ -114,13 +116,48 @@ function CardFolder({ cardId, name, division, pages, expanded, current, workflow
   );
 }
 
+/**
+ * Hosts the live-sync hooks so their store subscriptions re-render **nothing**.
+ *
+ * `use-card-sync.ts` subscribes to the open card's `version`, which increments on every result
+ * patch, and `use-public-sync.ts` subscribes to the whole `cards` array. Called directly from
+ * `AppShell`, either one re-rendered the entire shell — sidebar, nav, mobile chrome — once per SSE
+ * result event during live scoring. Measured: exactly 1 shell render per event.
+ *
+ * Both hooks are frozen (`03_INVARIANTS.md` §1), so the caller moves instead of the hook. The
+ * subscriptions now sit in a component that renders `null`, and its props are primitives, so it
+ * re-renders only when the open card or the viewer's role actually changes.
+ */
+function CardSyncHost({ cardId, isStaff, loading }: { cardId?: string; isStaff: boolean; loading: boolean }) {
+  // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
+  // Both are held until the initial `load()` settles: until then `auth` is still anonymous, so a
+  // staff member would briefly be treated as a viewer and open the PUBLIC stream, only to tear it
+  // down and open the staff one a moment later. Gating on `!loading` is the exception
+  // `03_INVARIANTS.md` §1 pre-agreed for P2; neither hook's own code is touched.
+  useCardSync(!loading && isStaff ? cardId : undefined);
+  usePublicSync(loading ? undefined : cardId, !isStaff);
+  // P3-B: the authenticated list is summaries now, so an opened card must be fetched in full once.
+  useFullCard(cardId, !loading && isStaff);
+  return null;
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams<{ id?: string }>();
   const id = typeof params.id === "string" ? params.id : undefined;
   const auth = useTournamentStore((state) => state.auth);
-  const cards = useTournamentStore((state) => state.cards);
+  const loading = useTournamentStore((state) => state.loading);
+  // Subscribe to a SIGNATURE of what the shell renders, not to `cards`. Zustand compares with
+  // Object.is and applyResultPatch necessarily builds a new array, so selecting `cards` re-rendered
+  // the shell on every SSE result event. The signature changes only when a field the sidebar
+  // actually shows changes.
+  const shellCardsKey = useTournamentStore((state) => shellCardsSignature(state.cards, state.summaries));
+  const shellCards = useMemo(() => {
+    // Read non-reactively: the subscription above decides when this recomputes.
+    const { cards, summaries } = useTournamentStore.getState();
+    return selectShellCards(cards, summaries);
+  }, [shellCardsKey]);
   const activeTournament = useTournamentStore((state) => state.activeTournament);
   const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
   const logout = useTournamentStore((state) => state.logout);
@@ -142,14 +179,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   // span multiple tournaments, keep cross-tournament navigation (they exit a tournament from the
   // card list page, not the sidebar).
   const scopeLocked = !!activeTournament && !admin && !director;
-  const currentCard = id ? selectCard(cards, id) : undefined;
+  const currentCard = id ? shellCards.find((card) => card.id === id) : undefined;
   const previousFlowRef = useRef<{ cardId?: string; stage?: RuntimeStage }>({
     cardId: id,
     stage: currentCard?.runtimeStage,
   });
-  // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
-  useCardSync(isStaff ? id : undefined);
-  usePublicSync(id, !isStaff);
   const onTournamentViewer = pathname.startsWith("/tour/") || pathname.startsWith("/t/");
   // Read-only overviews have no primary mobile navigation underneath their
   // Ranking/Pairing/Result bar, including tournament viewer routes without an `id` param.
@@ -162,7 +196,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     ...(isDirector(auth) ? [{ href: "/director", label: "คอนโซลผู้อำนวยการ", icon: UserCog }] : []),
     ...(isAdmin(auth) ? [{ href: "/dev-tools", label: "เครื่องมือนักพัฒนา", icon: Code2 }] : []),
   ];
-  const tournamentCards = activeTournament ? cards.filter((card) => card.tournamentId === activeTournament.id) : [];
+  // Merged in a memo, not inside the store selector: selectTournamentCardList builds a new array,
+  // which under zustand's Object.is equality would re-render the shell on every store read.
+  const tournamentCards = useMemo(
+    () => activeTournament ? shellCards.filter((card) => card.tournamentId === activeTournament.id) : [],
+    [activeTournament, shellCards]);
 
   // Restore the opened-card tabs and collapse state for this browser session.
   useEffect(() => {
@@ -176,11 +214,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     setHydrated(true);
   }, []);
 
-  // Opening a card adds it as a tab and expands its folder.
+  // Opening a card adds it as a tab, expands its folder and collapses the others (D21).
+  // Keyed on `id` alone, so a folder the user opened by hand to peek at stays open until they
+  // actually navigate somewhere else.
   useEffect(() => {
     if (!id) return;
     setOpenedIds((prev) => prev.includes(id) ? prev : [...prev, id]);
-    setExpandedIds((prev) => prev.has(id) ? prev : new Set(prev).add(id));
+    setExpandedIds((prev) => foldersAfterOpening(prev, id) as Set<string>);
   }, [id]);
 
   // Follow a remote workflow transition only when this browser is still on the old workflow page.
@@ -235,7 +275,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const railLinks = id ? cardLinks(id, operator, director) : generalLinks;
   const workflowHrefFor = (cardId: string) => {
-    const card = selectCard(cards, cardId);
+    const card = shellCards.find((entry) => entry.id === cardId);
     return operator && card ? stageHref(cardId, card.runtimeStage) : undefined;
   };
   const collapsed = !expanded;
@@ -247,6 +287,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className={`app-shell${expanded ? "" : " app-shell--collapsed"}`}>
+      <CardSyncHost cardId={id} isStaff={isStaff} loading={loading} />
       <aside className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}>
         <div className="sidebar__head">
           {scopeLocked ? (
@@ -309,7 +350,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {openedIds.length === 0 ? (
                     <p className="nav-empty">ยังไม่ได้เปิดการ์ด เลือกการ์ดจากหน้ารายการแล้วการ์ดจะมาอยู่ที่นี่</p>
                   ) : openedIds.map((cardId) => {
-                    const card = selectCard(cards, cardId);
+                    const card = shellCards.find((entry) => entry.id === cardId);
                     return (
                       <CardFolder
                         key={cardId}

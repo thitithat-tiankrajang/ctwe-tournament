@@ -6,6 +6,7 @@ import com.ctwe.tournament.infrastructure.storage.SnapshotStorageProperties;
 import com.ctwe.tournament.web.dto.CardDtos;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import com.ctwe.tournament.infrastructure.security.BadReauthenticationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -281,12 +282,14 @@ class SnapshotApprovalDatabaseTest {
     void requiresTheCurrentPassword() {
         finishedCard();
 
+        // A wrong confirmation password is BadReauthenticationException (403 + BAD_PASSWORD), not a
+        // 401: it is a typo, not a lost session. The property that matters is unchanged — approval
+        // is refused and no approval row is written.
         assertThatThrownBy(() -> approvals.approve(tournamentId, admin,
             new SnapshotApprovalService.ApprovalRequest("not-my-password", TOURNAMENT_NAME,
                 SnapshotApprovalService.ACKNOWLEDGMENT_REV)))
-            .isInstanceOf(ResponseStatusException.class)
-            .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode())
-                .isEqualTo(HttpStatus.UNAUTHORIZED));
+            .isInstanceOf(BadReauthenticationException.class)
+            .hasMessage("รหัสผ่านไม่ถูกต้อง");
 
         assertThat(approvalRowCount()).isZero();
     }

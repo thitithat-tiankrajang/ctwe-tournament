@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AuditEntry, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, BackOfficeCardSummary, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
 import { comparePlayerCodes } from "@/domain/tournament/player-code";
@@ -64,8 +64,53 @@ export interface SnapshotPublishPatch {
   currentGame: number;
 }
 
+/**
+ * One pairing another account just committed a result for, with what it held before (P4/D15 gate).
+ *
+ * `before` is captured from OUR state at the moment the event lands, which is why the notice is
+ * raised BEFORE `applyResultPatch` runs — afterwards the previous scores are gone.
+ */
+export interface RemoteResultChange {
+  pairingId: string;
+  tableNumber: number;
+  gameNumber?: number;
+  before: { scoreOne?: number; scoreTwo?: number } | null;
+  after: { scoreOne?: number; scoreTwo?: number };
+}
+
+/**
+ * A notification channel, deliberately NOT a reconciliation mechanism.
+ *
+ * The store state is still reconciled exactly as before, by `applyResultPatch` or by the version-gap
+ * resync. This carries only what a warning needs to SAY — who, which pairing, and from what to what
+ * — and `seq` so a consumer can tell a fresh event from a re-render.
+ */
+export interface RemoteResultNotice {
+  seq: number;
+  cardId: string;
+  version: number;
+  actor: string | null;
+  actorRoles: string[];
+  changes: RemoteResultChange[];
+}
+
+/** A card as a list or sidebar needs it: the twelve summary fields plus where the row came from. */
+export type CardListRow = Omit<BackOfficeCardSummary, "scope"> & {
+  /** True when a full, SSE-patched card backs this row rather than a summary. */
+  full: boolean;
+};
+
 interface TournamentState {
   cards: TournamentCard[];
+  /**
+   * Lean rows from `GET /api/card-summaries`, for the authenticated card list and sidebar.
+   *
+   * A SEPARATE FIELD, not a different container for `cards` — `04_BLOCKERS.md` B1 rejected turning
+   * `cards` into a Record because it would force rewriting the four frozen SSE patch functions,
+   * whose correctness rests on untyped version guards and reference-equality preservation. The array
+   * stays; this sits beside it, and `selectCardList` merges the two for display.
+   */
+  summaries: BackOfficeCardSummary[];
   auth: AuthState;
   loading: boolean;
   error: string | null;
@@ -77,6 +122,10 @@ interface TournamentState {
   syncCard: (cardId: string, publicVersion?: number) => Promise<void>;
   applyCardState: (card: TournamentCard) => void;
   applyResultPatch: (cardId: string, version: number, changedPairings: Pairing[]) => boolean;
+  /** Latest result event authored by SOMEONE ELSE; null until one arrives. See RemoteResultNotice. */
+  remoteResult: RemoteResultNotice | null;
+  /** Raise the notice for a staff result event. Called BEFORE the patch, while `before` still exists. */
+  noteRemoteResultChange: (cardId: string, version: number, changedPairings: Pairing[], actor: string | null, actorRoles: string[]) => void;
   applyPairingsPatch: (cardId: string, version: number, gameNumber: number, pairings: Pairing[]) => boolean;
   applySnapshotPublish: (cardId: string, version: number, publish: SnapshotPublishPatch) => boolean;
   /** Re-check a staff/director/admin session; redirects to login if it is gone. */
@@ -251,12 +300,47 @@ function publicSummaryCard(summary: PublicCardSummary): TournamentCard {
   };
 }
 
+/** The backend's discriminator for a wrong re-authentication password. */
+export const BAD_PASSWORD = "BAD_PASSWORD";
+
+/**
+ * A failed API response, carrying what a caller needs in order to react without re-reading a body
+ * that can only be read once.
+ *
+ * `code` is the discriminator, **never** the status. A wrong confirmation password and a rejected
+ * CSRF token are both `403`; only the former carries `BAD_PASSWORD`, because only it is answered by
+ * the backend's own handler. Branching on `403` alone would report an expired CSRF token as a typo.
+ *
+ * `message` is unchanged from what this function has always returned, so every existing
+ * `error.message` consumer keeps working.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** True when `error` is the backend reporting a mistyped confirmation password, and nothing else. */
+export function isBadPassword(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.code === BAD_PASSWORD;
+}
+
 async function readError(response: Response) {
   try {
-    const payload = await response.json() as { error?: string; message?: string };
-    return payload.error ?? payload.message ?? `Request failed (${response.status})`;
+    const payload = await response.json() as { error?: string; message?: string; code?: string };
+    return new ApiError(
+      payload.error ?? payload.message ?? `Request failed (${response.status})`,
+      response.status,
+      payload.code,
+    );
   } catch {
-    return `Request failed (${response.status})`;
+    return new ApiError(`Request failed (${response.status})`, response.status);
   }
 }
 
@@ -271,13 +355,13 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     clearCsrfCookie();
     publicScopeToken = null;
     if (typeof window !== "undefined") window.localStorage.removeItem(ACTIVE_TOURNAMENT_KEY);
-    set({ auth: anonymous, cards: [], activeTournament: null, loading: false, error: null });
+    set({ auth: anonymous, cards: [], summaries: [], activeTournament: null, loading: false, error: null });
     redirectToLoginOnSessionLoss();
   };
 
   const fetchAuthState = async () => {
     const response = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
-    if (!response.ok) throw new Error(await readError(response));
+    if (!response.ok) throw await readError(response);
     return response.json() as Promise<AuthState>;
   };
 
@@ -292,8 +376,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     const response = await fetch(path, { ...init, headers, credentials: "same-origin", cache: "no-store" });
     if (!response.ok) {
       if (response.status === 401 && (hasStaffAccess(get().auth) || hasStaffSessionHint())) {
-        // Several sensitive mutations intentionally return 401 for a wrong confirmation password,
-        // so confirm the actual session separately before deciding to redirect.
+        // A 401 here is a genuine no-session case: a wrong confirmation password is answered 403 +
+        // BAD_PASSWORD by the backend and never reaches this branch. Confirm the session separately
+        // anyway, because an offline auth check is not evidence of logout.
         let confirmedAuth: AuthState | null = null;
         try {
           confirmedAuth = await fetchAuthState();
@@ -304,13 +389,32 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         }
         if (confirmedAuth) set({ auth: confirmedAuth });
       }
-      const message = await readError(response);
-      set({ error: message });
-      throw new Error(message);
+      const failure = await readError(response);
+      set({ error: failure.message });
+      throw failure;
     }
     if (response.status === 204) return undefined as T;
     const body = await response.text();
-    return body ? JSON.parse(body) as T : undefined as T;
+    if (!body) return undefined as T;
+    try {
+      return JSON.parse(body) as T;
+    } catch {
+      // A session evicted by `maximumSessions(2)` is logged out ON this request, and Spring's
+      // ConcurrentSessionFilter answers **200 with a plain-text expiry notice** rather than JSON
+      // (measured: `09_B4_SESSION_REGISTRY_MEASUREMENT.md` §4). `JSON.parse` threw a raw SyntaxError
+      // here, so an eviction surfaced as a broken app instead of an expired session.
+      //
+      // Confirm the session rather than pattern-matching Spring's English wording, which is not a
+      // contract. `ensureSessionAlive()` performs the redirect itself when the session is really
+      // gone; if it survives, this was some other malformed response and must not claim otherwise.
+      if (hasStaffAccess(get().auth) || hasStaffSessionHint()) {
+        await get().ensureSessionAlive();
+        if (!hasStaffAccess(get().auth)) {
+          throw new ApiError("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่", response.status);
+        }
+      }
+      throw new ApiError(`Request failed (${response.status})`, response.status);
+    }
   };
 
   const replaceCard = (updated: TournamentCard) => set((state) => {
@@ -324,10 +428,50 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     };
   });
 
+  /**
+   * The authenticated card list.
+   *
+   * Prefers `GET /api/card-summaries` (P1-B): twelve fields and ONE SQL statement, against a full
+   * card per row. Measured on the same data — a director's list is **649 B / 1 statement** here
+   * versus **94,918 B / 1+7N statements** from `/api/cards`.
+   *
+   * Falls back to `/api/cards` on **400, 404 or 405** — the three ways a backend without the
+   * endpoint can answer, all three required by `04_BLOCKERS.md` B3, because a routing miss surfaces
+   * as a 400 from failed UUID conversion and not only as a 404. That fallback is what keeps
+   * **New FE + Old BE** working (Invariant D); any other status is a real error and is thrown.
+   *
+   * Returns `null` when the session turned out to be dead — the redirect has already happened.
+   */
+  const loadBackOfficeCards = async (): Promise<{ cards: TournamentCard[]; summaries: BackOfficeCardSummary[] } | null> => {
+    const lean = await fetch("/api/card-summaries", { credentials: "same-origin", cache: "no-store" });
+    if (lean.ok) {
+      const summaries = await lean.json() as BackOfficeCardSummary[];
+      // Keep the full cards already held — they are SSE-patched and therefore fresher — but drop any
+      // the server no longer lists, since the summaries are authoritative for existence.
+      const live = new Set(summaries.map((summary) => summary.id));
+      return { cards: get().cards.filter((card) => live.has(card.id)), summaries };
+    }
+    if (lean.status === 401) {
+      expireBackOfficeSession();
+      return null;
+    }
+    if (lean.status !== 400 && lean.status !== 404 && lean.status !== 405) throw await readError(lean);
+
+    const response = await fetch("/api/cards", { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) {
+      if (response.status === 401) {
+        expireBackOfficeSession();
+        return null;
+      }
+      throw await readError(response);
+    }
+    return { cards: await response.json() as TournamentCard[], summaries: [] };
+  };
+
   const fetchPublicCatalog = async (versionToken?: string) => {
     const suffix = versionToken ? `?v=${encodeURIComponent(versionToken)}` : "";
     const response = await fetch(publicApiUrl(`/api/public/cards${suffix}`), { credentials: "omit" });
-    if (!response.ok) throw new Error(await readError(response));
+    if (!response.ok) throw await readError(response);
     return response.json() as Promise<PublicCardSummary[]>;
   };
 
@@ -352,7 +496,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       publicApiUrl(`/api/public/tournaments/${encodeURIComponent(token)}/bundle`),
       { credentials: "omit" },
     );
-    if (!response.ok) throw new Error(await readError(response));
+    if (!response.ok) throw await readError(response);
     return response.json() as Promise<PublicTournamentBundle>;
   };
 
@@ -460,6 +604,20 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
           patched = true;
           return card;
         }
+        // GAP GUARD (P4 SSE proof gate, fix A). A result event carries a DELTA, so it is only
+        // meaningful when it lands exactly on the version we already hold. `CardEventPublisher`
+        // writes from one bounded thread under DiscardOldestPolicy and can drop a queued send while
+        // the stream stays open — no error, no completion, no EventSource reconnect — and the server
+        // never reads Last-Event-ID, so nothing replays the hole. Before this guard the staff path
+        // merged the surviving delta and ADOPTED its version, silently losing every result in
+        // between; measured, 8 persisted results in and 2 delivered.
+        //
+        // Returning false (rather than patching) is deliberate: every caller already treats false as
+        // "pull the whole card" — `use-card-sync.ts` at the `result` handler, `submitResult` below,
+        // and `use-public-sync.ts`'s applyDelta. That existing contract is why this fix needs no
+        // change to either frozen sync hook. The viewer has enforced the same rule all along
+        // ("apply exactly known + 1, resync on any gap"); this brings staff up to it.
+        if (version !== card.version + 1) return card;
         const index = card.snapshots.findIndex((snapshot) => !snapshot.confirmedAt);
         if (index < 0) return card;
         patched = true;
@@ -548,6 +706,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 
   return {
     cards: [],
+    summaries: [],
+    remoteResult: null,
     auth: anonymous,
     loading: true,
     error: null,
@@ -601,6 +761,40 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     applyCardState: replaceCard,
     applyResultPatch,
+    noteRemoteResultChange(cardId, version, changedPairings, actor, actorRoles) {
+      // Our own echo is not a concurrent edit. The writer's grid has already cleared its draft, so
+      // this is belt-and-braces — but without it a slow round trip could warn someone about
+      // themselves, which is worse than saying nothing.
+      const me = get().auth.username;
+      if (actor && me && actor === me) return;
+
+      const card = get().cards.find((item) => item.id === cardId);
+      // No card in hand means nothing to compare against; the resync will bring the truth anyway.
+      if (!card) return;
+      const held = new Map(card.snapshots.flatMap((snapshot) => snapshot.pairings.map((pairing) => [pairing.id, pairing])));
+
+      const changes: RemoteResultChange[] = changedPairings.map((pairing) => {
+        const previous = held.get(pairing.id);
+        return {
+          pairingId: pairing.id,
+          tableNumber: pairing.tableNumber,
+          gameNumber: pairing.gameNumber,
+          // Loose != : an unscored pairing arrives with the score fields OMITTED, not null.
+          before: previous && (previous.scoreOne != null || previous.scoreTwo != null)
+            ? { scoreOne: previous.scoreOne, scoreTwo: previous.scoreTwo }
+            : null,
+          after: { scoreOne: pairing.scoreOne, scoreTwo: pairing.scoreTwo },
+        };
+      });
+      if (changes.length === 0) return;
+
+      set((state) => ({
+        remoteResult: {
+          seq: (state.remoteResult?.seq ?? 0) + 1,
+          cardId, version, actor, actorRoles, changes,
+        },
+      }));
+    },
     applyPairingsPatch,
     applySnapshotPublish,
     applyPublicSummary(summary) {
@@ -666,17 +860,13 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
           rememberStaffSessionHint();
         }
         let cards: TournamentCard[];
+        let summaries: BackOfficeCardSummary[] = [];
         const scopeToken = publicScopeToken ?? tokenFromLocation();
         if (auth.authenticated) {
-          const response = await fetch("/api/cards", { credentials: "same-origin", cache: "no-store" });
-          if (!response.ok) {
-            if (response.status === 401) {
-              expireBackOfficeSession();
-              return;
-            }
-            throw new Error(await readError(response));
-          }
-          cards = await response.json() as TournamentCard[];
+          const backOffice = await loadBackOfficeCards();
+          if (!backOffice) return; // session already expired and redirected
+          cards = backOffice.cards;
+          summaries = backOffice.summaries;
         } else if (scopeToken) {
           // A token-scoped viewer page is active: its bundle already carries everything, so
           // hydration must not issue a second, coarser catalog request.
@@ -685,7 +875,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         } else {
           cards = (await fetchPublicCatalog()).map(publicSummaryCard);
         }
-        set({ auth, cards, loading: false });
+        set({ auth, cards, summaries, loading: false });
       } catch (error) {
         set({ loading: false, error: error instanceof Error ? error.message : "ไม่สามารถเชื่อมต่อ API ได้" });
       }
@@ -878,12 +1068,12 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     // ---- public (anonymous) link-scoped entry ----
     async loadPublicTournaments() {
       const response = await fetch(publicApiUrl("/api/public/tournaments"), { credentials: "omit", cache: "no-store" });
-      if (!response.ok) throw new Error(await readError(response));
+      if (!response.ok) throw await readError(response);
       return response.json() as Promise<PublicTournamentSummary[]>;
     },
     async loadPublicArchives() {
       const response = await fetch(publicApiUrl("/api/public/archives"), { credentials: "omit", cache: "no-store" });
-      if (!response.ok) throw new Error(await readError(response));
+      if (!response.ok) throw await readError(response);
       return response.json() as Promise<TournamentArchive[]>;
     },
     async enterPublicTournament(token) {
@@ -1016,4 +1206,85 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 });
 
 export const selectCard = (cards: TournamentCard[], cardId: string) => cards.find((card) => card.id === cardId);
+
+/**
+ * One row per card for a list or sidebar, merging the two sources without conflating them.
+ *
+ * A full card always wins over a summary: it is the SSE-patched copy, so it is at least as fresh,
+ * and during live scoring it is fresher. Summaries fill in the cards this client has not opened.
+ * Returns a plain array so `cards` keeps the container B1 requires.
+ */
+export const selectCardList = (
+  cards: TournamentCard[],
+  summaries: BackOfficeCardSummary[],
+): CardListRow[] => {
+  const rows = new Map<string, CardListRow>();
+  for (const summary of summaries) rows.set(summary.id, { ...summary, full: false });
+  for (const card of cards) {
+    if (card.summaryOnly && rows.has(card.id)) continue;
+    rows.set(card.id, {
+      id: card.id,
+      tournamentId: card.tournamentId,
+      name: card.name,
+      division: card.division,
+      status: card.status,
+      runtimeStage: card.runtimeStage,
+      currentGame: card.currentGame,
+      gameCount: card.gameCount ?? card.games.length,
+      playerCount: card.playerCount ?? card.players.length,
+      publishedGameCount: card.publishedGameCount ?? 0,
+      version: card.version,
+      createdAt: card.createdAt,
+      full: !card.summaryOnly,
+    });
+  }
+  return [...rows.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+};
+
+/**
+ * The only card fields `AppShell` reads: sidebar folders, the workflow nudge, and the stage-change
+ * redirect. Everything else the shell renders comes from `auth`, `activeTournament` or local state.
+ *
+ * **A result save changes none of these** — `submitResult` touches scores and the card version, not
+ * the stage (`03_INVARIANTS.md` §3.4). That is what lets the shell skip re-rendering on the SSE
+ * patches that dominate live scoring, while still reacting to a stage change, which it must.
+ */
+export type ShellCard = Pick<CardListRow, "id" | "tournamentId" | "name" | "division" | "runtimeStage">;
+
+export const selectShellCards = (
+  cards: TournamentCard[],
+  summaries: BackOfficeCardSummary[],
+): ShellCard[] => selectCardList(cards, summaries).map((row) => ({
+  id: row.id,
+  tournamentId: row.tournamentId,
+  name: row.name,
+  division: row.division,
+  runtimeStage: row.runtimeStage,
+}));
+
+/**
+ * A value-signature of {@link selectShellCards}, for subscribing to *what the shell renders* rather
+ * than to the `cards` array.
+ *
+ * Zustand compares with `Object.is`, so selecting `state.cards` re-renders on every SSE patch —
+ * `applyResultPatch` necessarily builds a new array. Selecting a string means the shell re-renders
+ * only when a field it actually shows changes. Returning the derived array directly would not work:
+ * its row objects are rebuilt each call and would never compare equal, shallowly or otherwise.
+ */
+export const shellCardsSignature = (
+  cards: TournamentCard[],
+  summaries: BackOfficeCardSummary[],
+): string => selectShellCards(cards, summaries)
+  .map((card) => `${card.id}\u0000${card.tournamentId}\u0000${card.name}\u0000${card.division}\u0000${card.runtimeStage}`)
+  .join("\u0001");
+
+/** Cards belonging to one tournament, in the order a list should show them. */
+export const selectTournamentCardList = (
+  cards: TournamentCard[],
+  summaries: BackOfficeCardSummary[],
+  tournamentId: string | undefined,
+): CardListRow[] => {
+  const rows = selectCardList(cards, summaries);
+  return tournamentId ? rows.filter((row) => row.tournamentId === tournamentId) : rows;
+};
 export const rankPlayers = (players: Player[]) => [...players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || comparePlayerCodes(a.id, b.id));

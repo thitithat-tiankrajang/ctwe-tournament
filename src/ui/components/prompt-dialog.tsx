@@ -1,9 +1,10 @@
 "use client";
 
-import { KeyRound, LoaderCircle, X } from "lucide-react";
+import { KeyRound, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/ui/components/button";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
+import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 
 interface PromptDialogProps {
   open: boolean;
@@ -63,6 +64,11 @@ export function PromptDialog({
   const [phrase, setPhrase] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // The shared modal behaviour supplies Escape, the focus trap, focus restore, the scroll lock and
+  // unique ids. The field focus below stays local: a prompt's first stop is its input, not the
+  // close button that the generic "first focusable" rule would pick.
+  const dialog = useModalDialog({ open, onDismiss: onCancel, dismissible: !busy });
+
   // Reset and focus the field every time the dialog opens.
   useEffect(() => {
     setValue("");
@@ -72,13 +78,6 @@ export function PromptDialog({
     return () => window.clearTimeout(timer);
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) onCancel(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [busy, onCancel, open]);
-
   if (!open) return null;
   const phraseSatisfied = !confirmationPhrase || phrase.trim() === confirmationPhrase.trim();
   const valid = value.trim().length >= minLength && phraseSatisfied;
@@ -86,11 +85,11 @@ export function PromptDialog({
   const submitSecondary = () => { if (valid && !busy && onSecondarySubmit) onSecondarySubmit(value); };
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={() => !busy && onCancel()}>
-      <section className={`confirm-dialog${danger ? " confirm-dialog--danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby="prompt-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
+      <section ref={dialog.ref as React.RefObject<HTMLElement>} tabIndex={-1} className={`confirm-dialog${danger ? " confirm-dialog--danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby={dialog.titleId} onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <div className="confirm-dialog__icon"><KeyRound size={20} /></div>
-          <div><span>{eyebrow}</span><h2 id="prompt-dialog-title">{title}</h2></div>
+          <div><span>{eyebrow}</span><h2 id={dialog.titleId}>{title}</h2></div>
           <button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={busy} onClick={onCancel}><X size={18} /></button>
         </header>
         {description && <p>{description}</p>}
@@ -145,8 +144,8 @@ export function PromptDialog({
               {secondaryConfirmLabel}
             </Button>
           )}
-          <Button disabled={busy || !valid} onClick={submit}>
-            {busy && <LoaderCircle className="loading-spinner" size={16} />}{busy ? "กำลังดำเนินการ…" : confirmLabel}
+          <Button disabled={!valid} loading={busy} loadingLabel="กำลังดำเนินการ…" onClick={submit}>
+            {confirmLabel}
           </Button>
         </footer>
       </section>
