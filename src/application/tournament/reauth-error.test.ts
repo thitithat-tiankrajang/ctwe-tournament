@@ -130,3 +130,68 @@ test("isBadPassword ignores anything that is not the backend's tagged 403", () =
   assert.equal(isBadPassword(new ApiError("รหัสผ่านไม่ถูกต้อง", 403, BAD_PASSWORD)), true);
   assert.equal(isBadPassword(undefined), false);
 });
+
+/**
+ * 09_B4_SESSION_REGISTRY_MEASUREMENT.md §4, measured: the FIRST request after a
+ * `maximumSessions(2)` eviction is answered **200 with a plain-text expiry notice**, because
+ * ConcurrentSessionFilter logs the session out on that request. `request()` treated any 2xx as
+ * success and called `JSON.parse`, so an eviction surfaced as a raw SyntaxError — "the app is
+ * broken" rather than "you were signed out elsewhere".
+ */
+test("an evicted session's 200 + plain-text body is an expiry, not a SyntaxError", async () => {
+  const browser = installBrowser("/cards/card-id");
+  const originalFetch = globalThis.fetch;
+  const expiryNotice = "This session has been expired (possibly due to multiple concurrent logins being attempted as the same user).";
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    // The eviction notice on the mutation, then /api/auth/me confirming the session is gone.
+    if (String(input).includes("/api/auth/me")) {
+      return new Response(JSON.stringify({ authenticated: false, username: null, roles: [], csrfToken: "fresh" }),
+        { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(expiryNotice, { status: 200, headers: { "Content-Type": "text/plain" } });
+  };
+  useTournamentStore.setState({ auth: authenticated(), cards: [{ id: "sensitive" }] as never });
+
+  try {
+    const failure = await useTournamentStore.getState()
+      .setTournamentStatus("tournament", false, "right-password")
+      .then(() => null, (error: unknown) => error);
+
+    assert.ok(failure instanceof Error);
+    assert.ok(!(failure instanceof SyntaxError), "a SyntaxError is what this test exists to prevent");
+    assert.match(failure.message, /เซสชันหมดอายุ/, "the user is told they were signed out, in Thai");
+    assert.equal(useTournamentStore.getState().auth.authenticated, false);
+    assert.deepEqual(useTournamentStore.getState().cards, [], "privileged data cleared");
+    assert.deepEqual(browser.redirects, ["/staff-login?expired=1"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    browser.restore();
+  }
+});
+
+test("a malformed 200 body with a LIVE session is not reported as an expiry", async () => {
+  const browser = installBrowser("/cards/card-id");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    if (String(input).includes("/api/auth/me")) {
+      return new Response(JSON.stringify(authenticated()), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response("<html>proxy error</html>", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+  useTournamentStore.setState({ auth: authenticated() });
+
+  try {
+    const failure = await useTournamentStore.getState()
+      .setTournamentStatus("tournament", false, "right-password")
+      .then(() => null, (error: unknown) => error);
+
+    assert.ok(failure instanceof Error);
+    assert.doesNotMatch(failure.message, /เซสชันหมดอายุ/,
+      "the session survived, so claiming it expired would be a lie the user cannot act on");
+    assert.equal(useTournamentStore.getState().auth.authenticated, true);
+    assert.deepEqual(browser.redirects, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    browser.restore();
+  }
+});

@@ -346,7 +346,26 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     }
     if (response.status === 204) return undefined as T;
     const body = await response.text();
-    return body ? JSON.parse(body) as T : undefined as T;
+    if (!body) return undefined as T;
+    try {
+      return JSON.parse(body) as T;
+    } catch {
+      // A session evicted by `maximumSessions(2)` is logged out ON this request, and Spring's
+      // ConcurrentSessionFilter answers **200 with a plain-text expiry notice** rather than JSON
+      // (measured: `09_B4_SESSION_REGISTRY_MEASUREMENT.md` §4). `JSON.parse` threw a raw SyntaxError
+      // here, so an eviction surfaced as a broken app instead of an expired session.
+      //
+      // Confirm the session rather than pattern-matching Spring's English wording, which is not a
+      // contract. `ensureSessionAlive()` performs the redirect itself when the session is really
+      // gone; if it survives, this was some other malformed response and must not claim otherwise.
+      if (hasStaffAccess(get().auth) || hasStaffSessionHint()) {
+        await get().ensureSessionAlive();
+        if (!hasStaffAccess(get().auth)) {
+          throw new ApiError("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่", response.status);
+        }
+      }
+      throw new ApiError(`Request failed (${response.status})`, response.status);
+    }
   };
 
   const replaceCard = (updated: TournamentCard) => set((state) => {
