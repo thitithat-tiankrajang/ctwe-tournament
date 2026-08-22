@@ -120,6 +120,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const params = useParams<{ id?: string }>();
   const id = typeof params.id === "string" ? params.id : undefined;
   const auth = useTournamentStore((state) => state.auth);
+  const loading = useTournamentStore((state) => state.loading);
   const cards = useTournamentStore((state) => state.cards);
   const activeTournament = useTournamentStore((state) => state.activeTournament);
   const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
@@ -148,8 +149,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     stage: currentCard?.runtimeStage,
   });
   // Live multi-user sync is a back-office concern; public viewers receive published snapshots only.
-  useCardSync(isStaff ? id : undefined);
-  usePublicSync(id, !isStaff);
+  // Both are held until the initial `load()` settles: until then `auth` is still anonymous, so a
+  // staff member would briefly be treated as a viewer and open the PUBLIC stream, only to tear it
+  // down and open the staff one a moment later. Gating on `!loading` is the exception
+  // `03_INVARIANTS.md` §1 pre-agreed for P2; neither hook's own code is touched.
+  useCardSync(!loading && isStaff ? id : undefined);
+  usePublicSync(loading ? undefined : id, !isStaff);
   const onTournamentViewer = pathname.startsWith("/tour/") || pathname.startsWith("/t/");
   // Read-only overviews have no primary mobile navigation underneath their
   // Ranking/Pairing/Result bar, including tournament viewer routes without an `id` param.
