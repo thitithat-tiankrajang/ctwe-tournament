@@ -16,6 +16,12 @@ Baseline commit: `6ce756c9d77590f1e482d23b25ccea360db9c0a6` (branch `main`)
 > request per focus, while every console read sits on a mutation's refresh path
 > (`15_P3_CLOSURE.md` §2). M1's "≤ 8 requests on /admin" is **not met** and needs a backend
 > batch endpoint or D3 — both outside P3.
+> **P4 IS CLOSED** (2026-08-22) — closure `18_P4_CLOSURE.md`. The concurrent-draft warning was
+> **blocked by a proof gate it failed** (`16_`): the staff realtime path could silently drop a
+> persisted result and the client could not tell. Three fixes landed first — gap detection, overflow
+> recovery, actor identity — the gate was re-run and **passed** (`17_`), and only then was the warning
+> built. Two frozen items changed, both owner-approved and minimal: `use-card-sync.ts` (forward the
+> actor) and `applyResultPatch` (one contiguity line).
 > **B7 is carved out of this refactor entirely** — see `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md`.
 > Read `10_P1_CLOSURE.md`, then `11_P2_PLAN.md` and `12_P2_CLOSURE.md`.
 > `05_HANDOFF.md` remains the P0 record.
@@ -59,7 +65,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | **P1** | Backend-only additive migration | **CLOSED** — P1-A + P1-B shipped, final gate PASS (`10_P1_CLOSURE.md`); P1-C measurement only, P1-D deferred |
 | **P2** | Auth + login request consolidation (frontend) | **CLOSED** — final gate PASS (`12_P2_CLOSURE.md`); re-auth round trips 2 → 1. `HttpSessionEventPublisher` deferred to the owner |
 | **P3** | Data layer, summaries consumption, URL scope authority, query layer, selectors | **CLOSED** — all six chunks A/B/C/D1/D2/E, final gate PASS (`15_P3_CLOSURE.md`); /admin 15→10, refocus 7→1 and 4→1, card list 9,592→854 B, **shell renders per SSE result 1→0**. D2's query migration measured and declined; M1's ≤8-request target NOT met (needs backend batch or D3) |
-| **P4** | UI primitives, concurrency warning, viewer view-picker | not started |
+| **P4** | UI primitives, concurrency warning, viewer view-picker | **CLOSED** — final gate PASS (`18_P4_CLOSURE.md`). D15/UX-F3, retract wording and the concurrent-draft warning all shipped, the last one only after an SSE proof gate it first FAILED forced three transport fixes (`16_`, `17_`) |
 | **P5** | Information architecture + URL state | not started |
 | **P6** | Performance + accessibility remainder | not started |
 | **P7** | Visual tokens | not started |
