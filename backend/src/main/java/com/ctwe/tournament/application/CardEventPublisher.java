@@ -201,11 +201,21 @@ public class CardEventPublisher {
         for (SseEmitter emitter : cardEmitters) send(emitters, cardId, emitter, "card", version, event);
     }
 
-    public void publishResult(UUID cardId, CardDtos.ResultPatch patch) {
+    /**
+     * Staff result delta. Carries WHO made the change (P4 SSE proof gate, fix D) so a subscriber can
+     * say so without a second request: the concurrent-draft warning has to name the account that
+     * moved the result out from under the reader.
+     *
+     * @param actor      {@code authentication.getName()} — the same identity written to
+     *                   {@code audit_logs.user} and {@code matches.submitted_by}
+     * @param actorRoles the authorities exactly as {@code GET /api/auth/me} reports them
+     */
+    public void publishResult(UUID cardId, CardDtos.ResultPatch patch, String actor, List<String> actorRoles) {
         List<SseEmitter> cardEmitters = emitters.get(cardId);
         if (cardEmitters == null || cardEmitters.isEmpty()) return;
 
-        ResultChangeEvent event = new ResultChangeEvent(cardId, patch.version(), Instant.now(), patch.changedPairings());
+        StaffResultChangeEvent event = new StaffResultChangeEvent(cardId, patch.version(), Instant.now(),
+            patch.changedPairings(), actor, actorRoles);
         for (SseEmitter emitter : cardEmitters) send(emitters, cardId, emitter, "result", patch.version(), event);
     }
 
@@ -498,8 +508,17 @@ public class CardEventPublisher {
 
     public record CardChangeEvent(UUID cardId, long version, Instant updatedAt) {}
     public record CardStateEvent(UUID cardId, long version, Instant updatedAt, CardDtos.CardResponse card) {}
+    /**
+     * PUBLIC result delta. Deliberately has NO actor: this rides the anonymous viewer stream, and a
+     * staff account name must never reach it. The staff variant below is a separate type rather than
+     * a nullable field so that stays structurally impossible rather than a convention.
+     */
     public record ResultChangeEvent(UUID cardId, long version, Instant updatedAt,
                                     List<CardDtos.PairingResponse> changedPairings) {}
+    /** STAFF result delta: the public shape plus the acting account and its roles (fix D). */
+    public record StaffResultChangeEvent(UUID cardId, long version, Instant updatedAt,
+                                         List<CardDtos.PairingResponse> changedPairings,
+                                         String actor, List<String> actorRoles) {}
     public record PairingsPublishEvent(UUID cardId, long version, Instant updatedAt, int gameNumber,
                                        List<CardDtos.PairingResponse> pairings) {}
     public record SnapshotPublishEvent(UUID cardId, long version, Instant updatedAt, String snapshotId,

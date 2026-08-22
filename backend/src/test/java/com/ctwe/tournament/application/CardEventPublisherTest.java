@@ -3,6 +3,7 @@ package com.ctwe.tournament.application;
 import com.ctwe.tournament.domain.model.CardStatus;
 import com.ctwe.tournament.domain.model.RuntimeStage;
 import com.ctwe.tournament.web.dto.CardDtos;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
@@ -68,7 +69,7 @@ class CardEventPublisherTest {
             UUID.randomUUID().toString(), 2, 7, "P0001", "P0002",
             "P0001", 100, 70, "WIN", 30, false, false, true));
 
-        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed));
+        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed), "director-a", List.of("ROLE_DIRECTOR"));
 
         assertThat(emitter.resultEvents()).singleElement().satisfies(event -> {
             assertThat(event.cardId()).isEqualTo(cardId);
@@ -95,14 +96,17 @@ class CardEventPublisherTest {
             "P0001", 100, 70, "WIN", 30, false, false, true));
 
         publisher.publish(card(cardId, 5));
-        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed));
+        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed), "director-a", List.of("ROLE_DIRECTOR"));
 
         assertThat(publicEmitter.stateEvents()).isEmpty();
         assertThat(publicEmitter.resultEvents()).isEmpty();
         publisher.publishPublicResult(cardId, 6, changed);
         publisher.publishPublic(cardId, 7);
 
-        assertThat(publicEmitter.resultEvents()).singleElement().satisfies(event -> {
+        // publicResultEvents(), not resultEvents(): since fix D the staff delta is its own type, and
+        // `resultEvents()` above asserting EMPTY is exactly the guarantee that matters here — no
+        // staff-shaped event, and therefore no actor, ever reaches a viewer stream.
+        assertThat(publicEmitter.publicResultEvents()).singleElement().satisfies(event -> {
             assertThat(event.version()).isEqualTo(6);
             assertThat(event.changedPairings()).isSameAs(changed);
         });
@@ -144,6 +148,53 @@ class CardEventPublisherTest {
         publisher.subscribePublic(cardId, () -> 1);
         assertThatThrownBy(() -> publisher.subscribe(cardId, () -> 1)).isInstanceOf(ResponseStatusException.class);
         assertThatThrownBy(() -> publisher.subscribePublic(cardId, () -> 1)).isInstanceOf(ResponseStatusException.class);
+    }
+
+    // ---- P4 SSE proof gate, fix D: the actor rides the staff event and ONLY the staff event ----
+
+    @Test
+    @DisplayName("the staff result event names the acting account and its roles")
+    void staffResultEventCarriesTheActor() {
+        UUID cardId = UUID.randomUUID();
+        CapturingEmitter emitter = new CapturingEmitter();
+        CardEventPublisher publisher = new CardEventPublisher(8, 8, Runnable::run) {
+            @Override SseEmitter createEmitter() { return emitter; }
+        };
+        publisher.subscribe(cardId, () -> 4);
+
+        publisher.publishResult(cardId, new CardDtos.ResultPatch(5, List.of()),
+            "director-a", List.of("ROLE_DIRECTOR"));
+
+        assertThat(emitter.resultEvents()).singleElement().satisfies(event -> {
+            assertThat(event.actor())
+                .as("same identity that lands in audit_logs.user and matches.submitted_by")
+                .isEqualTo("director-a");
+            assertThat(event.actorRoles())
+                .as("the authorities exactly as GET /api/auth/me reports them")
+                .containsExactly("ROLE_DIRECTOR");
+        });
+    }
+
+    @Test
+    @DisplayName("the PUBLIC result event carries no actor — a staff account never reaches viewers")
+    void publicResultEventHasNoActorField() {
+        UUID cardId = UUID.randomUUID();
+        CapturingEmitter publicEmitter = new CapturingEmitter();
+        CardEventPublisher publisher = new CardEventPublisher(8, 8, Runnable::run) {
+            @Override SseEmitter createEmitter() { return publicEmitter; }
+        };
+        publisher.subscribePublic(cardId, () -> 4);
+
+        publisher.publishPublicResult(cardId, 6, List.of());
+
+        // Separate types, so this is structural rather than a nulling convention: the public record
+        // has no actor component at all and the staff one can never be sent down this stream.
+        assertThat(publicEmitter.publicResultEvents()).singleElement()
+            .isInstanceOf(CardEventPublisher.ResultChangeEvent.class)
+            .isNotInstanceOf(CardEventPublisher.StaffResultChangeEvent.class);
+        assertThat(CardEventPublisher.ResultChangeEvent.class.getRecordComponents())
+            .extracting(java.lang.reflect.RecordComponent::getName)
+            .doesNotContain("actor", "actorRoles");
     }
 
     private static CardDtos.CardResponse card(UUID id, long version) {
@@ -190,12 +241,21 @@ class CardEventPublisherTest {
                 .toList();
         }
 
-        List<CardEventPublisher.ResultChangeEvent> resultEvents() {
+        List<CardEventPublisher.ResultChangeEvent> publicResultEvents() {
             return events.stream()
                 .flatMap(event -> event.build().stream())
                 .map(ResponseBodyEmitter.DataWithMediaType::getData)
                 .filter(CardEventPublisher.ResultChangeEvent.class::isInstance)
                 .map(CardEventPublisher.ResultChangeEvent.class::cast)
+                .toList();
+        }
+
+        List<CardEventPublisher.StaffResultChangeEvent> resultEvents() {
+            return events.stream()
+                .flatMap(event -> event.build().stream())
+                .map(ResponseBodyEmitter.DataWithMediaType::getData)
+                .filter(CardEventPublisher.StaffResultChangeEvent.class::isInstance)
+                .map(CardEventPublisher.StaffResultChangeEvent.class::cast)
                 .toList();
         }
     }

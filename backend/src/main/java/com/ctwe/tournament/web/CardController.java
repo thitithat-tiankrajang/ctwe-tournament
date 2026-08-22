@@ -212,7 +212,7 @@ public class CardController {
         long publicVersionBefore = publicCards.version(cardId);
         CardDtos.ResultPatch patch = service.submitResult(
             cardId, matchId, request, authentication.getName());
-        events.publishResult(cardId, patch);
+        events.publishResult(cardId, patch, authentication.getName(), rolesOf(authentication));
         List<CardDtos.PairingResponse> publicChanges = patch.changedPairings().stream()
             .filter(CardDtos.PairingResponse::pairingPublished)
             .toList();
@@ -446,5 +446,17 @@ public class CardController {
     /** Any authenticated back-office principal (admin/director/staff) sees the internal staff view. */
     private boolean backOffice(Authentication authentication) {
         return authz.isAdmin(authentication) || authz.isDirector(authentication) || authz.isStaff(authentication);
+    }
+
+    /**
+     * The acting account's roles, derived exactly as {@code GET /api/auth/me} derives them
+     * (`AuthController.me`). Same source of truth, so a concurrent-draft warning names the actor
+     * the same way the session does — no second identity model (P4 SSE proof gate, fix D).
+     */
+    private static List<String> rolesOf(Authentication authentication) {
+        if (authentication == null) return List.of();
+        return authentication.getAuthorities().stream()
+            .map(org.springframework.security.core.GrantedAuthority::getAuthority)
+            .toList();
     }
 }

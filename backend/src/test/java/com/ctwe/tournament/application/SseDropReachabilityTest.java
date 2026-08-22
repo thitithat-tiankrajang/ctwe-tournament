@@ -69,7 +69,7 @@ class SseDropReachabilityTest {
     private void publishBurstAndDrain(Rig rig, UUID cardId) throws Exception {
         for (int i = 0; i < PUBLISHED; i++) {
             long version = rig.authoritativeVersion().incrementAndGet();
-            rig.publisher().publishResult(cardId, new CardDtos.ResultPatch(version, List.of()));
+            rig.publisher().publishResult(cardId, new CardDtos.ResultPatch(version, List.of()), "writer", List.of("ROLE_DIRECTOR"));
         }
         rig.release().countDown();
         waitUntil(() -> ((java.util.concurrent.ThreadPoolExecutor) rig.executor()).getQueue().isEmpty());
@@ -169,7 +169,7 @@ class SseDropReachabilityTest {
         try {
             publisher.subscribe(cardId, version::get);
             for (int i = 0; i < PUBLISHED; i++) {
-                publisher.publishResult(cardId, new CardDtos.ResultPatch(version.incrementAndGet(), List.of()));
+                publisher.publishResult(cardId, new CardDtos.ResultPatch(version.incrementAndGet(), List.of()), "writer", List.of("ROLE_DIRECTOR"));
                 Thread.sleep(5); // no stall: the writer keeps up
             }
             waitUntil(() -> emitter.resultVersions().size() == PUBLISHED);
@@ -226,7 +226,7 @@ class SseDropReachabilityTest {
             Long version = null;
             for (ResponseBodyEmitter.DataWithMediaType part : builder.build()) {
                 Object data = part.getData();
-                if (data instanceof CardEventPublisher.ResultChangeEvent event) { name = "result"; version = event.version(); }
+                if (data instanceof CardEventPublisher.StaffResultChangeEvent event) { name = "result"; version = event.version(); }
                 else if (data instanceof CardEventPublisher.CardChangeEvent event) { version = event.version(); }
                 // The builder emits its metadata as one String: "event:<name>\nid:<n>\nretry:<ms>\ndata:".
                 else if (data instanceof String text && text.startsWith("event:"))

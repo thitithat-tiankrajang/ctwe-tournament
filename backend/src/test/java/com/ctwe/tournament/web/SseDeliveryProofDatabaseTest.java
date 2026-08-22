@@ -241,6 +241,69 @@ class SseDeliveryProofDatabaseTest {
         }
     }
 
+    @Test
+    @DisplayName("the delivered event names the acting account and role, and agrees with the audit row")
+    void bLearnsWhoChangedTheResult() throws Exception {
+        Browser b = loggedIn(OBSERVER);
+        Stream stream = b.openStream("/api/cards/" + cardId + "/events");
+        try {
+            assertThat(stream.awaitEvents(1, 10)).isTrue();
+            Browser a = loggedIn(WRITER);
+            String match = matchIds().get(0);
+
+            assertThat(a.put("/api/cards/" + cardId + "/matches/" + match + "/result",
+                "{\"scoreOne\":611,\"scoreTwo\":410,\"editExisting\":false}").statusCode()).isEqualTo(200);
+            assertThat(stream.awaitEvents(2, 15)).isTrue();
+
+            String frame = stream.rawFor(match);
+            assertThat(frame).as("the result frame must reach B").isNotEmpty();
+
+            // Fix D: the popup has to name WHO moved the result, without a second request.
+            assertThat(frame).as("account name on the wire").contains("\"actor\":\"" + WRITER + "\"");
+            assertThat(frame).as("role, exactly as GET /api/auth/me reports it")
+                .contains("\"actorRoles\":[\"ROLE_DIRECTOR\"]");
+
+            // ...and it must be the SAME identity the write recorded, not a parallel notion of "user".
+            String submittedBy = jdbc.queryForObject(
+                "SELECT submitted_by FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
+                String.class, cardId, Integer.parseInt(match.substring(match.indexOf('t') + 1)));
+            assertThat(submittedBy).as("matches.submitted_by is the audit source of truth")
+                .isEqualTo(WRITER);
+
+            // audit_logs names the column `actor` too — the event field is not a parallel notion.
+            Integer auditRows = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE card_id = ? AND actor = ?",
+                Integer.class, cardId, WRITER);
+            assertThat(auditRows).as("audit_logs records the same account the event names")
+                .isGreaterThan(0);
+        } finally {
+            stream.close();
+        }
+    }
+
+    @Test
+    @DisplayName("the anonymous viewer stream never carries a staff account name")
+    void viewerStreamCarriesNoActor() throws Exception {
+        Browser b = loggedIn(OBSERVER);
+        Stream stream = b.openStream("/api/cards/" + cardId + "/events");
+        try {
+            assertThat(stream.awaitEvents(1, 10)).isTrue();
+            Browser a = loggedIn(WRITER);
+            String match = matchIds().get(0);
+            assertThat(a.put("/api/cards/" + cardId + "/matches/" + match + "/result",
+                "{\"scoreOne\":455,\"scoreTwo\":300,\"editExisting\":false}").statusCode()).isEqualTo(200);
+            assertThat(stream.awaitEvents(2, 15)).isTrue();
+
+            // The PUBLIC stream for the same card: unpublished pairings mean no public result event
+            // is due, and whatever it does carry must never mention a staff account.
+            HttpResponse<String> publicCard = new Browser().get("/api/public/cards/" + cardId);
+            assertThat(publicCard.body()).as("the public projection must not leak the writer")
+                .doesNotContain(WRITER);
+        } finally {
+            stream.close();
+        }
+    }
+
     // ---------------------------------------------------------------- cookie-jar browser + SSE reader
 
     private Browser loggedIn(String username) throws Exception {
