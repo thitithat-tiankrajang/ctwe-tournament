@@ -74,7 +74,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | **P4** | UI primitives, concurrency warning, viewer view-picker | **CLOSED** — final gate PASS (`18_P4_CLOSURE.md`). D15/UX-F3, retract wording and the concurrent-draft warning all shipped, the last one only after an SSE proof gate it first FAILED forced three transport fixes (`16_`, `17_`) |
 | **P5** | Information architecture + URL state | **PARTIAL BY DECISION** — D21 (collapse unused sidebar folders) shipped and measured, 3 of 3 folders expanded → 1 of 3 (`19_P5_PARTIAL_CLOSURE.md`). **D16 and "URL state" declined**: D16 is a relocation with no measured problem, and URL state was never specified — the parts that mattered shipped in P3-C and the viewer hash |
 | **P6** | Performance + accessibility remainder | **CLOSED** — final gate PASS (`23_P6_CLOSURE.md`). 176 dead rules removed, an enforced 11px typography floor (`22_P6_TYPOGRAPHY_STANDARD.md`), D6 fixed in both halves, table semantics, and idle database work measured 55,440/day → **0** |
-| **P7** | Visual tokens | not started |
+| **P7** | Visual tokens | **CLOSED** — final gate PASS (`25_P7_CLOSURE.md`). A documented, test-enforced design system (`24_P7_DESIGN_SYSTEM.md`): tokens 31 → 84, colour leakage outside the token layer 117 → **58** distinct, raw `z-index` literals 12 → **0**, and one modal behaviour replacing five. The spacing, radius and weight scales were **declined on evidence** |
 
 ### P3 internal gates (must ship as separate commits)
 
@@ -151,5 +151,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | `21_P6_P7_PLAN.md` | The P6 + P7 plan, and the three claims it had to correct first |
 | `22_P6_TYPOGRAPHY_STANDARD.md` | **The typography standard.** Floor, scale, input rule, density rule |
 | `23_P6_CLOSURE.md` | **P6 closed.** Measurements, the D6 residual risk, what was deliberately not done |
+| `24_P7_DESIGN_SYSTEM.md` | **The design system.** Which token, which component, the overlay taxonomy, responsive rules, the accessibility floor |
+| `25_P7_CLOSURE.md` | **P7 closed.** What was built, what was declined and why, and the `DATABASE_PASSWORD` gate trap |
 | `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md` | B7, carved out — pre-existing, owner decision required |
 | `EVIDENCE.sha256` | Checksums of the frozen evidence set (`shasum -c`) |
