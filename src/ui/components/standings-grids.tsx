@@ -22,7 +22,7 @@ export function RankingGrid({ ranked, storageKey, resetKey, emptyText = "ไม�
     { key: "diff", label: "ผลต่างสะสม", min: 82, width: 96, align: "right", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
     { key: "wdl", label: "ชนะ / เสมอ / แพ้", min: 100, width: 142, align: "center", value: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}`, render: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}` },
   ];
-  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey={`${storageKey}:ranking-v3`} resetKey={resetKey} tableClassName="entry-grid--ranking" emptyText={emptyText} onRowClick={onRowClick ? (row) => onRowClick(row.player) : undefined} rowClassName={activeId ? (row) => row.player.id === activeId ? "egrid-row--active" : undefined : undefined} />;
+  return <DataGrid ariaLabel="ตารางอันดับ" columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey={`${storageKey}:ranking-v3`} resetKey={resetKey} tableClassName="entry-grid--ranking" emptyText={emptyText} onRowClick={onRowClick ? (row) => onRowClick(row.player) : undefined} rowClassName={activeId ? (row) => row.player.id === activeId ? "egrid-row--active" : undefined : undefined} />;
 }
 
 /** Pairing table (pair number, both players with a "พบกับ" divider) shared by every page. */
@@ -49,5 +49,5 @@ export function PairingGrid({ pairings, players, storageKey, resetKey, emptyText
     { key: "name2", label: "ชื่อ - นามสกุล", min: 120, width: 184, cellClassName: (pairing) => `cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`, value: (pairing) => fullName(pairing.playerTwoId), render: (pairing) => <span className="pairing-name-with-mark" title={fullName(pairing.playerTwoId)}><span>{fullName(pairing.playerTwoId)}</span>{pairing.playerTwoGibsonized && <span className="gibson-mark">GIB</span>}</span> },
     { key: "school2", label: "โรงเรียน/สถาบัน", min: 110, width: 174, cellClassName: "cell-person-school", value: (pairing) => playerOf(pairing.playerTwoId)?.school ?? "—", render: (pairing) => <span title={playerOf(pairing.playerTwoId)?.school}>{playerOf(pairing.playerTwoId)?.school ?? "—"}</span> },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} getRowElementId={rowIdPrefix ? (pairing) => `${rowIdPrefix}-${pairing.id}` : undefined} storageKey={storageKey} resetKey={resetKey} tableClassName="entry-grid--match" emptyText={emptyText} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
+  return <DataGrid ariaLabel="ตารางประกบคู่" columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} getRowElementId={rowIdPrefix ? (pairing) => `${rowIdPrefix}-${pairing.id}` : undefined} storageKey={storageKey} resetKey={resetKey} tableClassName="entry-grid--match" emptyText={emptyText} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }

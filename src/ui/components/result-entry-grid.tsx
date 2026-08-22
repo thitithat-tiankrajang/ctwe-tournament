@@ -707,7 +707,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
       )}
 
       <div className="entry-grid-scroll entry-grid-scroll--result-entry" ref={scrollRef}>
-        <table className="entry-grid entry-grid--match" style={{ width: totalWidth }}>
+        <table className="entry-grid entry-grid--match" style={{ width: totalWidth }} aria-label="กรอกผลการแข่งขัน">
           <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => ENTRY_FILTER_KEYS.includes(key),
             filterable: (key) => ENTRY_FILTER_KEYS.includes(key),
@@ -826,7 +826,7 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
 
   return (
     <div className="entry-grid-scroll" ref={scrollRef}>
-      <table className="entry-grid entry-grid--match" style={{ width: totalWidth }}>
+      <table className="entry-grid entry-grid--match" style={{ width: totalWidth }} aria-label="ผลการแข่งขัน">
         <GridHead columns={viewColumns} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => VIEW_FILTER_KEYS.includes(key),
             filterable: (key) => VIEW_FILTER_KEYS.includes(key),

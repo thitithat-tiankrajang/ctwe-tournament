@@ -232,7 +232,7 @@ export default function PlayersPage() {
           <div className="dense-table-meta"><strong>{filtered.length.toLocaleString("th-TH")}</strong> จาก {card.players.length.toLocaleString("th-TH")} คน · {registrationOpen ? "รายชื่อก่อนเริ่มการแข่งขัน" : "ผู้อำนวยการแก้ข้อมูลส่วนตัวได้"}</div>
           {/* Stat columns hide during registration — every value is still zero and only adds noise. */}
           {filtered.length === 0 ? <div className="panel"><EmptyState icon={<Users size={24} />} title="ไม่พบผู้เล่น" description={registrationOpen ? "เพิ่มผู้เล่นคนแรกจากฟอร์มด้านบน" : "ลองล้างคำค้นหา"} /></div> : (
-            <div className="dense-table-wrap player-review-table"><table className="data-table dense-player-table"><thead><tr><th className="numeric">ที่นั่ง</th><th>รหัส</th><th>ชื่อ-นามสกุล</th><th>โรงเรียน/สถาบัน</th>{!registrationOpen && <><th className="numeric">คะแนนสะสม</th><th className="numeric">ชนะ</th><th className="numeric">เสมอ</th><th className="numeric">แพ้</th><th className="numeric">ผลต่างสะสม</th></>}<th>จัดการ</th></tr></thead><tbody>{filtered.map((player) => {
+            <div className="dense-table-wrap player-review-table"><table className="data-table dense-player-table" aria-label="ตรวจทานรายชื่อนักกีฬาที่นำเข้า"><thead><tr><th scope="col" className="numeric">ที่นั่ง</th><th scope="col">รหัส</th><th scope="col">ชื่อ-นามสกุล</th><th scope="col">โรงเรียน/สถาบัน</th>{!registrationOpen && <><th scope="col" className="numeric">คะแนนสะสม</th><th scope="col" className="numeric">ชนะ</th><th scope="col" className="numeric">เสมอ</th><th scope="col" className="numeric">แพ้</th><th scope="col" className="numeric">ผลต่างสะสม</th></>}<th scope="col">จัดการ</th></tr></thead><tbody>{filtered.map((player) => {
               const editing = editingId === player.id;
               return <tr key={player.id} className={editing ? "player-row--editing" : undefined}>
                 <td className="numeric rank-cell">{rankIndex.get(player.id)}</td>
@@ -249,6 +249,7 @@ export default function PlayersPage() {
         <div className="panel"><EmptyState icon={<Users size={24} />} title="ยังไม่มีผู้เล่น" description="รายชื่อจะปรากฏหลังผู้อำนวยการเพิ่มผู้เล่น" /></div>
       ) : (
         <DataGrid
+          ariaLabel="รายชื่อนักกีฬา"
           columns={registrationOpen ? rankingColumns.filter((column) => !["wp", "diff", "wdl"].includes(column.key)) : rankingColumns}
           rows={ranked.map((player, index) => ({ player, rank: index + 1 }))}
           getRowKey={(row) => row.player.id}

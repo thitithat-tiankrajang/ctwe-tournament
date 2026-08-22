@@ -81,8 +81,8 @@ export function FinalRoundBoard({ card, readOnly = false, canManage = false, onS
       <Panel title="สรุปผลรอบชิงชนะเลิศ" description={card.finalType === "CHAMPION_AND_THIRD" ? "ชิงที่ 1 และ 3 — summary เป็นค่าที่เจ้าหน้าที่กรอกเอง" : "ชิงที่ 1 — summary เป็นค่าที่เจ้าหน้าที่กรอกเอง"}>
         <div className="panel-padding">
           {placement.length === 0 ? <p className="muted">ยังไม่ได้สรุปผู้ชนะของคู่ชิง</p> : (
-            <table className="data-table final-summary">
-              <thead><tr><th className="numeric">อันดับ</th><th>ผู้เล่น</th><th className="numeric">ชนะ</th><th className="numeric">แพ้</th><th className="numeric">Total diff</th></tr></thead>
+            <table className="data-table final-summary" aria-label="สรุปผลรอบชิงชนะเลิศ">
+              <thead><tr><th scope="col" className="numeric">อันดับ</th><th scope="col">ผู้เล่น</th><th scope="col" className="numeric">ชนะ</th><th scope="col" className="numeric">แพ้</th><th scope="col" className="numeric">Total diff</th></tr></thead>
               <tbody>{placement.map((entry) => (
                 <tr key={entry.place}>
                   <td className="numeric"><Badge tone={entry.place === 1 ? "success" : "info"}>ที่ {entry.place}</Badge></td>
@@ -203,9 +203,9 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
   return (
     <Panel title={slotTitle(slot.slot)} description={`${name(slot.playerOneId)}  พบ  ${name(slot.playerTwoId)}`}>
       <div className="final-slot">
-        <table className="final-slot-table">
+        <table className="final-slot-table" aria-label={`ผลรายเกม ${slotTitle(slot.slot)}`}>
           <thead>
-            <tr><th>เกม</th><th>{playerHeader(slot.playerOneId)}</th><th>{playerHeader(slot.playerTwoId)}</th><th>ผลเกม</th>{editable && <th>บันทึก</th>}</tr>
+            <tr><th scope="col">เกม</th><th scope="col">{playerHeader(slot.playerOneId)}</th><th scope="col">{playerHeader(slot.playerTwoId)}</th><th scope="col">ผลเกม</th>{editable && <th scope="col">บันทึก</th>}</tr>
           </thead>
           <tbody>
             {slot.games.map((game) => {

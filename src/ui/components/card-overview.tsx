@@ -85,7 +85,7 @@ function RankingTable({ players, rankingPositions, selectedId, onPlayerClick, re
     { key: "wp", label: "คะแนนสะสม", min: 76, width: 90, align: "center", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
     { key: "diff", label: "ผลต่างสะสม", min: 82, width: 96, align: "center", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
   ];
-  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" emptyText="ไม่พบผู้เล่นตามตัวกรอง" resizableColumns={resizableColumns} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
+  return <DataGrid ariaLabel="ตารางอันดับ" columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:ranking:v3" tableClassName="entry-grid--ranking" emptyText="ไม่พบผู้เล่นตามตัวกรอง" resizableColumns={resizableColumns} onRowClick={onPlayerClick ? (row) => onPlayerClick(row.player) : undefined} rowClassName={selectedId ? (row) => row.player.id === selectedId ? "egrid-row--active" : undefined : undefined} />;
 }
 
 /**
@@ -103,7 +103,7 @@ function FinalResultsList({ standings, onPlayerClick, resizableColumns }: {
     { key: "name", label: "ชื่อ - นามสกุล", min: 140, width: 300, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
     { key: "school", label: "โรงเรียน/สถาบัน", min: 140, width: 320, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
   ];
-  return <DataGrid columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:final-result" tableClassName="entry-grid--ranking" emptyText="ยังไม่มีผลการแข่งขัน" resizableColumns={resizableColumns} onRowClick={(row) => onPlayerClick(row.player.id)} />;
+  return <DataGrid ariaLabel="ผลรอบชิงชนะเลิศ" columns={columns} rows={rows} getRowKey={({ player }) => player.id} storageKey="overview:final-result" tableClassName="entry-grid--ranking" emptyText="ยังไม่มีผลการแข่งขัน" resizableColumns={resizableColumns} onRowClick={(row) => onPlayerClick(row.player.id)} />;
 }
 
 function PairingGrid({ pairings, players, resizableColumns }: { pairings: Pairing[]; players: Map<string, Player>; resizableColumns: boolean }) {
@@ -117,7 +117,7 @@ function PairingGrid({ pairings, players, resizableColumns }: { pairings: Pairin
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
     { key: "name2", label: "นักกีฬา", min: 150, width: 300, value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} gibsonized={pairing.playerTwoGibsonized} /> },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
+  return <DataGrid ariaLabel="ตารางประกบคู่" columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey="overview:pairing" tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
 function ResultTable({ pairings, players, storageKey, resizableColumns }: { pairings: Pairing[]; players: Map<string, Player>; storageKey: string; resizableColumns: boolean }) {
@@ -142,7 +142,7 @@ function ResultTable({ pairings, players, storageKey, resizableColumns }: { pair
     { key: "score", label: "คะแนน", min: 36, width: 68, fitContent: true, align: "center", cellClassName: "cell-score", value: (pairing) => scoreText(pairing), filterable: false, render: (pairing) => scoreText(pairing) },
     { key: "diff", label: "ผลต่าง", min: 56, width: 68, align: "center", cellClassName: (pairing) => `cell-diff cell-diff--${pairing.resultType === "PENALTY" ? "penalty" : "win"}`, value: (pairing) => diffOf(pairing) ?? -1, filterable: false, render: (pairing) => diffText(pairing) },
   ];
-  return <DataGrid columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
+  return <DataGrid ariaLabel="ตารางผลการแข่งขัน" columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" emptyText="ไม่พบคู่ตามตัวกรอง" resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
 
 function FinalHistoryDialog({ slot, players, onClose }: { slot: FinalSlot; players: Map<string, Player>; onClose: () => void }) {
@@ -163,8 +163,8 @@ function FinalHistoryDialog({ slot, players, onClose }: { slot: FinalSlot; playe
           <strong>{name(slot.playerOneId)}</strong><span>พบ</span><strong>{name(slot.playerTwoId)}</strong>
           <small>{school(slot.playerOneId)} · {school(slot.playerTwoId)}</small>
         </div>
-        <table className="data-table final-history-table">
-          <thead><tr><th>เกม</th><th className="numeric">คะแนน</th><th>ผู้ชนะเกม</th><th className="numeric">diff</th></tr></thead>
+        <table className="data-table final-history-table" aria-label="ประวัติเกมรอบชิงชนะเลิศ">
+          <thead><tr><th scope="col">เกม</th><th scope="col" className="numeric">คะแนน</th><th scope="col">ผู้ชนะเกม</th><th scope="col" className="numeric">diff</th></tr></thead>
           <tbody>
             {slot.games.map((game) => (
               <tr key={game.gameIndex}>

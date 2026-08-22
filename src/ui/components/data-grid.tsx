@@ -202,7 +202,7 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
             const filterActive = (excel.filters[column.key]?.length ?? 0) > 0
               || Boolean(excel.textFilters[column.key]);
             return (
-              <th key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}${filterActive ? " egrid-th--filtered" : ""}${sorted ? " egrid-th--sorted" : ""}${excel.openKey === column.key ? " egrid-th--popup" : ""}`}>
+              <th scope="col" key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}${filterActive ? " egrid-th--filtered" : ""}${sorted ? " egrid-th--sorted" : ""}${excel.openKey === column.key ? " egrid-th--popup" : ""}`}>
                 <div className="egrid-th-bar">
                   {excel.editingKey === column.key ? (
                     <input
@@ -269,7 +269,7 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
             );
           }
           return (
-            <th key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}`}>
+            <th scope="col" key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}`}>
               <span className="egrid-th__label">{column.label}</span>
               {columnFilters?.[column.key] ? <span className="egrid-th__filterwrap">{columnFilters[column.key]}</span> : null}
               {resizer}
@@ -448,7 +448,7 @@ export function ColumnFilterDropdown({ label, values, selected, anchor, filterab
 }
 
 /** Generic Excel-style grid: responsive columns, optional resizing, and multi-field filters. */
-export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, resetKey, filterResetKey, rowClassName, tableClassName = "", emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, onRowClick, onFilterActiveChange }: {
+export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, resetKey, filterResetKey, rowClassName, tableClassName = "", ariaLabel, emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, onRowClick, onFilterActiveChange }: {
   columns: DataColumn<T>[];
   rows: T[];
   getRowKey: (row: T) => string;
@@ -459,6 +459,9 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
   filterResetKey?: number;
   rowClassName?: (row: T) => string | undefined;
   tableClassName?: string;
+  /** Names the table for assistive tech. Every grid is a different dataset; without it a screen
+   *  reader announces four identical "table"s on the overview and cannot tell them apart. */
+  ariaLabel?: string;
   emptyText?: string;
   inlineClear?: boolean;
   resizableColumns?: boolean;
@@ -524,7 +527,7 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
         </div>
       </div>
       <div className="entry-grid-scroll" ref={scrollRef}>
-        <table className={`entry-grid${tableClassName ? ` ${tableClassName}` : ""}`} style={{ width: totalWidth }}>
+        <table className={`entry-grid${tableClassName ? ` ${tableClassName}` : ""}`} style={{ width: totalWidth }} aria-label={ariaLabel}>
           <GridHead columns={columns} colWidths={colWidths} startResize={startResize} resizable={resizableColumns} excel={{
             sortable: (key) => { const column = colByKey.get(key); return Boolean(column?.value) && (column?.sortable ?? true); },
             filterable: (key) => { const column = colByKey.get(key); return Boolean(column?.value) && (column?.filterable ?? true); },
