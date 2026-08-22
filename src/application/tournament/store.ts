@@ -251,12 +251,47 @@ function publicSummaryCard(summary: PublicCardSummary): TournamentCard {
   };
 }
 
+/** The backend's discriminator for a wrong re-authentication password. */
+export const BAD_PASSWORD = "BAD_PASSWORD";
+
+/**
+ * A failed API response, carrying what a caller needs in order to react without re-reading a body
+ * that can only be read once.
+ *
+ * `code` is the discriminator, **never** the status. A wrong confirmation password and a rejected
+ * CSRF token are both `403`; only the former carries `BAD_PASSWORD`, because only it is answered by
+ * the backend's own handler. Branching on `403` alone would report an expired CSRF token as a typo.
+ *
+ * `message` is unchanged from what this function has always returned, so every existing
+ * `error.message` consumer keeps working.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** True when `error` is the backend reporting a mistyped confirmation password, and nothing else. */
+export function isBadPassword(error: unknown): boolean {
+  return error instanceof ApiError && error.code === BAD_PASSWORD;
+}
+
 async function readError(response: Response) {
   try {
-    const payload = await response.json() as { error?: string; message?: string };
-    return payload.error ?? payload.message ?? `Request failed (${response.status})`;
+    const payload = await response.json() as { error?: string; message?: string; code?: string };
+    return new ApiError(
+      payload.error ?? payload.message ?? `Request failed (${response.status})`,
+      response.status,
+      payload.code,
+    );
   } catch {
-    return `Request failed (${response.status})`;
+    return new ApiError(`Request failed (${response.status})`, response.status);
   }
 }
 
@@ -277,7 +312,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
 
   const fetchAuthState = async () => {
     const response = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
-    if (!response.ok) throw new Error(await readError(response));
+    if (!response.ok) throw await readError(response);
     return response.json() as Promise<AuthState>;
   };
 
@@ -292,8 +327,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     const response = await fetch(path, { ...init, headers, credentials: "same-origin", cache: "no-store" });
     if (!response.ok) {
       if (response.status === 401 && (hasStaffAccess(get().auth) || hasStaffSessionHint())) {
-        // Several sensitive mutations intentionally return 401 for a wrong confirmation password,
-        // so confirm the actual session separately before deciding to redirect.
+        // A 401 here is a genuine no-session case: a wrong confirmation password is answered 403 +
+        // BAD_PASSWORD by the backend and never reaches this branch. Confirm the session separately
+        // anyway, because an offline auth check is not evidence of logout.
         let confirmedAuth: AuthState | null = null;
         try {
           confirmedAuth = await fetchAuthState();
@@ -304,9 +340,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         }
         if (confirmedAuth) set({ auth: confirmedAuth });
       }
-      const message = await readError(response);
-      set({ error: message });
-      throw new Error(message);
+      const failure = await readError(response);
+      set({ error: failure.message });
+      throw failure;
     }
     if (response.status === 204) return undefined as T;
     const body = await response.text();
@@ -327,7 +363,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
   const fetchPublicCatalog = async (versionToken?: string) => {
     const suffix = versionToken ? `?v=${encodeURIComponent(versionToken)}` : "";
     const response = await fetch(publicApiUrl(`/api/public/cards${suffix}`), { credentials: "omit" });
-    if (!response.ok) throw new Error(await readError(response));
+    if (!response.ok) throw await readError(response);
     return response.json() as Promise<PublicCardSummary[]>;
   };
 
@@ -352,7 +388,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       publicApiUrl(`/api/public/tournaments/${encodeURIComponent(token)}/bundle`),
       { credentials: "omit" },
     );
-    if (!response.ok) throw new Error(await readError(response));
+    if (!response.ok) throw await readError(response);
     return response.json() as Promise<PublicTournamentBundle>;
   };
 
@@ -674,7 +710,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
               expireBackOfficeSession();
               return;
             }
-            throw new Error(await readError(response));
+            throw await readError(response);
           }
           cards = await response.json() as TournamentCard[];
         } else if (scopeToken) {
@@ -878,12 +914,12 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     // ---- public (anonymous) link-scoped entry ----
     async loadPublicTournaments() {
       const response = await fetch(publicApiUrl("/api/public/tournaments"), { credentials: "omit", cache: "no-store" });
-      if (!response.ok) throw new Error(await readError(response));
+      if (!response.ok) throw await readError(response);
       return response.json() as Promise<PublicTournamentSummary[]>;
     },
     async loadPublicArchives() {
       const response = await fetch(publicApiUrl("/api/public/archives"), { credentials: "omit", cache: "no-store" });
-      if (!response.ok) throw new Error(await readError(response));
+      if (!response.ok) throw await readError(response);
       return response.json() as Promise<TournamentArchive[]>;
     },
     async enterPublicTournament(token) {
