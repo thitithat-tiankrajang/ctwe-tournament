@@ -21,6 +21,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,7 +49,20 @@ public class CardEventPublisher {
     private static final long STREAM_TIMEOUT_MS = 45 * 60 * 1000L;
     /** Fast fixed tick; the actual beat cadence is the runtime-configured heartbeat interval. */
     private static final long HEARTBEAT_TICK_MS = 5_000L;
+    /** Queued socket writes. Deep enough that overflow means a stalled reader, not ordinary load. */
+    private static final int SEND_QUEUE_DEPTH = 4096;
 
+    /**
+     * Streams that missed at least one send and are owed a resync hint (P4 SSE proof gate, fix B).
+     *
+     * <p>Keyed by the emitter, whose hash is its identity and therefore stable. An earlier cut keyed
+     * a Set by a record holding the subscribers MAP, and the debt became unfindable the instant
+     * {@code remove()} dropped the emitter: a ConcurrentHashMap hashes by CONTENT, so mutating it
+     * moved the key's bucket. The value below is only ever a value, so its hash never matters.
+     */
+    private final Map<SseEmitter, ResyncTarget> resyncDebt = new ConcurrentHashMap<>();
+    /** Authoritative current version per live stream, captured at subscribe, for the resync hint. */
+    private final Map<SseEmitter, LongSupplier> emitterVersions = new ConcurrentHashMap<>();
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> publicEmitters = new ConcurrentHashMap<>();
     /** Keyed by tournament id: the viewer card LIST channel (card created/updated/removed facts). */
@@ -78,15 +92,26 @@ public class CardEventPublisher {
     }
 
     private static ExecutorService newSendExecutor() {
+        return newSendExecutor(SEND_QUEUE_DEPTH);
+    }
+
+    /**
+     * Package-private so a test can reproduce overflow at a workable depth against the REAL policy
+     * rather than a look-alike. Production ships {@link #SEND_QUEUE_DEPTH}; the failure mode a
+     * smaller queue exposes is identical, because the trigger is a stalled socket, not volume.
+     */
+    static ExecutorService newSendExecutor(int queueDepth) {
         ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 30, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(4096),
+            new LinkedBlockingQueue<>(queueDepth),
             runnable -> {
                 Thread thread = new Thread(runnable, "sse-send");
                 thread.setDaemon(true);
                 return thread;
             },
-            // Under overload keep the newest events flowing; stale hints are superseded anyway.
-            new ThreadPoolExecutor.DiscardOldestPolicy());
+            // Under overload keep the newest events flowing — but never SILENTLY. DiscardOldestPolicy
+            // was correct for change hints and wrong for `result`, which carries a delta: dropping one
+            // left the subscriber permanently and undetectably stale (P4 SSE proof gate).
+            new RecordDiscardedAsResyncDebt());
         executor.allowCoreThreadTimeOut(true);
         return executor;
     }
@@ -129,6 +154,9 @@ public class CardEventPublisher {
         SseEmitter emitter;
         try {
             emitter = createEmitter();
+            // Captured so a resync hint can carry the AUTHORITATIVE version rather than a guess:
+            // both clients decide whether to refetch by comparing it against what they hold.
+            emitterVersions.put(emitter, currentVersion);
             subscribers.computeIfAbsent(cardId, ignored -> new CopyOnWriteArrayList<>()).add(emitter);
         } catch (RuntimeException error) {
             streams.decrementAndGet();
@@ -266,6 +294,9 @@ public class CardEventPublisher {
      */
     @Scheduled(fixedDelay = HEARTBEAT_TICK_MS)
     public void heartbeat() {
+        // Every tick, not on the heartbeat interval: an owed resync bounds how long a subscriber can
+        // sit on state it does not know is stale, so it must not inherit the slower beat cadence.
+        flushResyncDebt();
         long now = System.currentTimeMillis();
         if (now - lastHeartbeatAt < settings.get().heartbeatIntervalMs()) return;
         lastHeartbeatAt = now;
@@ -299,8 +330,95 @@ public class CardEventPublisher {
         long version,
         Object event
     ) {
-        long reconnectDelay = settings.get().reconnectDelayMs();
-        enqueue(() -> {
+        enqueue(new SendTask(subscribers, cardId, emitter, name, version, event,
+            settings.get().reconnectDelayMs(), null));
+    }
+
+    private void enqueue(Runnable task) {
+        try {
+            sendExecutor.execute(task);
+        } catch (RejectedExecutionException rejected) {
+            // Saturated or shutting down. A SendTask records what it missed so the next tick can tell
+            // the subscriber to refetch; anything else here is a heartbeat, which is safe to drop.
+            if (task instanceof SendTask send) send.oweResync();
+        }
+    }
+
+    /**
+     * Tell every stream that missed a send to refetch (P4 SSE proof gate, fix B).
+     *
+     * <p>This is the "downgrade an overflowed delta to a supersedable hint" step. The hint carries
+     * the stream's AUTHORITATIVE current version, so each client applies its own existing rule —
+     * staff refetch when it exceeds what they hold, viewers likewise — and a subscriber that happens
+     * to be up to date does nothing. Cheap, idempotent, and safe to repeat.
+     *
+     * <p>The debt is cleared only once the hint has actually been written. If the hint is itself
+     * discarded, the debt survives and the next tick tries again, so saturation delays recovery
+     * rather than cancelling it.
+     */
+    void flushResyncDebt() {
+        if (resyncDebt.isEmpty()) return;
+        for (Map.Entry<SseEmitter, ResyncTarget> owed : Map.copyOf(resyncDebt).entrySet()) {
+            SseEmitter emitter = owed.getKey();
+            ResyncTarget target = owed.getValue();
+            CopyOnWriteArrayList<SseEmitter> live = target.subscribers().get(target.key());
+            if (live == null || !live.contains(emitter)) {
+                resyncDebt.remove(emitter);
+                continue;
+            }
+            LongSupplier version = emitterVersions.get(emitter);
+            if (version == null) {
+                resyncDebt.remove(emitter);
+                continue;
+            }
+            long current;
+            try {
+                current = version.getAsLong();
+            } catch (RuntimeException unavailable) {
+                continue; // try again next tick rather than dropping the debt
+            }
+            // Staff listen for "card"; viewers for "message". Both treat it as "something moved".
+            String name = target.subscribers() == emitters ? "card" : "message";
+            enqueue(new SendTask(target.subscribers(), target.key(), emitter, name, current,
+                new CardChangeEvent(target.key(), current, Instant.now()),
+                settings.get().reconnectDelayMs(), () -> resyncDebt.remove(emitter)));
+        }
+    }
+
+    /** Test seam: how many streams are currently owed a resync hint. */
+    int owedResyncCount() { return resyncDebt.size(); }
+
+    /** Where a stream that missed an event lives, so the hint can be addressed back to it. */
+    private record ResyncTarget(Map<UUID, CopyOnWriteArrayList<SseEmitter>> subscribers, UUID key) {}
+
+    /**
+     * One queued socket write. It is a named type rather than a lambda precisely so the executor's
+     * rejection handler can tell a droppable heartbeat from a delivery that must not vanish quietly.
+     */
+    private final class SendTask implements Runnable {
+        private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> subscribers;
+        private final UUID key;
+        private final SseEmitter emitter;
+        private final String name;
+        private final long version;
+        private final Object event;
+        private final long reconnectDelay;
+        private final Runnable onSent;
+
+        SendTask(Map<UUID, CopyOnWriteArrayList<SseEmitter>> subscribers, UUID key, SseEmitter emitter,
+                 String name, long version, Object event, long reconnectDelay, Runnable onSent) {
+            this.subscribers = subscribers;
+            this.key = key;
+            this.emitter = emitter;
+            this.name = name;
+            this.version = version;
+            this.event = event;
+            this.reconnectDelay = reconnectDelay;
+            this.onSent = onSent;
+        }
+
+        @Override
+        public void run() {
             try {
                 emitter.send(SseEmitter.event()
                     .name(name)
@@ -308,16 +426,39 @@ public class CardEventPublisher {
                     .reconnectTime(reconnectDelay)
                     .data(event));
             } catch (IOException | RuntimeException error) {
-                remove(subscribers, cardId, emitter);
+                // The socket is gone. remove() drops the debt too: the browser reconnects and the
+                // `connected` event resyncs it, which is a stronger recovery than a hint.
+                remove(subscribers, key, emitter);
+                return;
             }
-        });
+            if (onSent != null) onSent.run();
+        }
+
+        /** Record that this stream missed an event, so the next tick tells it to refetch. */
+        void oweResync() {
+            // The tournament list stream recovers on its own: usePublicBundleSync refetches the
+            // bundle on reconnect and on tab-visible wake, so it needs no per-event debt.
+            if (subscribers == tournamentEmitters) return;
+            resyncDebt.putIfAbsent(emitter, new ResyncTarget(subscribers, key));
+        }
     }
 
-    private void enqueue(Runnable task) {
-        try {
-            sendExecutor.execute(task);
-        } catch (RejectedExecutionException rejected) {
-            // Shutting down or saturated: EventSource reconnect will receive the current version.
+    /**
+     * DiscardOldestPolicy, but it tells the victim. The stock policy silently evicts the queue head,
+     * which for a `result` event means a persisted delta disappears while the stream stays open — no
+     * error, no completion, so EventSource never reconnects and the client is stale forever.
+     */
+    private static final class RecordDiscardedAsResyncDebt implements RejectedExecutionHandler {
+        @Override
+        public void rejectedExecution(Runnable task, ThreadPoolExecutor executor) {
+            if (executor.isShutdown()) return;
+            Runnable discarded = executor.getQueue().poll();
+            if (discarded instanceof SendTask send) send.oweResync();
+            try {
+                executor.execute(task);
+            } catch (RejectedExecutionException stillFull) {
+                if (task instanceof SendTask send) send.oweResync();
+            }
         }
     }
 
@@ -328,6 +469,9 @@ public class CardEventPublisher {
     ) {
         CopyOnWriteArrayList<SseEmitter> cardEmitters = subscribers.get(cardId);
         if (cardEmitters == null || !cardEmitters.remove(emitter)) return;
+        emitterVersions.remove(emitter);
+        // A stream that is gone owes nothing: the browser reconnects and `connected` resyncs it.
+        resyncDebt.remove(emitter);
         counterOf(subscribers).decrementAndGet();
         if (cardEmitters.isEmpty()) subscribers.remove(cardId, cardEmitters);
     }
