@@ -17,6 +17,7 @@ import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
 import { DocumentDownloadPanel } from "@/ui/components/document-download-panel";
 import { PlayerHistoryTable } from "@/ui/components/player-history-table";
+import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 import { SelectMenu } from "@/ui/components/select-menu";
 import { stageLabels } from "@/ui/components/stage-info";
 import { OverviewRecordFilter, type OverviewRecordFilterValue } from "@/ui/components/overview-record-filter";
@@ -152,11 +153,12 @@ function FinalHistoryDialog({ slot, players, onClose }: { slot: FinalSlot; playe
   };
   const school = (id: string) => players.get(id)?.school ?? "—";
   const winnerName = slot.winnerId ? name(slot.winnerId) : "ยังไม่สรุป";
+  const dialog = useModalDialog({ open: true, onDismiss: onClose });
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="history-table-dialog final-history-dialog" role="dialog" aria-modal="true" aria-labelledby="final-history-title" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
+      <section ref={dialog.ref as React.RefObject<HTMLElement>} tabIndex={-1} className="history-table-dialog final-history-dialog" role="dialog" aria-modal="true" aria-labelledby={dialog.titleId} onMouseDown={(event) => event.stopPropagation()}>
         <header>
-          <div><span>ประวัติรอบชิง</span><h2 id="final-history-title">{slot.slot === 0 ? "คู่ชิงอันดับ 1 - 2" : "คู่ชิงอันดับ 3 - 4"}</h2></div>
+          <div><span>ประวัติรอบชิง</span><h2 id={dialog.titleId}>{slot.slot === 0 ? "คู่ชิงอันดับ 1 - 2" : "คู่ชิงอันดับ 3 - 4"}</h2></div>
           <button type="button" className="confirm-dialog__close" aria-label="ปิดประวัติรอบชิง" onClick={onClose}><X size={18} /></button>
         </header>
         <div className="final-history-matchup">
@@ -377,6 +379,9 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     result: "Result จะเปิดให้ดูเมื่อมีการบันทึกคะแนนคู่แรกของเกมนี้",
   };
   const historyPlayer = historyPlayerId ? players.get(historyPlayerId) : undefined;
+  // The player-history dialog is rendered inline further down, so its modal behaviour is declared
+  // here where hooks are unconditional. It is inert while historyPlayerId is null.
+  const historyDialog = useModalDialog({ open: historyPlayerId !== null, onDismiss: () => setHistoryPlayerId(null) });
   const historyUpToGame = selectedResultSummary ? Number.MAX_SAFE_INTEGER : selectedGame;
   const historyCard = { ...rankingCard, snapshots: publishedSnapshots.filter((snapshot) => Math.max(...snapshot.gameNumbers) <= historyUpToGame) };
   const final = card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED";
@@ -577,10 +582,10 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
       )}
 
       {historyPlayer && (
-        <div className="dialog-backdrop" role="presentation" onMouseDown={() => setHistoryPlayerId(null)}>
-          <section className="history-table-dialog" role="dialog" aria-modal="true" aria-labelledby="player-history-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="dialog-backdrop" role="presentation" onMouseDown={historyDialog.onBackdropMouseDown}>
+          <section ref={historyDialog.ref as React.RefObject<HTMLElement>} tabIndex={-1} className="history-table-dialog" role="dialog" aria-modal="true" aria-labelledby={historyDialog.titleId} onMouseDown={(event) => event.stopPropagation()}>
             <header>
-              <div><span>ประวัติการแข่งขัน</span><h2 id="player-history-title">{historyPlayer.id} · {historyPlayer.firstName} {historyPlayer.lastName}</h2></div>
+              <div><span>ประวัติการแข่งขัน</span><h2 id={historyDialog.titleId}>{historyPlayer.id} · {historyPlayer.firstName} {historyPlayer.lastName}</h2></div>
               <button type="button" className="confirm-dialog__close" aria-label="ปิดประวัติ" onClick={() => setHistoryPlayerId(null)}><X size={18} /></button>
             </header>
             <div className="history-table-dialog__summary">{historyPlayer.school} · แสดงประวัติถึงเกม {selectedGame}</div>
