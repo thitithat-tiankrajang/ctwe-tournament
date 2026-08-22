@@ -73,7 +73,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | **P3** | Data layer, summaries consumption, URL scope authority, query layer, selectors | **CLOSED** — all six chunks A/B/C/D1/D2/E, final gate PASS (`15_P3_CLOSURE.md`); /admin 15→10, refocus 7→1 and 4→1, card list 9,592→854 B, **shell renders per SSE result 1→0**. D2's query migration measured and declined; M1's ≤8-request target NOT met (needs backend batch or D3) |
 | **P4** | UI primitives, concurrency warning, viewer view-picker | **CLOSED** — final gate PASS (`18_P4_CLOSURE.md`). D15/UX-F3, retract wording and the concurrent-draft warning all shipped, the last one only after an SSE proof gate it first FAILED forced three transport fixes (`16_`, `17_`) |
 | **P5** | Information architecture + URL state | **PARTIAL BY DECISION** — D21 (collapse unused sidebar folders) shipped and measured, 3 of 3 folders expanded → 1 of 3 (`19_P5_PARTIAL_CLOSURE.md`). **D16 and "URL state" declined**: D16 is a relocation with no measured problem, and URL state was never specified — the parts that mattered shipped in P3-C and the viewer hash |
-| **P6** | Performance + accessibility remainder | not started |
+| **P6** | Performance + accessibility remainder | **CLOSED** — final gate PASS (`23_P6_CLOSURE.md`). 176 dead rules removed, an enforced 11px typography floor (`22_P6_TYPOGRAPHY_STANDARD.md`), D6 fixed in both halves, table semantics, and idle database work measured 55,440/day → **0** |
 | **P7** | Visual tokens | not started |
 
 ### P3 internal gates (must ship as separate commits)
@@ -127,7 +127,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | `shutdown-readiness` calls per admin page load, N tournaments | N+1 | 1 |
 | Password re-auth round trips | 2 (pre-flight + mutation) | 1 — **DONE, measured** (`12_P2_CLOSURE.md` §3) |
 | AppShell renders per SSE result event | 1 | 0 — **DONE, measured** (`14_P3_HANDOFF.md` §2 M7) |
-| Font sizes below 11px | 31 occurrences | 0 |
+| Font sizes below 11px | 31 occurrences (metric counted bare px only) | **RESTATED and MET** — the metric was blind to `clamp()`, where the worst cases lived (5.81px headers, 7.15px names at 375px). Replaced by the floor in `22_P6_TYPOGRAPHY_STANDARD.md`: **0** declarations can render below 11px at any viewport, enforced by `src/app/globals.test.ts` |
 
 ## 7. Document index
 
@@ -148,5 +148,8 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7
 | `12_P2_CLOSURE.md` | **P2 closed.** Final gate executed: re-auth 2 → 1 measured, Invariant D re-run, R6 duplicate characterised |
 | `13_P3_PLAN.md` | The P3 plan, derived from fresh measurement. Records that the UI/UX audit is already done |
 | `14_P3_HANDOFF.md` | **P3 partial.** Five and a half of six chunks, measured; the deferred query migration and the exact next action |
+| `21_P6_P7_PLAN.md` | The P6 + P7 plan, and the three claims it had to correct first |
+| `22_P6_TYPOGRAPHY_STANDARD.md` | **The typography standard.** Floor, scale, input rule, density rule |
+| `23_P6_CLOSURE.md` | **P6 closed.** Measurements, the D6 residual risk, what was deliberately not done |
 | `SECURITY-01_ANONYMOUS_CARD_EXPOSURE.md` | B7, carved out — pre-existing, owner decision required |
 | `EVIDENCE.sha256` | Checksums of the frozen evidence set (`shasum -c`) |
