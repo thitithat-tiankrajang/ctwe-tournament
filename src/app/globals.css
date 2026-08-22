@@ -1094,6 +1094,16 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .school-conflict .badge { margin-left: auto; white-space: nowrap; }
 .workflow-notice { align-items: center; }
 .workflow-notice > a { margin-left: auto; }
+/* D15/UX-F3: a publish announces itself here instead of switching the viewer's screen for them. */
+.overview-announcement { align-items: center; }
+.overview-announcement > p { margin: 0; }
+.overview-announcement-actions { align-items: center; display: flex; gap: 6px; margin-left: auto; }
+.overview-announcement-dismiss {
+  align-items: center; background: none; border: 0; border-radius: 4px; color: var(--muted);
+  cursor: pointer; display: flex; justify-content: center; min-height: 32px; min-width: 32px; padding: 0;
+}
+.overview-announcement-dismiss:hover { background: rgba(0, 0, 0, 0.06); color: inherit; }
+.overview-announcement-dismiss:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .podium-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 18px; }
 .podium-card { border: 1px solid var(--border); border-top: 5px solid #8b96a3; min-height: 150px; padding: 16px; }
 .podium-card--1 { background: #fff9e4; border-top-color: var(--yellow); }
@@ -1245,6 +1255,12 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   .swap-controls .button { grid-column: auto; }
   .workflow-notice { align-items: flex-start; }
   .workflow-notice > a { margin-left: 0; width: 100%; }
+  /* Phone: let the action drop onto its own line so the message gets the full width instead of
+     wrapping into a two-word column beside the button. The tap target grows to match. */
+  .overview-announcement { align-items: flex-start; flex-wrap: wrap; }
+  .overview-announcement > p { flex: 1 1 auto; min-width: 0; }
+  .overview-announcement-actions { flex-basis: 100%; margin-left: 0; }
+  .overview-announcement-actions > .button { flex: 1; justify-content: center; }
   .detail-row { grid-template-columns: 1fr; gap: 3px; }
   .player-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 7px; }
   .compact-field--range, .compact-field--wide { grid-column: 1 / -1; }

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ClipboardCheck, Hourglass, LockKeyhole, Trophy, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowRight, ClipboardCheck, Hourglass, LockKeyhole, Megaphone, Trophy, X } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, hasStaffAccess, isAdmin } from "@/domain/tournament/roles";
@@ -21,7 +21,7 @@ import { SelectMenu } from "@/ui/components/select-menu";
 import { stageLabels } from "@/ui/components/stage-info";
 import { OverviewRecordFilter, type OverviewRecordFilterValue } from "@/ui/components/overview-record-filter";
 
-type OverviewView = "ranking" | "pairing" | "result";
+export type OverviewView = "ranking" | "pairing" | "result";
 
 const publishedAtText = (iso: string) =>
   `เผยแพร่ผลเมื่อ ${new Date(iso).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}`;
@@ -200,7 +200,7 @@ function CrownBadge() {
  *   applied only when (re)entering the card — a result trickling in never yanks the viewer away
  *   from whatever they chose to look at.
  */
-function overviewViewState(card: TournamentCard | undefined): { forcedKey: string; forcedView: OverviewView; entryView: OverviewView } | null {
+function overviewViewState(card: TournamentCard | undefined): { forcedKey: string; forcedView: OverviewView; entryView: OverviewView; activeGame: number } | null {
   if (!card) return null;
   const visibleSnapshots = card.snapshots.filter((snapshot) =>
     Boolean(snapshot.confirmedAt)
@@ -210,12 +210,61 @@ function overviewViewState(card: TournamentCard | undefined): { forcedKey: strin
   const activeGame = latestGame > 0 ? latestGame : card.currentGame;
   const snapshot = visibleSnapshots.find((item) => overviewGames(item).includes(activeGame));
   if (!snapshot) return null;
-  if (snapshot.confirmedAt) return { forcedKey: `ranking:${activeGame}`, forcedView: "ranking", entryView: "ranking" };
+  if (snapshot.confirmedAt) return { forcedKey: `ranking:${activeGame}`, forcedView: "ranking", entryView: "ranking", activeGame };
   const currentPairings = overviewPairings(snapshot).filter((pairing) => (pairing.gameNumber ?? activeGame) === activeGame);
   // Loose != : an unscored pairing arrives with the score fields OMITTED (undefined), not null.
   const hasFirstResult = currentPairings.some((pairing) => pairing.scoreOne != null || pairing.scoreTwo != null);
-  return { forcedKey: `pairing:${activeGame}`, forcedView: "pairing", entryView: hasFirstResult ? "result" : "pairing" };
+  return { forcedKey: `pairing:${activeGame}`, forcedView: "pairing", entryView: hasFirstResult ? "result" : "pairing", activeGame };
 }
+
+/**
+ * True on phone-width screens (D15/UX-F3).
+ *
+ * `useSyncExternalStore` rather than an effect so the very first client render already has the right
+ * answer and hydration does not warn: the server snapshot is the desktop default, which is also the
+ * safe one — multi-select degrades to "you can open more than one panel", never to a lost view.
+ */
+function useNarrowViewport() {
+  return useSyncExternalStore(
+    (onChange) => {
+      const query = window.matchMedia(NARROW_VIEWPORT);
+      query.addEventListener("change", onChange);
+      return () => query.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(NARROW_VIEWPORT).matches,
+    () => false,
+  );
+}
+
+const NARROW_VIEWPORT = "(max-width: 768px)";
+
+/**
+ * What the view picker shows after tapping `view` (D15/UX-F3).
+ *
+ * Desktop keeps multi-select: the panels sit side by side, and comparing Pairing against Ranking is
+ * the whole reason a spectator opens both. A phone shows one panel per screenful, so "adding" a
+ * second only buries the first under a scroll — there, picking a view REPLACES the current one.
+ * Deselecting the only open view is allowed in both modes, so the tables can be collapsed away.
+ *
+ * Pure and exported so the rule is testable without a DOM; the component only supplies `narrow`.
+ */
+export function nextOverviewViews(
+  current: ReadonlySet<OverviewView>,
+  view: OverviewView,
+  narrow: boolean,
+): Set<OverviewView> {
+  if (narrow) return current.has(view) ? new Set<OverviewView>() : new Set<OverviewView>([view]);
+  const next = new Set(current);
+  if (next.has(view)) next.delete(view); else next.add(view);
+  return next;
+}
+
+/** What a publish announcement says. The viewer chooses to follow it; nothing moves on its own. */
+const announcementCopy: Record<OverviewView, (game: number) => { text: string; action: string }> = {
+  ranking: (game) => ({ text: `ประกาศอันดับของเกม ${game} แล้ว`, action: "ดูอันดับ" }),
+  pairing: (game) => ({ text: `ประกาศคู่แข่งขันของเกม ${game} แล้ว`, action: "ดูคู่แข่งขัน" }),
+  result: (game) => ({ text: `มีผลการแข่งขันใหม่ของเกม ${game}`, action: "ดูผล" }),
+};
 
 /** Read-only card overview (ranking / pairing / results) shared by /cards/[id] and the /tour viewer. */
 export function CardOverview({ cardId: id }: { cardId: string }) {
@@ -232,6 +281,9 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
   const [finalHistorySlot, setFinalHistorySlot] = useState<FinalSlot | null>(null);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [recordFilter, setRecordFilter] = useState<OverviewRecordFilterValue>({ mode: "player", playerIds: [], schools: [] });
+  /** A publish the viewer has been TOLD about but has not chosen to follow yet (D15/UX-F3). */
+  const [announcement, setAnnouncement] = useState<{ view: OverviewView; game: number } | null>(null);
+  const narrow = useNarrowViewport();
   const viewState = overviewViewState(card);
   const enteredCardRef = useRef<string | null>(null);
   const appliedForcedKeyRef = useRef<string | null>(null);
@@ -240,22 +292,29 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     setRecordFilter({ mode: "player", playerIds: [], schools: [] });
   }, [id]);
 
-  // Entering a card applies the entry default (Result once a first score exists); after that, only
-  // the big publishes steer the screen: pairing publish -> Pairing, ranking publish -> Ranking.
-  // A result being recorded mid-game deliberately never forces a view change. Steering happens only
-  // when forcedKey actually advances — a re-run with the same key (StrictMode double-invoke, an
-  // unrelated re-render) must not overwrite what the entry default or the visitor chose.
+  // Entering a card still applies the entry default (Result once a first score exists) — that is the
+  // opening state, not a jump.
+  //
+  // What a publish does has CHANGED (D15/UX-F3). It used to replace the viewer's selection outright:
+  // whatever you were reading was swapped for Pairing or Ranking the instant the director published.
+  // For a spectator following one player mid-table that is the screen being taken away, and it is
+  // worse on a phone where the swapped-in panel fills the viewport. A publish now raises a banner and
+  // the viewer decides. Nothing moves until they tap it.
+  //
+  // Still keyed on forcedKey advancing, so a re-run with the same key (StrictMode double-invoke, an
+  // unrelated re-render) neither re-announces nor disturbs the current selection.
   useEffect(() => {
     if (!viewState) return;
     if (enteredCardRef.current !== id) {
       enteredCardRef.current = id;
       appliedForcedKeyRef.current = viewState.forcedKey;
+      setAnnouncement(null);
       setViews(new Set<OverviewView>([viewState.entryView]));
       return;
     }
     if (appliedForcedKeyRef.current === viewState.forcedKey) return;
     appliedForcedKeyRef.current = viewState.forcedKey;
-    setViews(new Set<OverviewView>([viewState.forcedView]));
+    setAnnouncement({ view: viewState.forcedView, game: viewState.activeGame });
   }, [id, viewState?.forcedKey]);
 
   useEffect(() => {
@@ -328,15 +387,28 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
     .map((game) => ({ value: String(game), label: `เกม ${game}` }))
     .concat(hasFinalRound ? [{ value: "final", label: "รอบชิง" }] : [])
     .concat(final ? [{ value: "result", label: "ผลการแข่งขัน" }] : []);
+  // Desktop keeps multi-select: the panels sit side by side, and comparing Pairing against Ranking
+  // is the whole reason a spectator opens both. A phone shows one panel per screenful, so "adding" a
+  // second only buries the first under a scroll — there, picking a view REPLACES the current one
+  // (D15/UX-F3). Deselecting the only open view is allowed on both, so the tables can be collapsed.
   const toggleView = (view: OverviewView) => {
     const opening = !views.has(view);
-    setViews((prev) => {
-      const next = new Set(prev);
-      if (next.has(view)) next.delete(view); else next.add(view);
-      return next;
-    });
-    if (opening && window.matchMedia("(max-width: 768px)").matches) {
+    setViews((prev) => nextOverviewViews(prev, view, narrow));
+    // Opening the view a banner was offering answers it; leaving it up would be nagging.
+    if (opening && announcement?.view === view) setAnnouncement(null);
+    if (opening && narrow) {
       window.setTimeout(() => document.getElementById(`overview-view-${view}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    }
+  };
+
+  /** Follow a publish announcement: go to the game it is about, open its view, clear the banner. */
+  const followAnnouncement = () => {
+    if (!announcement) return;
+    setHistoryGame(null);
+    setViews((prev) => narrow ? new Set<OverviewView>([announcement.view]) : new Set(prev).add(announcement.view));
+    setAnnouncement(null);
+    if (narrow) {
+      window.setTimeout(() => document.getElementById(`overview-view-${announcement.view}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     }
   };
   const selectRankingPlayer = (player: Player) => {
@@ -370,12 +442,28 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
                     />
                   </div>
                 </div>
-                {!selectedFinal && !selectedResultSummary && <div className="segmented overview-view-picker" role="group" aria-label="เลือกมุมมอง">
+                {/*
+                  The roles follow the behaviour rather than the other way round: a phone picks ONE
+                  view, which is a radio group, while desktop toggles several, which is aria-pressed.
+                  Announcing a multi-select as radios (or the reverse) is exactly the mismatch UX-F3
+                  filed — "a segmented picker that is really multi-select".
+                */}
+                {!selectedFinal && !selectedResultSummary && <div className="segmented overview-view-picker" role={narrow ? "radiogroup" : "group"} aria-label="เลือกมุมมอง">
                   {(["ranking", "pairing", "result"] as const).map((view) => {
                     const unavailable = viewUnavailable[view];
                     const active = views.has(view) && !unavailable;
+                    const label = view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result";
                     return (
-                      <button key={view} type="button" className={`segment${active ? " segment--on" : ""}`} aria-pressed={active} disabled={unavailable} title={unavailable ? viewUnavailableTitle[view] : undefined} onClick={() => toggleView(view)}>{view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result"}</button>
+                      <button
+                        key={view}
+                        type="button"
+                        className={`segment${active ? " segment--on" : ""}`}
+                        role={narrow ? "radio" : undefined}
+                        {...(narrow ? { "aria-checked": active } : { "aria-pressed": active })}
+                        disabled={unavailable}
+                        title={unavailable ? viewUnavailableTitle[view] : undefined}
+                        onClick={() => toggleView(view)}
+                      >{label}</button>
                     );
                   })}
                 </div>}
@@ -385,6 +473,30 @@ export function CardOverview({ cardId: id }: { cardId: string }) {
           </div>
         ) : undefined}
       />
+
+      {/*
+        D15/UX-F3: a publish used to swap the viewer's screen out from under them. It now announces
+        itself and waits. `aria-live="polite"` so a screen reader hears it without being interrupted,
+        and the dismiss is a real control rather than a timeout — an announcement the viewer has not
+        acted on should still be there when they look up from the board.
+      */}
+      {announcement && !viewUnavailable[announcement.view] && (
+        <div className="notice notice--info overview-announcement" role="status" aria-live="polite">
+          <Megaphone size={20} />
+          <p><strong>{announcementCopy[announcement.view](announcement.game).text}</strong></p>
+          <div className="overview-announcement-actions">
+            <Button size="sm" onClick={followAnnouncement}>
+              {announcementCopy[announcement.view](announcement.game).action} <ArrowRight size={15} />
+            </Button>
+            <button
+              type="button"
+              className="overview-announcement-dismiss"
+              aria-label="ปิดการแจ้งเตือน"
+              onClick={() => setAnnouncement(null)}
+            ><X size={16} /></button>
+          </div>
+        </div>
+      )}
 
       {selectedFinal && card.finalRound && <FinalRoundBoard card={card} readOnly onSlotHistory={setFinalHistorySlot} />}
 
