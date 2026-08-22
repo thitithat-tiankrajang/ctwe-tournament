@@ -5,10 +5,59 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { matchesPlayerCode, normalizePlayerCode } from "@/domain/tournament/player-code";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
+import { useTournamentStore, type RemoteResultChange, type RemoteResultNotice } from "@/application/tournament/store";
+import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { applyColumnControls, GridHead, uniqueColumnValues, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
+
+/** Typed something into a row that has no saved result yet — that counts as actively editing. */
+export function hasTypedDraft(draft?: { one: string; two: string }): boolean {
+  return Boolean(draft && (draft.one.trim() !== "" || draft.two.trim() !== ""));
+}
+
+export interface ConflictNotice {
+  change: RemoteResultChange;
+  actor: string | null;
+  actorRoles: string[];
+}
+
+/**
+ * Which of a remote result event's pairings this user must be interrupted about.
+ *
+ * Exactly the pairings they are mid-edit on: in explicit edit mode, or with something typed into a
+ * row that has no saved result yet. Everything else syncs silently, which is the pre-existing
+ * behaviour and the whole reason this is a filter rather than a blanket warning.
+ *
+ * Already-queued pairings are skipped so a second event about the same row cannot stack two dialogs
+ * for one decision. Pure, so the rule is testable without a DOM.
+ */
+export function selectConflicts(
+  notice: RemoteResultNotice,
+  editing: ReadonlySet<string>,
+  drafts: Record<string, { one: string; two: string }>,
+  queued: readonly ConflictNotice[] = [],
+): ConflictNotice[] {
+  return notice.changes
+    .filter((change) => editing.has(change.pairingId) || hasTypedDraft(drafts[change.pairingId]))
+    .filter((change) => !queued.some((item) => item.change.pairingId === change.pairingId))
+    .map((change) => ({ change, actor: notice.actor, actorRoles: notice.actorRoles }));
+}
+
+/** "500 : 433", or a dash when the pairing had no result yet. */
+export function formatScore(value: { scoreOne?: number; scoreTwo?: number } | null): string {
+  // Loose != : an unscored pairing arrives with the score fields OMITTED, not null.
+  if (!value || (value.scoreOne == null && value.scoreTwo == null)) return "ยังไม่มีผล";
+  return `${value.scoreOne ?? 0} : ${value.scoreTwo ?? 0}`;
+}
+
+/** "somebody - DIRECTOR", from the authenticated identity the event carried. */
+export function formatActor(actor: string | null, roles: string[]): string {
+  const role = roles.map((item) => item.startsWith("ROLE_") ? item.slice(5) : item).join(" / ");
+  if (!actor) return role || "ผู้ใช้อื่น";
+  return role ? `${actor} - ${role}` : actor;
+}
 
 /** Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair). */
 const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "id2", "name2", "school2"];
@@ -291,6 +340,15 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const [status, setStatus] = useState<"all" | RowStatus>("all");
   const [drafts, setDrafts] = useState<Record<string, { one: string; two: string }>>({});
   const [editing, setEditing] = useState<Set<string>>(new Set());
+  /**
+   * A pairing this user is mid-edit on that somebody else has just committed a result for.
+   *
+   * Held in LOCAL state rather than read straight off the store notice: once captured it must
+   * survive later events, and it must be answered explicitly rather than replaced by the next
+   * publish. Nothing here reconciles data — the store was already reconciled by applyResultPatch
+   * or by the version-gap resync before this ever renders.
+   */
+  const [conflicts, setConflicts] = useState<ConflictNotice[]>([]);
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [savingAll, setSavingAll] = useState(false);
@@ -310,6 +368,12 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   // while another cell is being typed.
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
+  // Read through refs inside the notice effect so it depends on the EVENT only: re-running it on
+  // every keystroke could re-raise a warning the user just acknowledged.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const remoteResult = useTournamentStore((state) => state.remoteResult);
+  const handledSeqRef = useRef(0);
 
   // Any "this is the pair" highlight + inline feedback clears when closed or the next entry starts.
   const clearFlash = useCallback(() => { setQuickFeedback(null); setHighlightId(null); }, []);
@@ -508,6 +572,34 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     setFailedIds((prev) => { if (!prev.has(id)) return prev; const next = new Set(prev); next.delete(id); return next; });
   }, []);
 
+  // ---- Concurrent-draft warning (P4) -------------------------------------------------------
+  // Purely a notification. The store was already reconciled before this runs — by applyResultPatch
+  // when the delta landed on version + 1, or by the version-gap resync when it did not — so this
+  // never decides what the data IS, only whether to interrupt someone mid-edit.
+  useEffect(() => {
+    if (!remoteResult || remoteResult.seq === handledSeqRef.current) return;
+    handledSeqRef.current = remoteResult.seq;
+    setConflicts((prev) => {
+      const mine = selectConflicts(remoteResult, editingRef.current, draftsRef.current, prev);
+      // A pairing nobody here is editing syncs silently, exactly as it did before this feature.
+      return mine.length === 0 ? prev : [...prev, ...mine];
+    });
+  }, [remoteResult]);
+
+  /**
+   * "รับทราบ": the draft is gone and the row leaves edit mode, so what is on screen afterwards is
+   * the committed result and nothing else. `cancelEdit` is the same path the row's own Cancel uses —
+   * it drops the draft, the edit flag and any failed marker together, which is exactly the
+   * "never keep a stale draft" rule. Continuing requires pressing Edit again.
+   */
+  const acknowledgeConflict = useCallback(() => {
+    setConflicts((prev) => {
+      const [current, ...rest] = prev;
+      if (current) cancelEdit(current.change.pairingId);
+      return rest;
+    });
+  }, [cancelEdit]);
+
   const focusNext = useCallback((origin: HTMLElement, direction: "other" | "next") => {
     const row = origin.closest("tr"); if (!row) return;
     if (direction === "other") {
@@ -524,8 +616,33 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     }
   }, []);
 
+  const conflict = conflicts[0] ?? null;
+
   return (
     <div className="entry-grid-wrap">
+      {/*
+        Blocking on purpose: this fires only when somebody else committed a result for the very
+        pairing this user is mid-edit on, and the draft on screen is about to be thrown away. One
+        button, because there is nothing to decide — the committed result has already won.
+      */}
+      <ConfirmDialog
+        open={Boolean(conflict)}
+        hideCancel
+        title="ผลของคู่นี้ถูกแก้ไขโดยผู้ใช้อื่น"
+        description={conflict
+          ? `${formatActor(conflict.actor, conflict.actorRoles)} ทำการแก้ไขผลของคู่ที่ ${conflict.change.tableNumber}`
+          : undefined}
+        confirmLabel="รับทราบ"
+        onConfirm={acknowledgeConflict}
+        onCancel={acknowledgeConflict}
+      >
+        {conflict && (
+          <p className="entry-conflict-scores">
+            จาก <strong>{formatScore(conflict.change.before)}</strong> เป็น <strong>{formatScore(conflict.change.after)}</strong>
+          </p>
+        )}
+      </ConfirmDialog>
+
       <div className={`entry-keyin${quickFeedback ? ` entry-keyin--${quickFeedback.type}` : ""}`}>
         <span className="entry-keyin__label">คีย์เร็ว</span>
         <input ref={idARef} className="entry-keyin__id" inputMode="numeric" placeholder="รหัส A เช่น 16" value={qIdA} aria-label="รหัสฝ่าย A"

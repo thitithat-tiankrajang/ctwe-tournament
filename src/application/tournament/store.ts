@@ -64,6 +64,36 @@ export interface SnapshotPublishPatch {
   currentGame: number;
 }
 
+/**
+ * One pairing another account just committed a result for, with what it held before (P4/D15 gate).
+ *
+ * `before` is captured from OUR state at the moment the event lands, which is why the notice is
+ * raised BEFORE `applyResultPatch` runs — afterwards the previous scores are gone.
+ */
+export interface RemoteResultChange {
+  pairingId: string;
+  tableNumber: number;
+  gameNumber?: number;
+  before: { scoreOne?: number; scoreTwo?: number } | null;
+  after: { scoreOne?: number; scoreTwo?: number };
+}
+
+/**
+ * A notification channel, deliberately NOT a reconciliation mechanism.
+ *
+ * The store state is still reconciled exactly as before, by `applyResultPatch` or by the version-gap
+ * resync. This carries only what a warning needs to SAY — who, which pairing, and from what to what
+ * — and `seq` so a consumer can tell a fresh event from a re-render.
+ */
+export interface RemoteResultNotice {
+  seq: number;
+  cardId: string;
+  version: number;
+  actor: string | null;
+  actorRoles: string[];
+  changes: RemoteResultChange[];
+}
+
 /** A card as a list or sidebar needs it: the twelve summary fields plus where the row came from. */
 export type CardListRow = Omit<BackOfficeCardSummary, "scope"> & {
   /** True when a full, SSE-patched card backs this row rather than a summary. */
@@ -92,6 +122,10 @@ interface TournamentState {
   syncCard: (cardId: string, publicVersion?: number) => Promise<void>;
   applyCardState: (card: TournamentCard) => void;
   applyResultPatch: (cardId: string, version: number, changedPairings: Pairing[]) => boolean;
+  /** Latest result event authored by SOMEONE ELSE; null until one arrives. See RemoteResultNotice. */
+  remoteResult: RemoteResultNotice | null;
+  /** Raise the notice for a staff result event. Called BEFORE the patch, while `before` still exists. */
+  noteRemoteResultChange: (cardId: string, version: number, changedPairings: Pairing[], actor: string | null, actorRoles: string[]) => void;
   applyPairingsPatch: (cardId: string, version: number, gameNumber: number, pairings: Pairing[]) => boolean;
   applySnapshotPublish: (cardId: string, version: number, publish: SnapshotPublishPatch) => boolean;
   /** Re-check a staff/director/admin session; redirects to login if it is gone. */
@@ -673,6 +707,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
   return {
     cards: [],
     summaries: [],
+    remoteResult: null,
     auth: anonymous,
     loading: true,
     error: null,
@@ -726,6 +761,40 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     applyCardState: replaceCard,
     applyResultPatch,
+    noteRemoteResultChange(cardId, version, changedPairings, actor, actorRoles) {
+      // Our own echo is not a concurrent edit. The writer's grid has already cleared its draft, so
+      // this is belt-and-braces — but without it a slow round trip could warn someone about
+      // themselves, which is worse than saying nothing.
+      const me = get().auth.username;
+      if (actor && me && actor === me) return;
+
+      const card = get().cards.find((item) => item.id === cardId);
+      // No card in hand means nothing to compare against; the resync will bring the truth anyway.
+      if (!card) return;
+      const held = new Map(card.snapshots.flatMap((snapshot) => snapshot.pairings.map((pairing) => [pairing.id, pairing])));
+
+      const changes: RemoteResultChange[] = changedPairings.map((pairing) => {
+        const previous = held.get(pairing.id);
+        return {
+          pairingId: pairing.id,
+          tableNumber: pairing.tableNumber,
+          gameNumber: pairing.gameNumber,
+          // Loose != : an unscored pairing arrives with the score fields OMITTED, not null.
+          before: previous && (previous.scoreOne != null || previous.scoreTwo != null)
+            ? { scoreOne: previous.scoreOne, scoreTwo: previous.scoreTwo }
+            : null,
+          after: { scoreOne: pairing.scoreOne, scoreTwo: pairing.scoreTwo },
+        };
+      });
+      if (changes.length === 0) return;
+
+      set((state) => ({
+        remoteResult: {
+          seq: (state.remoteResult?.seq ?? 0) + 1,
+          cardId, version, actor, actorRoles, changes,
+        },
+      }));
+    },
     applyPairingsPatch,
     applySnapshotPublish,
     applyPublicSummary(summary) {

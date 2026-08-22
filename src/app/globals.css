@@ -1092,6 +1092,9 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .swap-controls { align-items: end; display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(180px, 1fr)) auto; }
 .school-conflict { background: var(--yellow-soft); border-left: 3px solid var(--yellow); }
 .school-conflict .badge { margin-left: auto; white-space: nowrap; }
+/* P4 concurrent-draft warning: the "from X to Y" line inside the acknowledgement dialog. */
+.entry-conflict-scores { font-size: 14px; margin: 0; }
+.entry-conflict-scores strong { white-space: nowrap; }
 .workflow-notice { align-items: center; }
 .workflow-notice > a { margin-left: auto; }
 /* D15/UX-F3: a publish announces itself here instead of switching the viewer's screen for them. */

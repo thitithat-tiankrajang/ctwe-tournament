@@ -13,6 +13,10 @@ interface CardChangeEvent {
 
 interface ResultChangeEvent extends CardChangeEvent {
   changedPairings: Pairing[];
+  /** Who saved it. Absent from a pre-P4 backend, which is why both reads below are defaulted. */
+  actor?: string;
+  /** Authorities exactly as GET /api/auth/me reports them, e.g. ["ROLE_DIRECTOR"]. */
+  actorRoles?: string[];
 }
 
 interface CardStateEvent extends CardChangeEvent {
@@ -27,6 +31,7 @@ interface CardStateEvent extends CardChangeEvent {
  */
 export function useCardSync(cardId: string | undefined) {
   const syncCard = useTournamentStore((state) => state.syncCard);
+  const noteRemoteResultChange = useTournamentStore((state) => state.noteRemoteResultChange);
   const applyCardState = useTournamentStore((state) => state.applyCardState);
   const applyResultPatch = useTournamentStore((state) => state.applyResultPatch);
   const ensureSessionAlive = useTournamentStore((state) => state.ensureSessionAlive);
@@ -79,6 +84,13 @@ export function useCardSync(cardId: string | undefined) {
         try {
           const payload = JSON.parse((event as MessageEvent<string>).data) as ResultChangeEvent;
           if (payload.cardId !== cardId) return;
+          // OWNER-APPROVED frozen-file exception (P4 concurrent-draft warning). Three lines, and
+          // deliberately BEFORE the patch: the warning has to show "from X to Y", and after
+          // applyResultPatch the previous scores are gone. The store side only records the notice —
+          // reconciliation is still applyResultPatch below, or the version-gap resync, unchanged.
+          // The SSE lifecycle, the connection model and every other handler are untouched.
+          noteRemoteResultChange(cardId, payload.version, payload.changedPairings,
+            payload.actor ?? null, payload.actorRoles ?? []);
           const patched = applyResultPatch(cardId, payload.version, payload.changedPairings);
           currentVersionRef.current = Math.max(currentVersionRef.current ?? 0, payload.version);
           if (!patched) void syncCard(cardId);
@@ -97,5 +109,5 @@ export function useCardSync(cardId: string | undefined) {
       active = false;
       source?.close();
     };
-  }, [applyCardState, applyResultPatch, cardId, ensureSessionAlive, sseAllowed, syncCard]);
+  }, [applyCardState, applyResultPatch, cardId, ensureSessionAlive, noteRemoteResultChange, sseAllowed, syncCard]);
 }

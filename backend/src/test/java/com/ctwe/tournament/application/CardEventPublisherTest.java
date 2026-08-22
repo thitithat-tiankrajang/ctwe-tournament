@@ -197,6 +197,26 @@ class CardEventPublisherTest {
             .doesNotContain("actor", "actorRoles");
     }
 
+    @Test
+    @DisplayName("SERIALISED: the public result frame has no actor key, the staff one does")
+    void serialisedPublicFrameCarriesNoActor() throws Exception {
+        // Reflection proves the component is absent; this proves the BYTES are, which is what a
+        // viewer's browser actually receives. Jackson is configured non_null app-wide, so a nulled
+        // field would also vanish — the point of the separate record is that there is nothing to null.
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        UUID cardId = UUID.randomUUID();
+
+        String publicFrame = mapper.writeValueAsString(
+            new CardEventPublisher.ResultChangeEvent(cardId, 6, Instant.EPOCH, List.of()));
+        String staffFrame = mapper.writeValueAsString(
+            new CardEventPublisher.StaffResultChangeEvent(cardId, 6, Instant.EPOCH, List.of(),
+                "director-a", List.of("ROLE_DIRECTOR")));
+
+        assertThat(publicFrame).doesNotContain("actor").doesNotContain("director-a").doesNotContain("ROLE_");
+        assertThat(staffFrame).contains("\"actor\":\"director-a\"").contains("ROLE_DIRECTOR");
+    }
+
     private static CardDtos.CardResponse card(UUID id, long version) {
         return new CardDtos.CardResponse(
             id, UUID.randomUUID(), "Card", "Division", CardStatus.RUNNING,
