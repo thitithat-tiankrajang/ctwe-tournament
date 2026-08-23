@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { applyColumnControls, filterTargets } from "./data-grid";
+import { ACTION_WIDTH, editColumns } from "./result-entry-grid";
 
 /**
  * The result-entry grid's two code columns are ONE searchable field.
@@ -84,6 +85,51 @@ test("the entry grid keeps รหัส 2 blue instead of the muted mirror ink",
   // Equal specificity (0,3,1): the carve-out only wins on source order.
   assert.ok(blue > muted, "the carve-out must sit BELOW the shared rule or it loses the cascade");
   assert.match(css.slice(blue), /^\.entry-grid--entry td\.egrid-td--mirror\.cell-id \{ color: var\(--blue-dark\); \}/);
+});
+
+const actionOf = (canPenalty: boolean) => {
+  const columns = editColumns(canPenalty);
+  const action = columns[columns.length - 1];
+  assert.equal(action.key, "action", "จัดการ must stay the trailing column so it sits at the table's right edge");
+  return action;
+};
+
+test("จัดการ is floored to the widest state the viewer's role can actually produce", () => {
+  // Director rows carry ลงดาบ, so their widest is เซฟ + ✕ + ลงดาบ; staff only ever reach เซฟ + ✕.
+  assert.equal(actionOf(true).fitMin, ACTION_WIDTH.director);
+  assert.equal(actionOf(false).fitMin, ACTION_WIDTH.staff);
+  // Both must be real reductions from the 220 this replaced, or the bug is not fixed.
+  assert.ok(ACTION_WIDTH.director < 220 && ACTION_WIDTH.staff < ACTION_WIDTH.director);
+});
+
+test("the จัดการ floor is also its width, so fitWidths cannot hand back the space", () => {
+  // fitWidths distributes slack by `max(1, width - fitMin)`. Any gap here reopens the column.
+  for (const canPenalty of [true, false]) {
+    const action = actionOf(canPenalty);
+    assert.equal(action.width, action.fitMin, "width must equal fitMin or the column re-inflates");
+    assert.equal(action.min, action.fitMin, "the manual-resize floor must match the content floor");
+  }
+});
+
+test("จัดการ does not opt into content fitting", () => {
+  // measureContentMins reads the CELL width for this column (the group is a block-level flex box
+  // that fills it), so fitContent here is a ratchet that only ever grows. Verified in-browser:
+  // 180px of buttons inside an 899.5px cell measured 897.
+  assert.equal(actionOf(true).fitContent, undefined);
+  assert.equal(actionOf(false).fitContent, undefined);
+});
+
+test("both roles render the same column count, so the width array stays aligned", () => {
+  // useResizableColumns keys its restore on `count`; a differing length would silently drop
+  // persisted widths and, worse, misalign colWidths against the rendered cells.
+  assert.equal(editColumns(true).length, editColumns(false).length);
+  assert.equal(editColumns(true).length, 11);
+});
+
+test("persisted grid widths are versioned past the 220px layout", () => {
+  const source = readFileSync(join(process.cwd(), "src", "ui", "components", "data-grid.tsx"), "utf8");
+  assert.match(source, /ctwe\.gridWidths\.v3\./, "bump the key or nobody with a resized tab sees the new width");
+  assert.ok(!source.includes("ctwe.gridWidths.v2."), "the old key must not linger");
 });
 
 test("only the entry grid dissents - the overview tables keep the muted mirror", () => {

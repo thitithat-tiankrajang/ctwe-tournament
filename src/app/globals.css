@@ -993,7 +993,10 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .egrid-row--bye td.egrid-td { background: var(--row-bye); }
 .egrid-row--bye:hover td.egrid-td { background: var(--row-bye-hover); }
 .cell-action.egrid-td { overflow: visible; }
-.cell-action__group { align-items: center; display: flex; gap: 4px; min-width: max-content; }
+/* Trailing column: the buttons hug the table's right edge. This matters most for the states that
+   are NARROWER than the column's floor — a staff member's lone เซฟ, or a director's two-button
+   row — which would otherwise float mid-cell with dead space to their right. */
+.cell-action__group { align-items: center; display: flex; gap: 4px; justify-content: flex-end; min-width: max-content; }
 .cell-action .button { min-height: 28px; }
 
 .egrid-score { -moz-appearance: textfield; appearance: textfield; background: white; border: 1px solid var(--border-control); font-size: clamp(var(--text-md), .3vw + 9.5px, 14px); font-variant-numeric: tabular-nums; font-weight: 700; height: clamp(26px, 2.2vw, 32px); min-width: 0; padding: 1px clamp(2px, .4vw, 5px); text-align: center; width: 100%; }

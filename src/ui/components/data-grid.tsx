@@ -61,7 +61,10 @@ export type GridFilter<T> =
   | { key: string; label: string; kind: "select"; options: { value: string; label: string }[]; predicate: (row: T, value: string) => boolean }
   | { key: string; label: string; kind: "range"; placeholder?: [string, string]; predicate: (row: T, min: number | null, max: number | null) => boolean };
 
-const widthsKey = (key: string) => `ctwe.gridWidths.v2.${key}`;
+// v3: the result-entry จัดการ column dropped from a hardcoded 220px to a measured, role-aware
+// floor. A restored width array bypasses fitting entirely, so without this bump anyone who had
+// dragged a column in the current tab would keep the old 220 and never see the change.
+const widthsKey = (key: string) => `ctwe.gridWidths.v3.${key}`;
 const headAlignClass = (align?: GridColumnBase["align"]) =>
   align === "right" ? " egrid-th--right" : align === "center" ? " egrid-th--center" : " egrid-th--left";
 
