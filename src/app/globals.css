@@ -89,7 +89,12 @@
   --text-base: 15px;        /* Body and primary content (matches body) */
   --text-lg: 17px;          /* Section headings */
   --text-input-touch: 16px; /* Text-input floor at <=768px; below it iOS Safari zooms on focus */
-  --sidebar-width: 264px;
+  /* 232px, not 264: the widest real nav row is a nested workflow link — icon 18 + gap 11 + the
+     longest stageHref label (ผลการแข่งขัน, 73px at 13px/400) + the ทำต่อ flag (39.3px) + nested
+     padding-left 30 + padding-right 12 + border-left 3 = 197.3px of content. 232 leaves 9.8px of
+     slack; 224 leaves 1.8px, which is inside font-rendering variance — with Noto Sans Thai still
+     loading, the Arial fallback renders wider and clips the label. Measured, not estimated. */
+  --sidebar-width: 232px;
 
   /* ---- Stacking. Seven tiers, in the order things actually sit. A rule that needs to beat
      its own tier by a step says so with calc(), so the relationship is visible instead of
@@ -282,7 +287,9 @@ svg { flex: 0 0 auto; }
 
 .app-main { margin-left: var(--sidebar-width); min-width: 0; transition: margin-left var(--dur-base) ease; }
 .app-shell--collapsed .app-main { margin-left: var(--sidebar-rail); }
-.content { margin: 0 auto; max-width: 1440px; padding: 32px clamp(20px, 3vw, 44px) 64px; }
+/* Chrome is the density budget: the type scale is fixed px and every clamp() here saturates by
+   ~1417px, so above that width only the shell can give content room back. max-width stays 1440. */
+.content { margin: 0 auto; max-width: 1440px; padding: 24px clamp(16px, 2vw, 28px) 40px; }
 .mobile-brand, .mobile-nav { display: none; }
 
 .page-header {
