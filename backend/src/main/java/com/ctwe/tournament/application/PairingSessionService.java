@@ -80,16 +80,25 @@ public class PairingSessionService {
      * Apply a change set atomically: pairing rows, pool rows and audit in one transaction. SSE is
      * broadcast by the controller after this returns, as every other mutation already does.
      */
+    /**
+     * What a commit did: the new card, plus the slots that moved so the SSE delta can name them.
+     * {@code publicChange} is true when a slot the audience has already been shown was touched.
+     */
+    public record CommitOutcome(CardDtos.CardResponse card, List<CardDtos.PairingChange> changedSlots,
+                                boolean publicChange) {}
+
     @Transactional
     @EvictPublicCard
-    public CardDtos.CardResponse commit(UUID cardId, CardDtos.PairingCommitRequest request, String actor) {
+    public CommitOutcome commit(UUID cardId, CardDtos.PairingCommitRequest request, String actor) {
         // 1. Idempotency, before anything is read or written. A replayed commit — the director's
         //    network dropped and they pressed the button again — must be a no-op, not a second apply.
         int claimed = jdbc.update("""
             INSERT INTO pairing_commits (card_id, commit_key, actor, forced)
             VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING
             """, cardId, request.commitKey(), actor, request.force());
-        if (claimed == 0) return cards.get(cardId, true);
+        // Already applied: return the current card with an empty change set, so a replay broadcasts
+        // nothing and cannot make a subscriber think a second edit happened.
+        if (claimed == 0) return new CommitOutcome(cards.get(cardId, true), List.of(), false);
 
         // 2. Lock the card, then the touched rows in a deterministic order so two concurrent commits
         //    on overlapping slots queue instead of deadlocking.
@@ -119,7 +128,8 @@ public class PairingSessionService {
         // "committed pairing changes are public" also holds.
         if (evaluation.touchesPublishedPairing()) cards.publishPublicVersion(cardId);
         writeAudit(cardId, request, evaluation, actor);
-        return cards.get(cardId, true);
+        return new CommitOutcome(cards.get(cardId, true), response.changes(),
+            evaluation.touchesPublishedPairing());
     }
 
     // -------------------------------------------------------------- evaluate

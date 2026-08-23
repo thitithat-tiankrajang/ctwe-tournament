@@ -212,7 +212,30 @@ public class CardController {
         Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PAIRING);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(cardId, () -> pairingSession.commit(cardId, request, authentication.getName()));
+
+        // Not the generic changed() helper: staff subscribers need to know WHICH slots moved and WHO
+        // moved them. The tool marks exactly those rows conflicted, and result entry locks the one
+        // row it affects with a name on it — neither is possible from a bare version bump.
+        long publicVersionBefore = publicCards.version(cardId);
+        var outcome = pairingSession.commit(cardId, request, authentication.getName());
+        events.publishPairingCommit(cardId, outcome.card(), outcome.changedSlots(), authentication.getName());
+        if (publishPublicIfBumped(cardId, publicVersionBefore)) publishTournamentCatalog(cardId);
+        return outcome.card();
+    }
+
+    /**
+     * Announce that this director has opened or closed the pairing tool.
+     *
+     * <p>Advisory only — it grants nothing and blocks nothing. Fire-and-forget: a lost announcement
+     * costs an indicator, never correctness, because the per-slot precondition is what actually
+     * prevents two operators overwriting each other.
+     */
+    @PostMapping("/{cardId}/pairing/presence")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void announcePairingPresence(@PathVariable UUID cardId, @RequestParam boolean open,
+                                        Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PAIRING);
+        events.publishPairingPresence(cardId, authentication.getName(), open);
     }
 
     /**

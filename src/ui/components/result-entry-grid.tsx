@@ -349,6 +349,12 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
    * or by the version-gap resync before this ever renders.
    */
   const [conflicts, setConflicts] = useState<ConflictNotice[]>([]);
+  /**
+   * Someone rearranged the PAIRING of a row this user is mid-edit on — a different event from a
+   * result being overwritten, and it needs its own words: there are no "before" scores to show,
+   * because what changed is who is sitting there.
+   */
+  const [pairingConflict, setPairingConflict] = useState<{ pairingId: string; table: number; actor: string | null } | null>(null);
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [savingAll, setSavingAll] = useState(false);
@@ -373,7 +379,9 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const editingRef = useRef(editing);
   editingRef.current = editing;
   const remoteResult = useTournamentStore((state) => state.remoteResult);
+  const remotePairing = useTournamentStore((state) => state.remotePairing);
   const handledSeqRef = useRef(0);
+  const handledPairingSeqRef = useRef(0);
 
   // Any "this is the pair" highlight + inline feedback clears when closed or the next entry starts.
   const clearFlash = useCallback(() => { setQuickFeedback(null); setHighlightId(null); }, []);
@@ -586,6 +594,29 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     });
   }, [remoteResult]);
 
+  // ---- Pairing changed under an open draft (P3) ---------------------------------------------
+  // The pairing tool can move players out of a row while staff are typing its score. Before this,
+  // the save just failed with a validation message about byes — which is true but useless. Lock the
+  // row instead, say who changed it, and drop the draft so nothing stale can be submitted.
+  useEffect(() => {
+    if (!remotePairing || remotePairing.seq === handledPairingSeqRef.current) return;
+    handledPairingSeqRef.current = remotePairing.seq;
+    for (const change of remotePairing.changedSlots) {
+      const pairingId = `g${change.game}t${change.table}`;
+      const busyHere = editingRef.current.has(pairingId) || hasTypedDraft(draftsRef.current[pairingId]);
+      if (!busyHere) continue;   // a row nobody is editing syncs silently, as it always has
+      setPairingConflict({ pairingId, table: change.table, actor: remotePairing.actor });
+      break;
+    }
+  }, [remotePairing]);
+
+  const acknowledgePairingConflict = useCallback(() => {
+    setPairingConflict((current) => {
+      if (current) cancelEdit(current.pairingId);
+      return null;
+    });
+  }, [cancelEdit]);
+
   /**
    * "รับทราบ": the draft is gone and the row leaves edit mode, so what is on screen afterwards is
    * the committed result and nothing else. `cancelEdit` is the same path the row's own Cancel uses —
@@ -620,6 +651,17 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
 
   return (
     <div className="entry-grid-wrap">
+      <ConfirmDialog
+        open={Boolean(pairingConflict)}
+        hideCancel
+        title="คู่แข่งขันนี้ถูกเปลี่ยนโดยผู้ใช้อื่น"
+        description={pairingConflict
+          ? `${pairingConflict.actor ?? "ผู้ใช้อื่น"} เปลี่ยนผู้เล่นของคู่ที่ ${pairingConflict.table} — สิ่งที่กรอกค้างไว้จะถูกยกเลิก`
+          : undefined}
+        confirmLabel="รับทราบ"
+        onConfirm={acknowledgePairingConflict}
+        onCancel={acknowledgePairingConflict}
+      />
       {/*
         Blocking on purpose: this fires only when somebody else committed a result for the very
         pairing this user is mid-edit on, and the draft on screen is about to be thrown away. One

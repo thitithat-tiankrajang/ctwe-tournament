@@ -409,6 +409,49 @@ class PairingSessionIntegrationTest {
         assertThat(pool.openCodes(cardId)).containsExactly(slot[2]);
     }
 
+    // ---- what the SSE delta gets to say (P3) -------------------------------
+
+    /**
+     * The commit reports which slots moved, so the delta can name them. Without this a subscriber
+     * gets a bare version bump and neither the tool nor result entry can mark the affected rows.
+     */
+    @Test
+    void commitReportsTheSlotsThatMoved() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        String held = id(cardId, slot[2]);
+
+        var outcome = session.commit(cardId, request(
+            List.of(slot(1, slot[1], held, id(cardId, slot[3]))), List.of(),
+            List.of(new CardDtos.ScreenEntry(held, "NO_SHOW", null)), List.of(), List.of()), ACTOR);
+
+        assertThat(outcome.changedSlots()).singleElement()
+            .satisfies(change -> {
+                assertThat(change.table()).isEqualTo(slot[1]);
+                assertThat(change.beforeOne()).isEqualTo(held);
+                assertThat(change.afterOne()).isNull();
+            });
+    }
+
+    /**
+     * A replayed commit must broadcast NOTHING. It already applied, so an empty change set is the
+     * honest answer — anything else would tell every other screen a second edit had happened.
+     */
+    @Test
+    void aReplayReportsNoChangesToBroadcast() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        String held = id(cardId, slot[2]);
+        var body = new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", false,
+            List.of(slot(1, slot[1], held, id(cardId, slot[3]))), List.of(),
+            List.of(new CardDtos.ScreenEntry(held, "NO_SHOW", null)), List.of(), List.of());
+
+        assertThat(session.commit(cardId, body, ACTOR).changedSlots()).hasSize(1);
+        assertThat(session.commit(cardId, body, ACTOR).changedSlots())
+            .as("the replay applied nothing, so it has nothing to announce")
+            .isEmpty();
+    }
+
     // ---- I9: the audience never learns of a hold ---------------------------
 
     @Test

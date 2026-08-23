@@ -1446,6 +1446,29 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .pairing-tool__vs { color: var(--muted); flex: 0 0 auto; font-size: var(--text-sm); }
 .pairing-tool__tag { color: var(--muted); flex: 0 0 auto; font-size: var(--text-sm); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 
+/* Presence, filters and place mode (P3). */
+.pairing-tool__presence { align-items: center; background: var(--blue-soft); border-bottom: 1px solid var(--border); color: var(--blue-dark); display: flex; font-size: var(--text-sm); gap: 8px; margin: 0; padding: 8px 16px; }
+.pairing-tool__filters { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
+.pairing-tool__toggle { display: flex; flex: 0 0 auto; }
+.pairing-tool__toggle button { background: var(--surface); border: 1px solid var(--border-control); color: var(--muted); cursor: pointer; font-size: var(--text-sm); font-weight: 700; padding: 3px 10px; }
+.pairing-tool__toggle button + button { border-left: 0; }
+.pairing-tool__toggle button.is-on { background: var(--blue-soft); border-color: var(--blue); color: var(--blue-dark); }
+
+.pairing-tool__slot.is-edited { background: var(--blue-soft); border-left-color: var(--blue); }
+.pairing-tool__slot.is-conflict { background: var(--red-soft); border-left-color: var(--red); }
+.pairing-tool__conflict { align-items: center; color: var(--red-dark); display: flex; flex: 0 0 auto; font-size: var(--text-sm); gap: 8px; }
+.pairing-tool__conflict button { background: var(--surface); border: 1px solid var(--red-border); color: var(--red-dark); cursor: pointer; font-size: var(--text-sm); padding: 2px 8px; }
+
+.pairing-tool__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pairing-tool__chip { background: var(--surface); border: 1px dashed var(--border-control); cursor: pointer; font-size: 13px; padding: 5px 10px; }
+.pairing-tool__chip.is-held, .pairing-tool__hold--btn.is-held { border-style: solid; box-shadow: 0 0 0 2px var(--blue); }
+.pairing-tool__hold--btn { cursor: pointer; display: block; text-align: left; width: 100%; }
+.pairing-tool__seat--btn { background: none; font: inherit; text-align: left; }
+/* A valid destination while someone is in hand — outlined, not merely coloured, so it reads at a
+   glance on a projector and to an operator who cannot rely on hue. */
+.pairing-tool__seat--btn.is-target { border-color: var(--blue); border-style: dashed; }
+.pairing-tool__seat--btn:disabled { cursor: not-allowed; opacity: .6; }
+
 .pairing-tool__seat { align-items: center; border: 1px solid transparent; cursor: pointer; display: flex; flex: 1 1 0; gap: 6px; min-width: 0; padding: 3px 6px; }
 .pairing-tool__seat.is-selected { background: var(--yellow-soft); border-color: var(--yellow-dark); }
 .pairing-tool__seat.is-locked { cursor: not-allowed; opacity: .6; }
