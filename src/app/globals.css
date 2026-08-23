@@ -258,6 +258,19 @@ svg { flex: 0 0 auto; }
 .sidebar__footer-text strong { font-size: 12px; }
 .sidebar__footer-text small { color: var(--sidebar-muted); font-size: 11px; }
 .status-dot { background: var(--green); flex: 0 0 auto; height: 8px; width: 8px; }
+/* Shown while the viewer's identity is still resolving. The menu, the role badge and the logout
+   button all differ by role, so until /api/auth/me answers there is nothing honest to draw — and
+   the fallback that used to fill the gap was the PUBLIC viewer's chrome, rendered at a director.
+   Sized to the real controls (nav-link 42px, footer text 12px, button 34px) so nothing jumps when
+   the answer arrives. */
+.nav-skeleton { display: flex; flex-direction: column; gap: 3px; padding: 0 12px; }
+.nav-skeleton--rail { padding: 0 14px; }
+.nav-skeleton__row { background: linear-gradient(90deg, #2b3138 25%, #363d46 50%, #2b3138 75%); background-size: 200% 100%; animation: nav-skeleton-sheen 1.4s ease-in-out infinite; display: block; height: 42px; }
+.nav-skeleton--rail .nav-skeleton__row { height: 38px; }
+.nav-skeleton__row--name { height: 12px; width: 110px; }
+.nav-skeleton__row--button { height: 34px; width: 100%; }
+@keyframes nav-skeleton-sheen { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .nav-skeleton__row { animation: none; } }
 .sidebar__auth-wrap { display: block; padding: 0 16px 16px; transition: padding-left var(--dur-base) ease, padding-right var(--dur-base) ease; }
 .sidebar__auth { flex-wrap: nowrap; overflow: hidden; transition: padding var(--dur-base) ease, width var(--dur-base) ease; white-space: nowrap; width: 100%; }
 .sidebar__auth-label { display: inline-block; max-width: 130px; opacity: 1; overflow: hidden; transition: max-width var(--dur-base) ease, opacity .1s ease .08s; white-space: nowrap; }
