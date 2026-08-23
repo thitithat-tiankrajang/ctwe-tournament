@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, Gamepad2, Gavel, LockKeyhole, Megaphone, Trophy } from "lucide-react";
+import { useParams } from "next/navigation";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, Gamepad2, Gavel, LoaderCircle, LockKeyhole, Megaphone, Trophy } from "lucide-react";
 import { useState } from "react";
 import { isBadPassword, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, isOperator } from "@/domain/tournament/roles";
 import { allResultBlocks, isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
 import { rankingAfterGame } from "@/domain/tournament/history";
+import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import type { Pairing, Player, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
@@ -166,7 +167,7 @@ function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, o
 }
 
 export default function GamesPage() {
-  const { id } = useParams<{ id: string }>(); const router = useRouter();
+  const { id } = useParams<{ id: string }>(); const { pending: navPending, navigate } = useNavigateWithPending();
   const cards = useTournamentStore((state) => state.cards); const auth = useTournamentStore((state) => state.auth); const loading = useTournamentStore((state) => state.loading);
   const submitResult = useTournamentStore((state) => state.submitResult); const reviewResults = useTournamentStore((state) => state.reviewResults);
   const reopenResults = useTournamentStore((state) => state.reopenResults); const publishResults = useTournamentStore((state) => state.publishResults);
@@ -261,7 +262,7 @@ export default function GamesPage() {
       confirmLabel: "Finish & Publish",
     })) return;
     const finalGame = activeGames[activeGames.length - 1] === card.games.length; setBusy(true);
-    try { await publishResults(id); router.push(finalGame ? `/cards/${id}` : `/cards/${id}/tables`); }
+    try { await publishResults(id); navigate(finalGame ? `/cards/${id}` : `/cards/${id}/tables`); }
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ", "Publish ผลไม่สำเร็จ", true); } finally { setBusy(false); }
   };
   // Director edit-pairing during result collection. The swap verifies the password itself, so a
@@ -293,7 +294,7 @@ export default function GamesPage() {
       confirmLabel: "ยืนยัน Unpairing",
     });
     if (!password) return;
-    try { await unpairCurrentPairing(id, password); router.push(`/cards/${id}/tables`); }
+    try { await unpairCurrentPairing(id, password); navigate(`/cards/${id}/tables`); }
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ", "Unpairing ไม่สำเร็จ", true); }
   };
   const confirmPw = async (password: string) => {
@@ -362,7 +363,7 @@ export default function GamesPage() {
               )}
               <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />Review ผล <ArrowRight size={16} /></Button>
             </div>
-          : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>)}
+          : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{navPending ? <LoaderCircle className="loading-spinner" size={16} /> : activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>)}
       />
       {!isDirector && resultCollection && allComplete && (
         <div className="notice notice--success"><CheckCircle2 size={18} /><p><strong>กรอกผล{blockLabel}ครบทุกคู่แล้ว</strong><span>รอผู้อำนวยการตรวจสอบ (Review) และเผยแพร่ผล — แก้ไขคะแนนได้จนกว่าจะ Publish</span></p></div>

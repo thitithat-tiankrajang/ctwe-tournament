@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight, FilterX, LoaderCircle, LockKeyhole, Pencil, Plus, Save, Trash2, Users, X } from "lucide-react";
 import { useState } from "react";
@@ -9,6 +9,7 @@ import { Controller, useForm } from "react-hook-form";
 import { rankPlayers, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { comparePlayerCodes, matchesPlayerCode } from "@/domain/tournament/player-code";
+import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { playerSchema, type PlayerForm } from "@/domain/tournament/schemas";
 import { rankingAfterGame } from "@/domain/tournament/history";
@@ -29,7 +30,7 @@ type Confirmation = { kind: "update" | "delete"; player: Player } | null;
 
 export default function PlayersPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
+  const { pending: navPending, navigate } = useNavigateWithPending();
   const cards = useTournamentStore((state) => state.cards);
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
@@ -163,7 +164,7 @@ export default function PlayersPage() {
     })) return;
     try {
       await finishRegistration(id);
-      router.push(`/cards/${id}/tables`);
+      navigate(`/cards/${id}/tables`);
     } catch (error) {
       setOperationError(error instanceof Error ? error.message : "จบการลงทะเบียนไม่สำเร็จ");
     }
@@ -187,7 +188,7 @@ export default function PlayersPage() {
             : "รายชื่อถูกล็อกแล้ว ผลการแข่งขันเรียงตาม Win Point และ Total Difference"}
         actions={canManage
           ? registrationOpen
-            ? <Button variant="success" disabled={busy || card.players.length < 2} onClick={finish}>จบการลงทะเบียน <ArrowRight size={16} /></Button>
+            ? <Button variant="success" disabled={busy || card.players.length < 2} onClick={finish}>จบการลงทะเบียน {navPending ? <LoaderCircle className="loading-spinner" size={16} /> : <ArrowRight size={16} />}</Button>
             : <><ReopenRegistration card={card} /><Link prefetch={false} href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link></>
           : undefined}
       />

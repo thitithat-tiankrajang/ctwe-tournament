@@ -24,12 +24,14 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { isAuthPending, selectAuthStatus } from "@/application/tournament/auth-status";
 import { readActiveTournament, selectShellCards, shellCardsSignature, useTournamentStore } from "@/application/tournament/store";
 import { useCardSync } from "@/application/tournament/use-card-sync";
 import { useFullCard } from "@/application/tournament/use-full-card";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
 import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import { foldersAfterOpening } from "@/ui/layout/card-folders";
+import { NavLinkIcon } from "@/ui/layout/nav-pending";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
 import { Button } from "@/ui/components/button";
@@ -76,7 +78,7 @@ function NavigationLink({ href, label, icon: Icon, active, workflow = false, col
   const nudge = workflow && !active;
   return (
     <Link prefetch={false} className={`nav-link${active ? " nav-link--active" : ""}${nudge ? " nav-link--workflow" : ""}${nested ? " nav-link--nested" : ""}${collapsed ? " nav-link--icon" : ""}`} href={href} title={collapsed ? label : undefined} aria-current={active ? "page" : undefined}>
-      <Icon size={18} aria-hidden="true" />
+      <NavLinkIcon icon={Icon} size={18} />
       {!collapsed && <span className="nav-link__text">{label}</span>}
       {!collapsed && nudge && <span className="nav-link__flag">ทำต่อ</span>}
     </Link>
@@ -168,6 +170,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [expanded, setExpanded] = useState(true);   // sidebar shows the full menu; collapsed = icon rail
   const [hydrated, setHydrated] = useState(false);
   const [tourCardOpen, setTourCardOpen] = useState(false);
+  // Rendering only. `loading` itself still drives CardSyncHost below, untouched: that gate is the
+  // one pre-agreed exception in `03_INVARIANTS.md` §1 and re-deriving it here would risk changing
+  // which SSE stream a staff member opens first.
+  const authPending = isAuthPending(selectAuthStatus({ loading, auth }));
   const isStaff = hasStaffAccess(auth);
   const admin = isAdmin(auth);
   const director = isDirector(auth);
@@ -308,7 +314,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {/* One menu, two densities: an icon rail when collapsed, the full tree when expanded. */}
         <nav className="sidebar__nav" aria-label="เมนูหลัก">
-          {collapsed ? (
+          {authPending ? (
+            /* The menu differs completely by role, so until the role is known there is nothing
+               honest to draw. The alternative is not "an empty menu" — it is the PUBLIC viewer's
+               menu, confidently rendered at a director. */
+            <div className={`nav-skeleton${collapsed ? " nav-skeleton--rail" : ""}`} role="status" aria-label="กำลังตรวจสอบสิทธิ์">
+              <span className="nav-skeleton__row" /><span className="nav-skeleton__row" /><span className="nav-skeleton__row" />
+            </div>
+          ) : collapsed ? (
             <div className="sidebar__rail">
               {railLinks.map((link) => <NavigationLink key={link.href} {...link} collapsed active={pathname === link.href} workflow={id ? link.href === workflowHrefFor(id) : false} />)}
               {id && <NavigationLink href="/cards" label="การ์ดทั้งหมด" icon={ClipboardList} active={pathname === "/cards"} collapsed />}
@@ -375,9 +388,15 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="sidebar__footer">
           <span className="status-dot" />
-          <span className="sidebar__footer-text" aria-hidden={collapsed}><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? roleLabel : "ดูข้อมูลเท่านั้น"}</small></span>
+          {authPending
+            ? <span className="sidebar__footer-text" aria-hidden={collapsed}><span className="nav-skeleton__row nav-skeleton__row--name" role="status" aria-label="กำลังตรวจสอบสิทธิ์" /></span>
+            : <span className="sidebar__footer-text" aria-hidden={collapsed}><strong>{isStaff ? auth.username : "Public viewer"}</strong><small>{isStaff ? roleLabel : "ดูข้อมูลเท่านั้น"}</small></span>}
         </div>
-        {isStaff && (
+        {/* Not `!authPending && isStaff`-as-nothing: the slot holds its height so the sidebar does
+            not jump when the button arrives a moment later. */}
+        {authPending ? (
+          <div className="sidebar__auth-wrap"><span className="nav-skeleton__row nav-skeleton__row--button" aria-hidden="true" /></div>
+        ) : isStaff && (
           <div className="sidebar__auth-wrap"><Button type="button" variant="secondary" size="sm" className="sidebar__auth" onClick={() => setLogoutConfirm(true)} title="ออกจากระบบ"><LogOut size={15} /><span className="sidebar__auth-label">ออกจากระบบ</span></Button></div>
         )}
       </aside>

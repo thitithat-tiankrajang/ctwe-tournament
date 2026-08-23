@@ -61,8 +61,17 @@ export function formatActor(actor: string | null, roles: string[]): string {
   return role ? `${actor} - ${role}` : actor;
 }
 
-/** Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair). */
-const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "id2", "name2", "school2"];
+/**
+ * Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair).
+ *
+ * `id2` is deliberately absent: the two code columns are ONE searchable field, and รหัส 1 owns its
+ * affordance. รหัส 2 is a read-only mirror — no menu, no sort — but it stays a match target through
+ * `ENTRY_CODE_GROUP`, so a player is still found from either seat.
+ */
+const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "name2", "school2"];
+
+/** The two code columns, matched as one field: filtering รหัส 1 also matches รหัส 2. */
+const ENTRY_CODE_GROUP = ["id1", "id2"];
 
 export interface EntrySlot {
   /** Table/couple number; stable even before the pairing exists (PAIR_RESULT destination). */
@@ -86,19 +95,43 @@ interface PairingEditConfig {
 
 type RowStatus = "pending" | "empty" | "dirty" | "saved";
 
-const EDIT_COLUMNS: GridColumnBase[] = [
+/**
+ * Widest rendered width of the จัดการ column, per role, in px.
+ *
+ * Measured in the browser at 375 / 1280 / 1920. `.button--sm` is a fixed 13px with fixed padding,
+ * so the button run itself is viewport-independent — director 165.6px (เซฟ + ✕ + ลงดาบ), staff
+ * 102.6px (เซฟ + ✕). Only the cell's own padding moves, and `clamp(2px, .45vw, 6px)` caps it at 6
+ * per side, so these numbers are content + 12 + 2. A director gets ลงดาบ on every row and so needs
+ * to clear three buttons where a staff member only ever clears two; one shared floor would waste
+ * ~60px on every staff screen, and staff are the people who live in this grid.
+ *
+ * Deliberately NOT `fitContent: true`. `measureContentMins` sizes a column with
+ * `Range.selectNodeContents(cell)`, and `.cell-action__group` is a block-level flex box that fills
+ * its cell — so the range reports the CELL width, not the content's. Verified: 180px of buttons in
+ * an 899.5px cell reported 897. On this column fitting would be a ratchet that can only grow it,
+ * re-inflating exactly what this shrinks. The floor does the work, and `width === fitMin` keeps
+ * `fitWidths` from handing the column any of the spare space it just gave back.
+ */
+export const ACTION_WIDTH = { director: 180, staff: 117 } as const;
+
+const EDIT_COLUMNS_BASE: GridColumnBase[] = [
   { key: "pair", label: "คู่", min: 32, fitMin: 32, width: 42, align: "center" },
   { key: "id1", label: "รหัส 1", min: 58, fitMin: 58, width: 72, filterKind: "playerCode" },
   { key: "name1", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138 },
   { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132 },
-  { key: "id2", label: "รหัส 2", min: 58, fitMin: 58, width: 72, filterKind: "playerCode" },
+  { key: "id2", label: "รหัส 2", min: 58, fitMin: 58, width: 72, filterKind: "playerCode", searchable: false },
   { key: "name2", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138 },
   { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132 },
   { key: "score1", label: "คะแนน 1", min: 48, fitMin: 48, width: 62, align: "center" },
   { key: "score2", label: "คะแนน 2", min: 48, fitMin: 48, width: 62, align: "center" },
   { key: "diff", label: "Diff", min: 52, fitMin: 52, width: 68, align: "center" },
-  { key: "action", label: "จัดการ", min: 220, fitMin: 220, width: 220 },
 ];
+
+/** The 11 edit columns, with จัดการ floored to whatever the viewer's role can actually put in it. */
+export const editColumns = (canPenalty: boolean): GridColumnBase[] => {
+  const action = canPenalty ? ACTION_WIDTH.director : ACTION_WIDTH.staff;
+  return [...EDIT_COLUMNS_BASE, { key: "action", label: "จัดการ", min: action, fitMin: action, width: action }];
+};
 
 const VIEW_COLUMNS: GridColumnBase[] = [
   { key: "pair", label: "คู่", min: 32, width: 42, align: "center" },
@@ -384,7 +417,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const idARef = useRef<HTMLInputElement>(null); const scoreARef = useRef<HTMLInputElement>(null);
   const idBRef = useRef<HTMLInputElement>(null); const scoreBRef = useRef<HTMLInputElement>(null);
-  const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(EDIT_COLUMNS, storageKey);
+  // ลงดาบ is director-only, so the จัดการ floor is too. `Boolean(onPenalty)` rather than the
+  // callback itself: the parent passes an inline arrow, so the identity changes every render.
+  const canPenalty = Boolean(onPenalty);
+  const columns = useMemo(() => editColumns(canPenalty), [canPenalty]);
+  // Role is part of the layout identity: a director and a staff member have different floors, and
+  // a restored width array bypasses fitting entirely. Without this, logging out of a director
+  // account and into a staff one in the same tab would restore the director's wider จัดการ.
+  const { colWidths, totalWidth, scrollRef, startResize } = useResizableColumns(columns, `${storageKey}:${canPenalty ? "dir" : "staff"}`);
   // Row callbacks read the latest drafts through a ref so they can stay referentially stable
   // (useCallback with no per-keystroke deps) — that is what lets memoized rows skip re-rendering
   // while another cell is being typed.
@@ -440,7 +480,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const identityRows = useMemo(() => slots.map((slot) => ({ slot, pairing: slot.pairing })), [slots]);
   const uniqueValues = useMemo(() => uniqueColumnValues(identityRows, accessors, ENTRY_FILTER_KEYS), [identityRows, accessors]);
   const filtered = useMemo(() => {
-    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, ["id1", "id2"]);
+    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, ENTRY_CODE_GROUP, ENTRY_CODE_GROUP);
     return status === "all" ? byColumn : byColumn.filter((row) => row.status === status);
   }, [rows, accessors, controls.filters, controls.textFilters, controls.sort, status]);
 
@@ -785,8 +825,11 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
       )}
 
       <div className="entry-grid-scroll entry-grid-scroll--result-entry" ref={scrollRef}>
-        <table className="entry-grid entry-grid--match" style={{ width: totalWidth }} aria-label="กรอกผลการแข่งขัน">
-          <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
+        {/* `entry-grid--entry` is the discriminator for this table's dissent from the shared mirror
+            styling: `entry-grid--match` is worn by four grids (both result grids, plus the overview's
+            pairing and result tables), and those DO want the muted mirror ink. */}
+        <table className="entry-grid entry-grid--match entry-grid--entry" style={{ width: totalWidth }} aria-label="กรอกผลการแข่งขัน">
+          <GridHead columns={columns} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => ENTRY_FILTER_KEYS.includes(key),
             filterable: (key) => ENTRY_FILTER_KEYS.includes(key),
             sort: controls.sort,
@@ -807,7 +850,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
           }} />
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td className="egrid-empty" colSpan={EDIT_COLUMNS.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
+              <tr><td className="egrid-empty" colSpan={columns.length}><strong>ไม่พบคู่ตามตัวกรอง</strong><span>ลองล้างตัวกรองเพื่อดูทุกคู่</span></td></tr>
             ) : filtered.map((row) => {
               const { slot, pairing } = row;
               const draft = pairing ? drafts[pairing.id] : undefined;

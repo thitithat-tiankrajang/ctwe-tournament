@@ -18,12 +18,27 @@ export interface FreshSecretInputProps extends Omit<InputHTMLAttributes<HTMLInpu
  * accessibility tree, so a screen reader read the password out. CSS masking is not masking.
  *
  * The trade this makes, and it is a real one: `type="password"` is also what browser password
- * managers key on, and avoiding them was the original reason this component existed. Every
- * suppression signal available is kept below — the per-manager ignore attributes cover 1Password,
- * Bitwarden, LastPass and Proton, and `new-password` is the strongest standard hint (`off` is
- * ignored for password fields). None of them binds Chrome's or Safari's built-in "save password?"
- * prompt. On the shared venue machines of D6/D9 that prompt is the residual risk; see the P6
- * closure. Reverting is one expression on the `type` line.
+ * managers key on, and avoiding them was the original reason this component existed. The
+ * per-manager ignore attributes below cover 1Password, Bitwarden, LastPass and Proton. Nothing
+ * here binds Chrome's or Safari's built-in manager — see `docs/ux-refactor/26_…` for the owner
+ * decision that accepts this.
+ *
+ * `autocomplete="off"`, NOT `new-password`. This corrects P6, which reached for `new-password` as
+ * "the strongest standard hint" on the grounds that `off` is ignored for password fields. Both
+ * halves of that are true and the conclusion still did not follow: `new-password` is precisely the
+ * token that tells Chrome this is a signup field, so it answers by offering to GENERATE a password
+ * — trading one unwanted popup for another. `off` does not.
+ *
+ * The honest ledger, because this is a trade and not a win:
+ *   · "Suggest strong password"  — gone. This is what the change buys.
+ *   · "Use saved password"       — may now appear. `off` is ignored for autofill, and `new-password`
+ *                                  was incidentally suppressing it.
+ *   · "Save password?"           — unchanged, and unreachable from this page in any browser.
+ *
+ * Do NOT try to fix the remainder by going back to `type="text"` plus a CSS mask. That was
+ * measured and REJECTED (`21_P6_P7_PLAN.md` §2.4, option 2): `-webkit-text-security` hides the
+ * characters from the screen and from nothing else, so a screen reader reads the password aloud.
+ * CSS masking is not masking.
  */
 export const FreshSecretInput = forwardRef<HTMLInputElement, FreshSecretInputProps>(function FreshSecretInput(
   { className = "", wrapperClassName = "", value, ...props },
@@ -38,7 +53,7 @@ export const FreshSecretInput = forwardRef<HTMLInputElement, FreshSecretInputPro
         className={`${className} fresh-secret-input__control`}
         type={revealed ? "text" : "password"}
         value={value}
-        autoComplete="new-password"
+        autoComplete="off"
         autoCapitalize="none"
         autoCorrect="off"
         spellCheck={false}
