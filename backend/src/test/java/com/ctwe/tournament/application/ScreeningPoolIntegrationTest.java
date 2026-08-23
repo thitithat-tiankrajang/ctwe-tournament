@@ -147,7 +147,7 @@ class ScreeningPoolIntegrationTest {
      * The case that stranded the original rules, and the reason voided slots exist.
      *
      * <p>Both players of one pairing fail to appear, are screened, and are then terminated — every
-     * step of which the rules permit. Before V36 the slot became an unscoreable, unpublishable
+     * step of which the rules permit. Before V37 the slot became an unscoreable, unpublishable
      * both-NULL row: submitResult refuses it, review can never complete it, and the published-pairing
      * CHECK forbids snapshotting it. The round could not advance by any route.
      */
@@ -204,7 +204,11 @@ class ScreeningPoolIntegrationTest {
 
         assertThatThrownBy(() -> service.reviewResults(cardId, ACTOR))
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Screening Pool");
+            .hasMessageContaining("Screening Pool")
+            // The message must name the player using THIS card's prefix. The legacy single-argument
+            // pcode() always renders "P", which would send the director looking for a code that
+            // appears on no screen in this tournament.
+            .hasMessageContaining(external(cardId, held));
     }
 
     @Test
@@ -292,6 +296,30 @@ class ScreeningPoolIntegrationTest {
         assertThat(winner).as("the lone player still wins").isEqualTo(bye[1]);
     }
 
+    /**
+     * A bye's empty seat is forced to 0, so the present player must win with a POSITIVE score. Once
+     * negative scores are allowed for real matches, "greater than whatever was typed opposite" is no
+     * longer enough: -10 beats -50 as typed, but against a forced 0 it would store a winner sitting
+     * below their absent opponent.
+     */
+    @Test
+    void aByeCannotBeWonWithANonPositiveScore() {
+        UUID cardId = cardInResultCollection(7);
+        Integer byeTable = jdbc.queryForObject(
+            "SELECT table_number FROM matches WHERE card_id = ? AND game_number = 1"
+                + " AND (player_one IS NULL) <> (player_two IS NULL) LIMIT 1",
+            Integer.class, cardId);
+        boolean onePresent = Boolean.TRUE.equals(jdbc.queryForObject(
+            "SELECT player_one IS NOT NULL FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
+            Boolean.class, cardId, byeTable));
+
+        // The present player "beats" the empty seat as typed (1 > 0) but scores zero themselves.
+        assertThatThrownBy(() -> service.submitResult(cardId, "g1t" + byeTable,
+            new CardDtos.ResultRequest(onePresent ? 0 : 1, onePresent ? 1 : 0, false), ACTOR))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("บาย");
+    }
+
     @Test
     void aRealMatchStillRequiresAMargin() {
         UUID cardId = cardInResultCollection(8);
@@ -340,7 +368,7 @@ class ScreeningPoolIntegrationTest {
     }
 
     /**
-     * R-B: V37's trigger makes a bare {@code DELETE FROM audit_logs} fail. Card deletion opens the
+     * R-B: V38's trigger makes a bare {@code DELETE FROM audit_logs} fail. Card deletion opens the
      * GUC first — this proves that guard is actually wired, because without it every other test still
      * passes while deletion breaks in production.
      */

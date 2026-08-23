@@ -82,6 +82,93 @@ public final class CardDtos {
     /** Director re-auth for pairing manipulation (undo / unpair). */
     public record PasswordRequest(@NotBlank String password) {}
 
+    // ---- Screening Pool / Multi Switching: one tool, two entry points ----
+
+    /**
+     * The occupancy of one pairing slot. {@code one} / {@code two} are player codes ("P001") or null
+     * for an empty seat. Used both as the precondition ("what it held when I staged") and as the
+     * desired outcome ("what it should hold after").
+     */
+    public record SlotState(
+        @NotNull @Min(1) @Max(12) Integer game,
+        @NotNull @Min(1) @Max(4000) Integer table,
+        String one,
+        String two
+    ) {}
+
+    /** One player to hold, with the controlled reason the pool card and reports filter on. */
+    public record ScreenEntry(
+        @NotBlank String player,
+        @NotBlank String reason,
+        @Size(max = 280) String note
+    ) {}
+
+    /**
+     * A whole change set, committed atomically or not at all.
+     *
+     * <p>{@code expect} is the concurrency precondition: the occupancy of every touched slot as the
+     * client last saw it. A card-level version would be useless here — any staff member submitting
+     * any result anywhere bumps it, so on a live floor the commit would never succeed.
+     *
+     * <p>{@code commitKey} makes a retry safe. {@code force} is accepted but rejected until P4.
+     */
+    public record PairingCommitRequest(
+        @NotNull UUID commitKey,
+        /**
+         * Not {@code @NotBlank}: the same shape serves the dry run, which is read-only and already
+         * gated on MANAGE_PAIRING, so demanding a password there would make the operator type it
+         * once to preview and again to commit. The commit endpoint verifies it through
+         * {@code ReauthenticationService}, which rejects blank and null alike.
+         */
+        String password,
+        boolean force,
+        @NotNull @Size(max = 4000) List<@jakarta.validation.Valid SlotState> expect,
+        @NotNull @Size(max = 4000) List<@jakarta.validation.Valid SlotState> slots,
+        @NotNull @Size(max = 5000) List<@jakarta.validation.Valid ScreenEntry> screen,
+        @NotNull @Size(max = 5000) List<@NotBlank String> release,
+        @NotNull @Size(max = 500) List<@NotBlank String> confirmWarnings
+    ) {}
+
+    /** One slot's before/after, as the diff sheet's first section renders it. */
+    public record PairingChange(int game, int table, String beforeOne, String beforeTwo,
+                                String afterOne, String afterTwo) {}
+
+    /**
+     * Something the commit will cause that the operator did not directly drag: a slot becoming a bye
+     * or a void, a player entering or leaving the pool. The operator cares about the outcome, so a
+     * preview that showed only direct moves would not be a preview of what happens.
+     */
+    public record PairingConsequence(String kind, Integer game, Integer table, String player) {}
+
+    /** An acknowledgeable warning. {@code code} is what the client echoes in confirmWarnings. */
+    public record PairingWarning(String code, int game, int table, String message) {}
+
+    /** A non-overridable refusal. */
+    public record PairingBlock(String code, Integer game, Integer table, String message) {}
+
+    /** A slot whose current occupancy no longer matches what the client staged against. */
+    public record SlotDrift(int game, int table, String expectedOne, String expectedTwo,
+                            String actualOne, String actualTwo) {}
+
+    /**
+     * The dry run's answer, and the entire content of the confirmation sheet. Commit runs the same
+     * evaluation, so a preview can never promise something the commit then refuses.
+     */
+    public record PairingValidationResponse(
+        boolean ok,
+        List<PairingChange> changes,
+        List<PairingConsequence> consequences,
+        List<PairingWarning> warnings,
+        List<PairingBlock> blocks,
+        List<SlotDrift> drift,
+        List<ScreeningHold> pool
+    ) {}
+
+    /** One open hold, as the right-hand panel renders it. */
+    public record ScreeningHold(String player, String screenedAt, String screenedBy, String reason,
+                                String note, Integer originGame, Integer originTable,
+                                Integer originSide, String originOpponent, boolean originStale) {}
+
     /**
      * Reopen player registration ("ลงทะเบียนเพิ่ม"). The password is optional: it is only required
      * (and verified) when a game-1 pairing already exists and must be discarded.
@@ -156,6 +243,16 @@ public final class CardDtos {
         FinalRoundResponse finalRound,
         boolean gibsonEnabled,
         Instant createdAt,
-        String codePrefix
+        String codePrefix,
+        /**
+         * Players currently held in the Screening Pool. Staff-only, and stripped by
+         * {@code PublicCardProjection} exactly as {@code tables} and {@code audit} are — screening is
+         * an unconfirmed operational judgement about a named minor and has no public projection at
+         * all until it becomes a fact (a bye, a penalty, a termination).
+         *
+         * <p>Carried on the card rather than fetched separately so it rides the existing SSE stream:
+         * the tool's pool panel and the pre-generation warning both stay live with no polling.
+         */
+        List<ScreeningHold> screeningPool
     ) {}
 }

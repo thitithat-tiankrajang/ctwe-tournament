@@ -17,6 +17,8 @@ import java.util.List;
  *   <li>{@code tables} — seating is back-office only.</li>
  *   <li>{@code audit} — restricted to {@code ROLE_ADMIN} / {@code ROLE_DIRECTOR}.</li>
  *   <li>{@code finalRound} — hidden until the final round is actually visible to the audience.</li>
+ *   <li>{@code screeningPool} — a hold is a suspicion, not a fact. The public may see a pairing
+ *       change once it is committed, but never that a named player is suspected absent.</li>
  * </ul>
  * It also replaces {@code runtimeStage} with a public-safe stage and {@code version} with the
  * public version, so viewers never observe internal workflow states or staff-side version churn.
@@ -59,7 +61,11 @@ public final class PublicCardProjection {
             source.id(), source.tournamentId(), source.name(), source.division(), source.status(), publicStage,
             source.currentGame(), publicVersion, source.games(), source.initialPairingRule(), List.of(), source.players(), List.of(),
             source.snapshots(), List.of(), source.finalType(), source.finalGames(),
-            finalVisible ? source.finalRound() : null, source.gibsonEnabled(), source.createdAt(), source.codePrefix()
+            finalVisible ? source.finalRound() : null, source.gibsonEnabled(), source.createdAt(), source.codePrefix(),
+            // screeningPool — dropped. A hold is an unconfirmed operational judgement about a named
+            // minor; it has no public projection at all until it becomes a fact the audience can
+            // legitimately see (a bye, a penalty, a termination).
+            List.of()
         );
     }
 }

@@ -34,12 +34,17 @@ class PublicSnapshotGoldenTest {
     /**
      * Fingerprint of the golden payload. Changing this is a deliberate act, never a merge artifact.
      *
-     * <p>Repinned for V36: {@code PairingResponse} gained {@code voided} and {@code resultWithdrawn}.
-     * The regenerated golden was audited as purely additive — both fields present on every pairing,
-     * always {@code false}, with no line removed and no existing value changed.
+     * <p>Repinned twice for the Screening Pool. First for V37: {@code PairingResponse} gained
+     * {@code voided} and {@code resultWithdrawn}. Then for the staff card gaining
+     * {@code screeningPool}. Each regenerated golden was audited as purely additive, with no line
+     * removed and no existing value changed.
+     *
+     * <p>The fixture now feeds a NON-EMPTY pool and the golden records an empty one, so this file
+     * pins the stripping itself. A published snapshot is permanent — a hold that leaked into one
+     * could never be withdrawn from the record.
      */
     private static final String EXPECTED_CHECKSUM =
-        "sha256-73036ecc45d091ad75c68bd0f83288b28bd479cafd21ed353c4e25e83086463d";
+        "sha256-fe1d0681d074480fe6b2b90d7dbf2f7c08d0356699605aff4ec9b1a5f0097572";
 
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final TournamentCardService cards = mock(TournamentCardService.class);

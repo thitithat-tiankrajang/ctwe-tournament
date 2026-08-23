@@ -70,6 +70,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "TABLE_PAIRING",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -232,6 +233,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "RESULT_COLLECTION",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -479,6 +481,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "RESULT_COLLECTION",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "   ",
       "gameNumbers" : [ 3 ],
@@ -641,6 +644,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "PLAYER_REGISTRATION",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -803,6 +807,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "PLAYER_REGISTRATION",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -1082,6 +1087,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "FINAL_COLLECTION",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -1276,6 +1282,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "FINAL_PUBLISHED",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -1470,6 +1477,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "FINAL_PUBLISHED",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -1664,6 +1672,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "FINAL_PUBLISHED",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -1826,6 +1835,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "TABLE_PAIRING",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -1988,6 +1998,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "TABLE_PAIRING",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -2150,6 +2161,7 @@
     } ],
     "rules" : [ ],
     "runtimeStage" : "TABLE_PAIRING",
+    "screeningPool" : [ ],
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],

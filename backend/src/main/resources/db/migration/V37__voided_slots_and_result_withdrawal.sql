@@ -70,7 +70,7 @@ BEGIN
 
   IF target IS NULL THEN
     RAISE EXCEPTION
-      'V36 aborted: the published-pairing CHECK on matches was not found. It may have been renamed '
+      'V37 aborted: the published-pairing CHECK on matches was not found. It may have been renamed '
       'or altered; inspect pg_constraint for conrelid = matches before re-running.';
   END IF;
 
@@ -111,7 +111,7 @@ BEGIN
 
   IF target IS NULL THEN
     RAISE EXCEPTION
-      'V36 aborted: the outcome-consistency CHECK on matches was not found. Inspect pg_constraint '
+      'V37 aborted: the outcome-consistency CHECK on matches was not found. Inspect pg_constraint '
       'for conrelid = matches before re-running.';
   END IF;
 

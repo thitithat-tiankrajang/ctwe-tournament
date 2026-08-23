@@ -254,7 +254,7 @@ class CardEventPublisherTest {
             RuntimeStage.RESULT_COLLECTION, 1, version,
             List.of(), com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
             List.of(), List.of(), List.of(), List.of(), List.of(),
-            "NONE", 0, null, false, Instant.EPOCH, "A");
+            "NONE", 0, null, false, Instant.EPOCH, "A", List.of());
     }
 
     private static final class FailingEmitter extends SseEmitter {

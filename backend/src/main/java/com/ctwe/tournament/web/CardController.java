@@ -1,6 +1,7 @@
 package com.ctwe.tournament.web;
 
 import com.ctwe.tournament.application.CardEventPublisher;
+import com.ctwe.tournament.application.PairingSessionService;
 import com.ctwe.tournament.application.PublicCardQueryService;
 import com.ctwe.tournament.application.TournamentCardService;
 import com.ctwe.tournament.application.WebPushService;
@@ -34,12 +35,15 @@ public class CardController {
     private final PublicCardQueryService publicCards;
     private final AuthorizationService authz;
     private final ReauthenticationService reauthentication;
+    private final PairingSessionService pairingSession;
     private final CardEventPublisher events;
     private final WebPushService push;
 
     public CardController(TournamentCardService service, PublicCardQueryService publicCards,
                           AuthorizationService authz, ReauthenticationService reauthentication,
-                          CardEventPublisher events, WebPushService push) {
+                          CardEventPublisher events, WebPushService push,
+                          PairingSessionService pairingSession) {
+        this.pairingSession = pairingSession;
         this.service = service;
         this.publicCards = publicCards;
         this.authz = authz;
@@ -169,6 +173,59 @@ public class CardController {
     public CardDtos.CardResponse previewPairings(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         return changed(cardId, () -> service.generatePairingPreview(cardId, authentication.getName()));
+    }
+
+    // ---- Screening Pool / Multi Switching: one tool, two entry points ----
+
+    /** The open Screening Pool, for the tool's right-hand panel. */
+    @GetMapping("/{cardId}/pairing/pool")
+    public List<CardDtos.ScreeningHold> screeningPool(@PathVariable UUID cardId, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PAIRING);
+        return pairingSession.openHolds(cardId);
+    }
+
+    /**
+     * Dry run: what would this change set do?
+     *
+     * <p>Deliberately NOT wrapped in {@link #changed} — it writes nothing and must broadcast nothing.
+     * It runs the same evaluation the commit runs, so the confirmation sheet cannot promise something
+     * the commit would then refuse.
+     */
+    @PostMapping("/{cardId}/pairing/validate")
+    public CardDtos.PairingValidationResponse validatePairingChange(
+        @PathVariable UUID cardId, @Valid @RequestBody CardDtos.PairingCommitRequest request,
+        Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PAIRING);
+        return pairingSession.validate(cardId, request);
+    }
+
+    /**
+     * Apply a staged change set: pairing rows, Screening Pool rows and audit in one transaction.
+     *
+     * <p>The password is verified here as well as when the tool was opened. Two verifications, no
+     * session token: the rule is authenticate-on-open and authenticate-on-commit, and a token would
+     * add server state without guarding anything the commit's own check does not already guard.
+     */
+    @PostMapping("/{cardId}/pairing/commit")
+    public CardDtos.CardResponse commitPairingChange(
+        @PathVariable UUID cardId, @Valid @RequestBody CardDtos.PairingCommitRequest request,
+        Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PAIRING);
+        reauthentication.requireCurrentPassword(authentication, request.password());
+        return changed(cardId, () -> pairingSession.commit(cardId, request, authentication.getName()));
+    }
+
+    /**
+     * Verify the director's password without doing anything, so opening the tool can authenticate.
+     * Returns the current pool so the panel has its contents in the same round trip.
+     */
+    @PostMapping("/{cardId}/pairing/session")
+    public List<CardDtos.ScreeningHold> openPairingSession(
+        @PathVariable UUID cardId, @Valid @RequestBody CardDtos.PasswordRequest request,
+        Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PAIRING);
+        reauthentication.requireCurrentPassword(authentication, request.password());
+        return pairingSession.openHolds(cardId);
     }
 
     @PostMapping("/{cardId}/pairings/undo")

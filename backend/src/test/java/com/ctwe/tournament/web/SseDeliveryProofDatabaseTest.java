@@ -106,7 +106,7 @@ class SseDeliveryProofDatabaseTest {
     void cleanup() {
         if (cardId != null) {
             // This teardown is not transactional, so the append-only guards on pairing_snapshots
-            // (V2) and audit_logs (V37) apply to it exactly as they do to production code. Both are
+            // (V2) and audit_logs (V38) apply to it exactly as they do to production code. Both are
             // opened for this connection the same way TournamentCardService.delete() opens them.
             jdbc.execute("SET app.allow_snapshot_delete = 'on'");
             jdbc.execute("SET app.allow_audit_delete = 'on'");

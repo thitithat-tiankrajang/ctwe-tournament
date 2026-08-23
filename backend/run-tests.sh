@@ -47,6 +47,15 @@ fi
 export DATABASE_URL="jdbc:postgresql://$DB_HOST:$DB_PORT/$DB_SCRATCH"
 export DATABASE_USER="$DB_USER"
 
+# The scratch database is seeded from the dev one, whose applied history can be AHEAD of this branch
+# — a migration living on a different feature branch is applied there but does not exist here, and
+# Flyway refuses to start on "applied migration not resolved locally". That is branch topology, not a
+# schema problem, and it resolves itself once the branches converge on main.
+#
+# Scoped to this harness only. Never set it for a real deployment: outside this script the check is
+# exactly what catches a migration that was deleted or renamed after being applied.
+export SPRING_FLYWAY_IGNORE_MIGRATION_PATTERNS='*:missing'
+
 [ "$1" = "--reset" ] && shift
 cd "$(dirname "$0")"
 mvn -o "$@" test

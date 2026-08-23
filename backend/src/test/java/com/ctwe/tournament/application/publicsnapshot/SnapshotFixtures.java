@@ -131,7 +131,11 @@ final class SnapshotFixtures {
             List.of(new CardDtos.AuditResponse("a1", "2026-08-01T10:00:00Z", "director01",
                 "PUBLISH_GAME_RESULTS", null, "game [1]")),
             finalRound == null ? "NONE" : "CHAMPION_AND_THIRD", finalRound == null ? 0 : 3,
-            finalRound, true, Instant.parse("2026-08-01T03:00:00Z"), "P");
+            finalRound, true, Instant.parse("2026-08-01T03:00:00Z"), "P",
+            // Non-empty on purpose: a published snapshot is PERMANENT, so if a hold ever leaked into
+            // one it could not be withdrawn from the record. The golden pins that it does not.
+            List.of(new CardDtos.ScreeningHold("P002", "2026-08-01T10:32:00Z", "director01",
+                "NO_SHOW", null, 3, 5, 1, "P012", false)));
     }
 
     static List<CardDtos.SnapshotResponse> confirmedSnapshots() {

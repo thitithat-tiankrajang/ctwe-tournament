@@ -157,9 +157,32 @@ public class TournamentCardService {
         // audit page needs it. It is served on demand via GET /{cardId}/audit instead.
         var audit = List.<CardDtos.AuditResponse>of();
         var finalRound = "NONE".equals(card.finalType()) ? null : loadFinalRound(cardId, prefix);
+        // Staff only. The projection strips it for anonymous viewers, but building it for a public
+        // read would be a wasted query on the hottest path, so it is never built there.
+        var screeningPool = staffView ? loadScreeningPool(cardId, prefix) : List.<CardDtos.ScreeningHold>of();
         return new CardDtos.CardResponse(card.id(), tournamentId, card.name(), card.division(), card.status(), card.runtimeStage(),
             card.currentGame(), card.version(), games, card.initialPairingRule(), rules, players, tables, snapshots, audit,
-            card.finalType(), card.finalGames(), finalRound, card.gibsonEnabled(), card.createdAt(), prefix);
+            card.finalType(), card.finalGames(), finalRound, card.gibsonEnabled(), card.createdAt(), prefix, screeningPool);
+    }
+
+    /** Open holds for the staff card payload, so the tool and the pre-generation warning ride SSE. */
+    private List<CardDtos.ScreeningHold> loadScreeningPool(UUID cardId, String prefix) {
+        return jdbc.query("""
+            SELECT player_code, screened_at, screened_by, reason, note,
+                   origin_game, origin_table, origin_side, origin_opponent, origin_stale
+            FROM screening_pool WHERE card_id = ? AND resolved_at IS NULL
+            ORDER BY screened_at, player_code
+            """, (rs, row) -> new CardDtos.ScreeningHold(
+                pcode(prefix, rs.getInt("player_code")),
+                rs.getTimestamp("screened_at").toInstant().toString(),
+                rs.getString("screened_by"),
+                rs.getString("reason"),
+                rs.getString("note"),
+                nullableInt(rs, "origin_game"),
+                nullableInt(rs, "origin_table"),
+                nullableInt(rs, "origin_side"),
+                pcode(prefix, nullableInt(rs, "origin_opponent")),
+                rs.getBoolean("origin_stale")), cardId);
     }
 
     /** On-demand audit log for the audit page (kept out of the card payload to keep the hot path cheap). */
@@ -607,6 +630,14 @@ public class TournamentCardService {
         pairingLog.put("rule", appliedRule.name());
         pairingLog.put("configuredEdge", card.currentGame() == 1 ? "initial" : "game " + (card.currentGame() - 1) + " -> game " + card.currentGame());
         pairingLog.put("players", activeInGame(cardId, card.currentGame()));
+        // Held players were left out of this field. Recorded so the audit shows WHY the count is what
+        // it is, and surfaced to the director by the UI before they generate — see the note below.
+        var held = jdbc.queryForList("""
+            SELECT player_code FROM screening_pool
+            WHERE card_id = ? AND resolved_at IS NULL ORDER BY player_code
+            """, Integer.class, cardId);
+        if (!held.isEmpty()) pairingLog.put("excludedByScreening",
+            held.stream().map(TournamentCardService::pcode).toList());
         audit(cardId, actor, "GENERATE_PAIRING_PREVIEW", null, pairingLog);
         return get(cardId, true);
     }
@@ -901,8 +932,13 @@ public class TournamentCardService {
             boolean presentIsOne = match.oneId() != null;
             int presentScore = presentIsOne ? scoreOne : scoreTwo;
             int otherScore = presentIsOne ? scoreTwo : scoreOne;
-            if (presentScore <= otherScore)
-                throw new IllegalArgumentException("คู่ที่ไม่มีคู่แข่ง (บาย) ต้องให้ผู้เล่นที่อยู่เป็นผู้ชนะเท่านั้น");
+            // Above zero, not merely above whatever was typed opposite. The empty seat is forced to 0
+            // below, so a bye "won" with a negative score would store a winner sitting under their
+            // absent opponent. That combination only became reachable once negative scores were
+            // allowed for real matches (V35 on the scores branch), which deliberately kept the bye
+            // rule intact — this is where the backend holds up its end of that.
+            if (presentScore <= 0 || presentScore <= otherScore)
+                throw new IllegalArgumentException("คู่ที่ไม่มีคู่แข่ง (บาย) ต้องให้ผู้เล่นที่อยู่เป็นผู้ชนะด้วยแต้มมากกว่าศูนย์");
             winner = presentIsOne ? match.oneId() : match.twoId();
             resultType = "WIN";
             // The empty seat always scores 0, and the margin never becomes an advantage.
@@ -1231,8 +1267,8 @@ public class TournamentCardService {
             boolean presentIsOne = match.oneId() != null;
             int presentScore = presentIsOne ? scoreOne : scoreTwo;
             int otherScore = presentIsOne ? scoreTwo : scoreOne;
-            if (presentScore <= otherScore)
-                throw new IllegalArgumentException("คู่ที่ไม่มีคู่แข่ง (บาย) ต้องให้ผู้เล่นที่อยู่เป็นผู้ชนะเท่านั้น");
+            if (presentScore <= 0 || presentScore <= otherScore)
+                throw new IllegalArgumentException("คู่ที่ไม่มีคู่แข่ง (บาย) ต้องให้ผู้เล่นที่อยู่เป็นผู้ชนะด้วยแต้มมากกว่าศูนย์");
             winner = presentIsOne ? match.oneId() : match.twoId();
             resultType = "WIN";
             scoreOne = presentIsOne ? presentScore : 0;
@@ -1369,7 +1405,7 @@ public class TournamentCardService {
         jdbc.update("DELETE FROM players WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM pairing_rules WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM games WHERE card_id = ?", cardId);
-        // audit_logs is append-only (V37); the trigger only permits deletion under this flag.
+        // audit_logs is append-only (V38); the trigger only permits deletion under this flag.
         jdbc.execute("SET LOCAL app.allow_audit_delete = 'on'");
         jdbc.update("DELETE FROM audit_logs WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM tournament_cards WHERE id = ?", cardId);
@@ -2347,6 +2383,83 @@ public class TournamentCardService {
                           AND sp.resolved_at IS NULL)
         """;
 
+    // ---- Accessors for PairingSessionService -------------------------------
+    //
+    // The pairing tool needs a handful of facts this class already owns. They are exposed as narrow
+    // read methods rather than by moving pairing logic out, because the completeness gates, the
+    // generators and the tool must all agree about who is playing — and they can only be guaranteed
+    // to agree while they read the same code.
+
+    /** Stage facts the pairing tool guards on. */
+    public record CardSummary(CardStatus status, RuntimeStage stage, int currentGame,
+                              List<Integer> editableGames) {}
+
+    /**
+     * Stage facts, read WITHOUT locking the card row.
+     *
+     * <p>{@code cardRow} takes {@code FOR UPDATE} — right for a mutation, fatal for the pairing
+     * tool's dry run, which runs in a read-only transaction where PostgreSQL refuses
+     * {@code SELECT ... FOR UPDATE} outright. The commit path still locks, in its own step.
+     */
+    @Transactional(readOnly = true)
+    public CardSummary cardSummary(UUID cardId) {
+        CardRow card;
+        try {
+            card = jdbc.queryForObject("""
+                SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version,
+                       final_type, final_games, gibson_enabled, code_prefix, initial_pairing_rule
+                FROM tournament_cards WHERE id = ?
+                """, (rs, row) -> new CardRow(rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
+                rs.getInt("number_of_games"), CardStatus.valueOf(rs.getString("status")), RuntimeStage.valueOf(rs.getString("runtime_stage")),
+                rs.getInt("current_game"), rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
+                rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled"),
+                rs.getString("code_prefix"), initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
+        } catch (EmptyResultDataAccessException error) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
+        }
+        return new CardSummary(card.status(), card.runtimeStage(), card.currentGame(),
+            activeResultGames(card));
+    }
+
+    /** Game 1 before confirmation lives in table_seats, which cannot represent an empty seat. */
+    public boolean hasSeatLayout(UUID cardId) {
+        return count("SELECT COUNT(*) FROM table_seats WHERE card_id = ?", cardId) > 0;
+    }
+
+    /** The player's per-card code, or null when the id does not belong to this card. */
+    public Integer playerCodeOrNull(UUID cardId, String externalId) {
+        try { return playerCode(cardId, externalId); }
+        catch (RuntimeException notFound) { return null; }
+    }
+
+    public boolean isTerminated(UUID cardId, int code) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+            "SELECT terminated_at IS NOT NULL FROM players WHERE card_id = ? AND code = ?",
+            Boolean.class, cardId, code));
+    }
+
+    /** Confirmable warning, not a block — matching what the single-pair swap has always done. */
+    public boolean shareSchool(UUID cardId, Integer one, Integer two) {
+        return sameSchool(cardId, one, two);
+    }
+
+    /** True when these two have already been paired in any game of this card. */
+    public boolean haveMetBefore(UUID cardId, Integer one, Integer two) {
+        if (one == null || two == null) return false;
+        return count("""
+            SELECT COUNT(*) FROM matches
+            WHERE card_id = ? AND ((player_one = ? AND player_two = ?) OR (player_one = ? AND player_two = ?))
+            """, cardId, one, two, two, one) > 0;
+    }
+
+    public void touchCard(UUID cardId) { touch(cardId); }
+
+    public void publishPublicVersion(UUID cardId) { publishPublic(cardId); }
+
+    public void writeAudit(UUID cardId, String actor, String action, Object oldValue, Object newValue) {
+        audit(cardId, actor, action, oldValue, newValue);
+    }
+
     /**
      * No screening may cross a gate that finalises a game.
      *
@@ -2364,9 +2477,14 @@ public class TournamentCardService {
             SELECT player_code FROM screening_pool
             WHERE card_id = ? AND resolved_at IS NULL ORDER BY player_code
             """, Integer.class, cardId);
-        if (!held.isEmpty())
-            throw new IllegalArgumentException("ต้องจัดการผู้เล่นใน Screening Pool ให้ครบก่อน (คืนเข้าคู่ หรือ terminate): "
-                + held.stream().map(TournamentCardService::pcode).toList());
+        if (held.isEmpty()) return;
+        // The card's OWN prefix, not the legacy single-argument pcode() that always renders "P": this
+        // message names the players the director has to go and find, and a code that does not match
+        // what every other screen shows sends them looking for someone who does not exist.
+        String prefix = jdbc.queryForObject(
+            "SELECT code_prefix FROM tournament_cards WHERE id = ?", String.class, cardId);
+        throw new IllegalArgumentException("ต้องจัดการผู้เล่นใน Screening Pool ให้ครบก่อน (คืนเข้าคู่ หรือ terminate): "
+            + held.stream().map(code -> pcode(prefix, code)).toList());
     }
 
     private long activePlayerCount(UUID cardId) {

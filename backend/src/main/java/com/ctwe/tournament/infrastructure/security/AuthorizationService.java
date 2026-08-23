@@ -24,8 +24,14 @@ import java.util.UUID;
  */
 @Service
 public class AuthorizationService {
-    /** PENALIZE_RESULT is intentionally director-only, including withdrawal of an existing penalty. */
-    public enum Capability { MANAGE_PLAYERS, SUBMIT_RESULT, RUN_TOURNAMENT, PENALIZE_RESULT }
+    /**
+     * PENALIZE_RESULT is intentionally director-only, including withdrawal of an existing penalty.
+     *
+     * <p>MANAGE_PAIRING covers the Screening Pool and Multi Switching — holding a player out of the
+     * active pairing, returning them, and committing a batch of pairing changes. It falls through to
+     * the same admin-or-director rule as the rest; only PENALIZE_RESULT needs its own branch.
+     */
+    public enum Capability { MANAGE_PLAYERS, SUBMIT_RESULT, RUN_TOURNAMENT, PENALIZE_RESULT, MANAGE_PAIRING }
 
     private final JdbcTemplate jdbc;
 
