@@ -219,6 +219,47 @@ public class CardEventPublisher {
         for (SseEmitter emitter : cardEmitters) send(emitters, cardId, emitter, "result", patch.version(), event);
     }
 
+    /**
+     * Staff pairing delta: the new card, the slots that moved, and WHO moved them.
+     *
+     * <p>One event rather than a bare state bump, because two subscribers need the attribution. The
+     * pairing tool marks exactly those slots conflicted instead of making the operator re-check a
+     * whole board, and result entry locks the affected row with a name on it rather than failing on
+     * submit with a validation message about byes.
+     *
+     * <p>Staff-only, like {@link #publishResult}: it carries an account name and must never reach the
+     * anonymous viewer stream. Committed pairing changes reach the public through the ordinary
+     * public-version bump, which carries no actor.
+     */
+    public void publishPairingCommit(UUID cardId, CardDtos.CardResponse card,
+                                     List<CardDtos.PairingChange> changedSlots, String actor) {
+        List<SseEmitter> cardEmitters = emitters.get(cardId);
+        if (cardEmitters == null || cardEmitters.isEmpty()) return;
+
+        StaffPairingChangeEvent event = new StaffPairingChangeEvent(
+            cardId, card.version(), Instant.now(), card, changedSlots, actor);
+        for (SseEmitter emitter : cardEmitters)
+            send(emitters, cardId, emitter, "pairing", card.version(), event);
+    }
+
+    /**
+     * Advisory notice that a director has the pairing tool open, or has closed it.
+     *
+     * <p>Grants nothing and blocks nothing — it exists so two directors do not silently duplicate the
+     * same repair. Deliberately not a lock: blocking a second operator during a live round is a worse
+     * failure than two of them discovering the overlap at commit, where the per-slot precondition
+     * catches it anyway.
+     */
+    public void publishPairingPresence(UUID cardId, String actor, boolean open) {
+        List<SseEmitter> cardEmitters = emitters.get(cardId);
+        if (cardEmitters == null || cardEmitters.isEmpty()) return;
+
+        PairingPresenceEvent event = new PairingPresenceEvent(cardId, actor, open, Instant.now());
+        // Version -1: presence is not card state and must never move a subscriber's version pointer.
+        for (SseEmitter emitter : cardEmitters)
+            send(emitters, cardId, emitter, "pairing-presence", -1, event);
+    }
+
     public void publishPublic(UUID cardId, long version) {
         List<SseEmitter> cardEmitters = publicEmitters.get(cardId);
         if (cardEmitters == null || cardEmitters.isEmpty()) return;
@@ -525,6 +566,12 @@ public class CardEventPublisher {
     public record StaffResultChangeEvent(UUID cardId, long version, Instant updatedAt,
                                          List<CardDtos.PairingResponse> changedPairings,
                                          String actor, List<String> actorRoles) {}
+    /** STAFF pairing delta: the new card, which slots moved, and the acting account. */
+    public record StaffPairingChangeEvent(UUID cardId, long version, Instant updatedAt,
+                                          CardDtos.CardResponse card,
+                                          List<CardDtos.PairingChange> changedSlots, String actor) {}
+    /** Advisory "someone has the pairing tool open". Carries no version — it is not card state. */
+    public record PairingPresenceEvent(UUID cardId, String actor, boolean open, Instant at) {}
     public record PairingsPublishEvent(UUID cardId, long version, Instant updatedAt, int gameNumber,
                                        List<CardDtos.PairingResponse> pairings) {}
     public record SnapshotPublishEvent(UUID cardId, long version, Instant updatedAt, String snapshotId,

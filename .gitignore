@@ -20,3 +20,4 @@ load-testing/reports/runbook-*.md
 
 # Office lock files ("~$name.xlsx") appear whenever a workbook in the repo is open.
 ~$*
+.claude/worktrees/

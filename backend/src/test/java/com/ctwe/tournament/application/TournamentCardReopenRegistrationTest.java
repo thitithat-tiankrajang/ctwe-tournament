@@ -56,7 +56,8 @@ class TournamentCardReopenRegistrationTest {
             jdbc,
             mock(PairingStrategyRegistry.class),
             new ObjectMapper(),
-            new RankingSource(jdbc)
+            new RankingSource(jdbc),
+            new ScreeningPoolStore(jdbc)
         ));
         doReturn(null).when(service).get(cardId, true);
         return service;

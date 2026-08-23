@@ -31,9 +31,20 @@ class PublicSnapshotGoldenTest {
     private static final Path GOLDEN = Path.of("src/test/resources/golden/public-snapshot-payload.json");
     private static final Path ACTUAL = Path.of("target/public-snapshot-actual.json");
 
-    /** Fingerprint of the golden payload. Changing this is a deliberate act, never a merge artifact. */
+    /**
+     * Fingerprint of the golden payload. Changing this is a deliberate act, never a merge artifact.
+     *
+     * <p>Repinned twice for the Screening Pool. First for V37: {@code PairingResponse} gained
+     * {@code voided} and {@code resultWithdrawn}. Then for the staff card gaining
+     * {@code screeningPool}. Each regenerated golden was audited as purely additive, with no line
+     * removed and no existing value changed.
+     *
+     * <p>The fixture now feeds a NON-EMPTY pool and the golden records an empty one, so this file
+     * pins the stripping itself. A published snapshot is permanent — a hold that leaked into one
+     * could never be withdrawn from the record.
+     */
     private static final String EXPECTED_CHECKSUM =
-        "sha256-dfb2ef77e4e43b3740b60a44f2c70727da0026aa9b99769e6a5e567530b4a722";
+        "sha256-fe1d0681d074480fe6b2b90d7dbf2f7c08d0356699605aff4ec9b1a5f0097572";
 
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final TournamentCardService cards = mock(TournamentCardService.class);

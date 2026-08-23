@@ -81,6 +81,119 @@ export interface Pairing {
   playerOneGibsonized?: boolean;
   playerTwoGibsonized?: boolean;
   pairingPublished?: boolean;
+  /**
+   * The slot lost both players to screening. It keeps its table number so seat numbering and printed
+   * table cards stay valid, but it holds nobody and needs no result — every completeness check skips
+   * it, and so must every score input.
+   */
+  voided?: boolean;
+  /**
+   * A result the audience had already seen was removed by a force commit, and no replacement has been
+   * entered yet. Shown as withdrawn rather than as "not yet played", and cleared the moment staff
+   * submit a new result.
+   */
+  resultWithdrawn?: boolean;
+}
+
+/** Why a player is being held. Controlled so the pool is filterable and reportable. */
+export type ScreeningReason = "NO_SHOW" | "LATE" | "MEDICAL" | "OTHER";
+
+/**
+ * One player held in the Screening Pool: still a competitor, still in ranking, temporarily out of
+ * the active pairing. Staff-only — the public projection strips this entirely.
+ */
+export interface ScreeningHold {
+  player: string;
+  screenedAt: string;
+  screenedBy: string;
+  reason: ScreeningReason;
+  note: string | null;
+  /** Where they were sitting when held. Captured at that moment — vacating the seat destroys it. */
+  originGame: number | null;
+  originTable: number | null;
+  originSide: number | null;
+  originOpponent: string | null;
+  /** The captured pairing has since changed, so treat the context as historical, not current. */
+  originStale: boolean;
+}
+
+/** Desired or observed occupancy of one pairing slot. `null` is an empty seat. */
+export interface SlotState {
+  game: number;
+  table: number;
+  one: string | null;
+  two: string | null;
+}
+
+export interface PairingChange {
+  game: number;
+  table: number;
+  beforeOne: string | null;
+  beforeTwo: string | null;
+  afterOne: string | null;
+  afterTwo: string | null;
+}
+
+/** Something the commit causes that the operator did not directly drag. */
+export interface PairingConsequence {
+  kind: "BECOMES_BYE" | "BECOMES_VOID" | "UNVOIDED" | "POOL_ADD" | "POOL_REMOVE" | "RESULT_REMOVED";
+  game: number | null;
+  table: number | null;
+  player: string | null;
+}
+
+export interface PairingWarning { code: string; game: number; table: number; message: string }
+export interface PairingBlock { code: string; game: number | null; table: number | null; message: string }
+export interface SlotDrift {
+  game: number;
+  table: number;
+  expectedOne: string | null;
+  expectedTwo: string | null;
+  actualOne: string | null;
+  actualTwo: string | null;
+}
+
+/**
+ * One competition result a force commit would destroy, in full: both players, both scores, the
+ * winner, and who entered it when. The confirmation screen shows exactly this — a password proves
+ * identity, not intent, so the operator has to read what they are about to erase.
+ */
+export interface DestroyedResult {
+  game: number;
+  table: number;
+  playerOne: string | null;
+  playerTwo: string | null;
+  scoreOne?: number;
+  scoreTwo?: number;
+  resultType?: string;
+  winner: string | null;
+  calculatedDiff?: number;
+  submittedBy?: string;
+  submittedAt?: string;
+}
+
+/** The dry run's answer, and the whole content of the confirmation sheet. */
+export interface PairingValidation {
+  ok: boolean;
+  changes: PairingChange[];
+  consequences: PairingConsequence[];
+  warnings: PairingWarning[];
+  blocks: PairingBlock[];
+  drift: SlotDrift[];
+  pool: ScreeningHold[];
+  /** Results the change set collides with, whether or not force was asked for. */
+  resultsToRemove: DestroyedResult[];
+  /** False when any of them cannot be safely unwound — the button must not be offered. */
+  forceAvailable: boolean;
+}
+
+/** A staged change set. `expect` is the per-slot precondition the server re-checks under lock. */
+export interface PairingChangeSet {
+  expect: SlotState[];
+  slots: SlotState[];
+  screen: { player: string; reason: ScreeningReason; note?: string }[];
+  release: string[];
+  confirmWarnings: string[];
 }
 
 export interface PairingSnapshot {
@@ -220,6 +333,12 @@ export interface TournamentCard {
   finalRound: FinalRound | null;
   gibsonEnabled: boolean;
   createdAt: string;
+  /**
+   * Players currently held in the Screening Pool. Staff payloads only — the public projection
+   * always sends an empty array. Carried on the card so it rides the existing SSE stream: the tool's
+   * pool panel and the pre-generation warning both stay live without polling.
+   */
+  screeningPool?: ScreeningHold[];
   /** Per-card player-code letter prefix (A, B, …), unique within the tournament. "P" for legacy data. */
   codePrefix?: string;
   /** Present on the compact anonymous catalog representation. */

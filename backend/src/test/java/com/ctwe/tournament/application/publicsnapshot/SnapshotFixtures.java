@@ -131,7 +131,11 @@ final class SnapshotFixtures {
             List.of(new CardDtos.AuditResponse("a1", "2026-08-01T10:00:00Z", "director01",
                 "PUBLISH_GAME_RESULTS", null, "game [1]")),
             finalRound == null ? "NONE" : "CHAMPION_AND_THIRD", finalRound == null ? 0 : 3,
-            finalRound, true, Instant.parse("2026-08-01T03:00:00Z"), "P");
+            finalRound, true, Instant.parse("2026-08-01T03:00:00Z"), "P",
+            // Non-empty on purpose: a published snapshot is PERMANENT, so if a hold ever leaked into
+            // one it could not be withdrawn from the record. The golden pins that it does not.
+            List.of(new CardDtos.ScreeningHold("P002", "2026-08-01T10:32:00Z", "director01",
+                "NO_SHOW", null, 3, 5, 1, "P012", false)));
     }
 
     static List<CardDtos.SnapshotResponse> confirmedSnapshots() {
@@ -146,11 +150,11 @@ final class SnapshotFixtures {
 
     static List<CardDtos.PairingResponse> pairings() {
         return List.of(
-            new CardDtos.PairingResponse("m-1-1", 1, 1, "P001", "P002", "P001", 420, 300, "WIN", 120, true, false, true),
-            new CardDtos.PairingResponse("m-1-2", 1, 2, "P002", "P003", null, 350, 350, "DRAW", 0, false, false, true),
-            new CardDtos.PairingResponse("m-2-1", 2, 1, "P001", "P003", null, null, null, "PENALTY", 0, false, false, true),
-            new CardDtos.PairingResponse("m-2-2", 2, 2, "P002", null, null, null, null, null, null, false, false, true),
-            new CardDtos.PairingResponse("m-3-1", 3, 1, null, null, null, null, null, null, null, false, false, false));
+            new CardDtos.PairingResponse("m-1-1", 1, 1, "P001", "P002", "P001", 420, 300, "WIN", 120, true, false, true, false, false),
+            new CardDtos.PairingResponse("m-1-2", 1, 2, "P002", "P003", null, 350, 350, "DRAW", 0, false, false, true, false, false),
+            new CardDtos.PairingResponse("m-2-1", 2, 1, "P001", "P003", null, null, null, "PENALTY", 0, false, false, true, false, false),
+            new CardDtos.PairingResponse("m-2-2", 2, 2, "P002", null, null, null, null, null, null, false, false, true, false, false),
+            new CardDtos.PairingResponse("m-3-1", 3, 1, null, null, null, null, null, null, null, false, false, false, false, false));
     }
 
     static CardDtos.FinalRoundResponse finalRound() {

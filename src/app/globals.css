@@ -1451,3 +1451,112 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 /* Destructive-action zone at the bottom of a page (e.g. permanently closing a card). */
 .panel--danger { border-color: var(--red-border); }
 .panel--danger .panel__header h2 { color: var(--red); }
+
+/* ---------------------------------------------------------------------------
+   Screening Pool / Multi Switching — one tool, two entry points.
+
+   Desktop and tablet only (the component refuses to render below 1024px): this operation rearranges
+   a live competition, and a cramped, mis-tappable version of it is worse than no version. */
+
+/* Both panels are .confirm-dialog underneath — the app's one modal shell — with a width override
+   and a scrolling body. Only the size and the inner layout are new. */
+.pairing-tool { display: flex; flex-direction: column; max-height: 92vh; width: min(1180px, 96vw); }
+.pairing-tool--narrow { width: min(460px, 96vw); }
+.pairing-tool > header { grid-template-columns: 1fr auto; }
+.pairing-tool__eyebrow { color: var(--yellow-dark); font-size: var(--text-xs); font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+.pairing-tool > header h2 { font-size: 18px; margin: 1px 0 0; }
+
+.pairing-tool__cols { display: grid; gap: 16px; grid-template-columns: 1.45fr 1fr; min-height: 0; overflow-y: auto; padding: 15px 16px; }
+.pairing-tool__col { min-width: 0; }
+.pairing-tool__h { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .06em; margin: 0 0 8px; text-transform: uppercase; }
+.pairing-tool__h + .pairing-tool__h { margin-top: 16px; }
+
+.pairing-tool__slots { display: flex; flex-direction: column; gap: 4px; list-style: none; margin: 0; max-height: 52vh; overflow-y: auto; padding: 0; }
+.pairing-tool__slot { align-items: center; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--border-strong); display: flex; gap: 10px; padding: 6px 9px; }
+/* State is carried by form as well as colour: a stripe plus a text tag, so it survives a colour-blind
+   operator and a washed-out projector alike. */
+.pairing-tool__slot.is-empty { background: var(--yellow-soft); border-left-color: var(--yellow-dark); }
+.pairing-tool__slot.is-locked { background: var(--green-soft); border-left-color: var(--green); }
+.pairing-tool__slot.is-void { background: var(--surface-sunken); border-left-color: var(--muted); color: var(--muted); }
+.pairing-tool__no { color: var(--muted); flex: 0 0 60px; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.pairing-tool__pair { align-items: center; display: flex; flex: 1 1 auto; gap: 8px; min-width: 0; }
+.pairing-tool__vs { color: var(--muted); flex: 0 0 auto; font-size: var(--text-sm); }
+.pairing-tool__tag { color: var(--muted); flex: 0 0 auto; font-size: var(--text-sm); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+
+/* Presence, filters and place mode (P3). */
+.pairing-tool__presence { align-items: center; background: var(--blue-soft); border-bottom: 1px solid var(--border); color: var(--blue-dark); display: flex; font-size: var(--text-sm); gap: 8px; margin: 0; padding: 8px 16px; }
+.pairing-tool__filters { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
+.pairing-tool__toggle { display: flex; flex: 0 0 auto; }
+.pairing-tool__toggle button { background: var(--surface); border: 1px solid var(--border-control); color: var(--muted); cursor: pointer; font-size: var(--text-sm); font-weight: 700; padding: 3px 10px; }
+.pairing-tool__toggle button + button { border-left: 0; }
+.pairing-tool__toggle button.is-on { background: var(--blue-soft); border-color: var(--blue); color: var(--blue-dark); }
+
+.pairing-tool__slot.is-edited { background: var(--blue-soft); border-left-color: var(--blue); }
+.pairing-tool__slot.is-conflict { background: var(--red-soft); border-left-color: var(--red); }
+.pairing-tool__conflict { align-items: center; color: var(--red-dark); display: flex; flex: 0 0 auto; font-size: var(--text-sm); gap: 8px; }
+.pairing-tool__conflict button { background: var(--surface); border: 1px solid var(--red-border); color: var(--red-dark); cursor: pointer; font-size: var(--text-sm); padding: 2px 8px; }
+
+.pairing-tool__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pairing-tool__chip { background: var(--surface); border: 1px dashed var(--border-control); cursor: pointer; font-size: 13px; padding: 5px 10px; }
+.pairing-tool__chip.is-held, .pairing-tool__hold--btn.is-held { border-style: solid; box-shadow: 0 0 0 2px var(--blue); }
+.pairing-tool__hold--btn { cursor: pointer; display: block; text-align: left; width: 100%; }
+.pairing-tool__seat--btn { background: none; font: inherit; text-align: left; }
+/* A valid destination while someone is in hand — outlined, not merely coloured, so it reads at a
+   glance on a projector and to an operator who cannot rely on hue. */
+.pairing-tool__seat--btn.is-target { border-color: var(--blue); border-style: dashed; }
+.pairing-tool__seat--btn:disabled { cursor: not-allowed; opacity: .6; }
+
+.pairing-tool__seat { align-items: center; border: 1px solid transparent; cursor: pointer; display: flex; flex: 1 1 0; gap: 6px; min-width: 0; padding: 3px 6px; }
+.pairing-tool__seat.is-selected { background: var(--yellow-soft); border-color: var(--yellow-dark); }
+.pairing-tool__seat.is-locked { cursor: not-allowed; opacity: .6; }
+.pairing-tool__code { font-variant-numeric: tabular-nums; font-weight: 700; }
+.pairing-tool__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pairing-tool__empty { color: var(--muted); flex: 1 1 0; font-size: var(--text-sm); }
+
+.pairing-tool__hold { background: var(--yellow-soft); border: 1px solid var(--yellow-border); margin-bottom: 6px; padding: 7px 9px; }
+.pairing-tool__hold-top { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px; }
+.pairing-tool__hold-ctx { color: var(--muted); font-size: var(--text-sm); margin: 3px 0 0; }
+.pairing-tool__reason-tag { color: var(--yellow-dark); font-size: var(--text-sm); font-weight: 800; letter-spacing: .06em; margin-left: auto; text-transform: uppercase; }
+.pairing-tool__reasons { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.pairing-tool__reason { align-items: center; cursor: pointer; display: inline-flex; font-size: 13px; gap: 5px; }
+.pairing-tool__hint { color: var(--muted); flex: 1 1 auto; font-size: var(--text-sm); }
+
+/* Shown before generating a pairing while anyone is held: re-seating them afterwards needs a
+   regenerate, which stops being possible once any result is entered. */
+.screening-warning { align-items: flex-start; background: var(--yellow-soft); border: 1px solid var(--yellow-border); color: var(--yellow-dark); display: flex; gap: 10px; margin-bottom: 20px; padding: 12px 14px; }
+.screening-warning strong { display: block; font-size: 13px; }
+.screening-warning p { color: var(--ink-soft); font-size: var(--text-sm); line-height: 1.5; margin: 4px 0 0; max-width: 76ch; }
+
+/* The confirmation sheet: changes, then consequences, then warnings, then blocks. */
+.diff-sheet { display: flex; flex-direction: column; max-height: 90vh; width: min(720px, 96vw); }
+.diff-sheet > h2 { border-bottom: 1px solid var(--border); font-size: 18px; margin: 0; padding: 15px 16px 12px; }
+.diff-sheet > section { padding: 0 16px; }
+.diff-sheet > .fresh-secret-input { margin: 10px 16px 0; }
+.diff-sheet__section { padding-top: 14px; }
+.diff-sheet__section h3 { align-items: center; display: flex; font-size: 12px; gap: 6px; letter-spacing: .05em; margin: 0 0 6px; text-transform: uppercase; }
+.diff-sheet__section--warn h3 { color: var(--yellow-dark); }
+.diff-sheet__section--block h3 { color: var(--red); }
+.diff-sheet__list { display: flex; flex-direction: column; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.diff-sheet__list > li { align-items: center; background: var(--surface-sunken); display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; padding: 6px 9px; }
+.diff-sheet__list--plain > li { background: none; padding: 3px 0; }
+.diff-sheet__slot { color: var(--muted); flex: 0 0 auto; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.diff-sheet__before { color: var(--muted); text-decoration: line-through; }
+.diff-sheet__after { font-weight: 700; }
+.diff-sheet__section:last-of-type { padding-bottom: 14px; }
+.diff-sheet__ack { align-items: flex-start; cursor: pointer; display: flex; font-size: 13px; gap: 7px; padding: 4px 0; }
+
+/* A result the audience had already seen, removed by a force commit. Rendered as WITHDRAWN rather
+   than as "—": an empty cell reads as "not played yet", which is a different and misleading fact. */
+.result-withdrawn { background: var(--red-soft); color: var(--red-dark); font-size: var(--text-sm); font-weight: 800; padding: 1px 6px; }
+
+/* The last screen before a competition result is destroyed. Wider than a normal confirm because the
+   whole point is that the operator reads every row of what they are erasing. */
+.force-confirm { max-height: 88vh; overflow-y: auto; width: min(660px, 96vw); }
+.force-confirm > p { padding-bottom: 0; }
+.force-confirm__list { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: 0; padding: 12px 16px; }
+.force-confirm__list > li { background: var(--red-soft); border-left: 3px solid var(--red); display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; }
+.force-confirm__slot { color: var(--red-dark); font-size: var(--text-sm); font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.force-confirm__players { font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 700; }
+.force-confirm__meta { color: var(--muted); font-size: var(--text-sm); }
+.force-confirm > .form-label { display: block; margin: 0; padding: 12px 16px 4px; }
+.force-confirm > .input, .force-confirm > .fresh-secret-input { margin: 0 16px; width: calc(100% - 32px); }

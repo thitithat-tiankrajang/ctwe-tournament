@@ -68,7 +68,7 @@ class CardEventPublisherTest {
         publisher.subscribe(cardId, () -> 4);
         var changed = List.of(new CardDtos.PairingResponse(
             UUID.randomUUID().toString(), 2, 7, "P0001", "P0002",
-            "P0001", 100, 70, "WIN", 30, false, false, true));
+            "P0001", 100, 70, "WIN", 30, false, false, true, false, false));
 
         publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed), "director-a", List.of("ROLE_DIRECTOR"));
 
@@ -94,7 +94,7 @@ class CardEventPublisherTest {
         publisher.subscribePublic(cardId, () -> 4);
         var changed = List.of(new CardDtos.PairingResponse(
             UUID.randomUUID().toString(), 1, 1, "P0001", "P0002",
-            "P0001", 100, 70, "WIN", 30, false, false, true));
+            "P0001", 100, 70, "WIN", 30, false, false, true, false, false));
 
         publisher.publish(card(cardId, 5));
         publisher.publishResult(cardId, new CardDtos.ResultPatch(5, changed), "director-a", List.of("ROLE_DIRECTOR"));
@@ -254,7 +254,7 @@ class CardEventPublisherTest {
             RuntimeStage.RESULT_COLLECTION, 1, version,
             List.of(), com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
             List.of(), List.of(), List.of(), List.of(), List.of(),
-            "NONE", 0, null, false, Instant.EPOCH, "A");
+            "NONE", 0, null, false, Instant.EPOCH, "A", List.of());
     }
 
     private static final class FailingEmitter extends SseEmitter {
@@ -266,12 +266,43 @@ class CardEventPublisherTest {
         }
     }
 
+    @Test
+    @DisplayName("the pairing delta and presence reach staff only, never the viewer stream")
+    void pairingEventsNeverReachThePublicStream() {
+        UUID cardId = UUID.randomUUID();
+        CapturingEmitter emitter = new CapturingEmitter();
+        CardEventPublisher publisher = new CardEventPublisher(8, 8, Runnable::run) {
+            @Override SseEmitter createEmitter() { return emitter; }
+        };
+        // Subscribe ONLY to the anonymous stream.
+        publisher.subscribePublic(cardId, () -> 4);
+
+        publisher.publishPairingCommit(cardId, null, List.of(), "director01");
+        publisher.publishPairingPresence(cardId, "director01", true);
+
+        // Both carry a staff account name, so reaching this stream would leak an operator's identity
+        // to spectators. They go to the staff emitter map, which has no subscribers here — the only
+        // frame this stream ever saw is its own `connected` handshake.
+        assertThat(emitter.payloads())
+            .as("no staff pairing frame may reach the viewer stream")
+            .noneMatch(CardEventPublisher.StaffPairingChangeEvent.class::isInstance)
+            .noneMatch(CardEventPublisher.PairingPresenceEvent.class::isInstance);
+    }
+
     private static final class CapturingEmitter extends SseEmitter {
         private final List<SseEventBuilder> events = new ArrayList<>();
 
         @Override
         public synchronized void send(SseEventBuilder builder) throws IOException {
             events.add(builder);
+        }
+
+        /** Every payload written to this stream, whatever its type. */
+        List<Object> payloads() {
+            return events.stream()
+                .flatMap(event -> event.build().stream())
+                .map(ResponseBodyEmitter.DataWithMediaType::getData)
+                .toList();
         }
 
         List<CardEventPublisher.CardChangeEvent> changeEvents() {

@@ -17,6 +17,7 @@ import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
 import { stageLabels } from "@/ui/components/stage-info";
+import { PairingToolButtons, ScreeningGenerationWarning } from "@/ui/components/pairing-tool";
 
 export default function TablesPage() {
   const { id } = useParams<{ id: string }>();
@@ -74,6 +75,9 @@ export default function TablesPage() {
   const latestResultSnapshot = publishedSnapshots.find((snapshot) => snapshot.gameNumbers.includes(latestResultGame));
   const latestRanking = latestResultGame > 0 ? rankingAfterGame({ ...card, snapshots: publishedSnapshots }, latestResultGame) : [];
   const pairingActive = canGenerate || preview;
+  // Every stage the pairing tool accepts: before generation (the preferred flow), during
+  // preview, and during result collection — a no-show for a round already underway.
+  const screeningAvailable = canGenerate || preview || card.runtimeStage === "RESULT_COLLECTION";
   const browseGames = [...new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers))].sort((a, b) => a - b);
   const selectedBrowseGame = browseGame && browseGames.includes(browseGame) ? browseGame : (browseGames[browseGames.length - 1] ?? 0);
   const browseSnapshot = publishedSnapshots.find((snapshot) => snapshot.gameNumbers.includes(selectedBrowseGame));
@@ -168,7 +172,7 @@ export default function TablesPage() {
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${stageLabels[card.runtimeStage]}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing <ArrowRight size={16} /></Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
+      <PageHeader eyebrow={`${card.name} · ${stageLabels[card.runtimeStage]}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{screeningAvailable && <PairingToolButtons card={card} />}{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing <ArrowRight size={16} /></Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
 
       {!pairingActive ? (
         browseGames.length === 0 ? (
@@ -189,6 +193,7 @@ export default function TablesPage() {
         )
       ) : (
         <>
+      {canGenerate && <ScreeningGenerationWarning pool={card.screeningPool ?? []} />}
       {canGenerate && <Panel><EmptyState icon={<Shuffle size={25} />} title={`พร้อมสร้าง pairing เกม ${card.currentGame}`} description={card.currentGame === 1 ? "ระบบจะจัดกลุ่ม 4 คนต่อโต๊ะและลดการพบผู้เล่นโรงเรียนเดียวกัน" : `ใช้กติกา ${pairingRuleForGame(card, card.currentGame)} จากผลที่ publish แล้ว`} action={<Button onClick={generate} disabled={busy}><Shuffle size={16} />เริ่ม Pairing</Button>} /></Panel>}
 
       {preview && (
