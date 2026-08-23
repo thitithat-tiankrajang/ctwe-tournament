@@ -26,74 +26,47 @@ class PairingStrategiesTest {
     }
 
     @Test
-    void rankingFollowsDisplayedCumulativeDiffBeforeHiddenTieBreakers() {
-        // B beat A head-to-head and outscored everyone, but the displayed ranking sorts by
-        // capped diff — pairing must agree with what the standings pages show.
-        var players = List.of(
-            score("A", 4, 100, 100, 100),
-            score("B", 4, 80, 999, 999),
-            score("C", 4, 60, 500, 500),
-            score("D", 4, 40, 400, 400)
-        );
-        var context = new PairingStrategy.PairingContext(2, List.of(), Map.of(
-            "B", Map.of("A", 2),
-            "A", Map.of("B", 0)
-        ));
+    void pairingConsumesTheRankingOrderItIsGiven() {
+        // Pairing no longer decides who is ahead. The ranking engine does, and hands the order in.
+        var players = List.of(score("A", 4, 0), score("B", 4, 0), score("C", 4, 0), score("D", 4, 0));
+        var context = rankedContext("C", "A", "D", "B");
 
         assertThat(new KingOfTheHillStrategy().generate(players, context)).containsExactly(
-            pair("A", "B"), pair("C", "D")
+            pair("C", "A"), pair("D", "B")
         );
     }
 
     @Test
-    void rankingUsesHeadToHeadBeforeScoreForAndRawDiffWhenWinPointsAreTied() {
-        var players = List.of(
-            score("1", 4, 0, 10, -100),
-            score("2", 4, 0, 999, 999),
-            score("3", 2, 0, 50, 50),
-            score("4", 2, 0, 40, 40)
-        );
-        var context = new PairingStrategy.PairingContext(2, List.of(), Map.of(
-            "1", Map.of("2", 2),
-            "2", Map.of("1", 0)
-        ));
-
-        assertThat(new KingOfTheHillStrategy().generate(players, context)).containsExactly(
-            pair("1", "2"), pair("3", "4")
-        );
+    void pairingNeverReRanksPlayersItWasHandedInOrder() {
+        // Identical win points and diff, so any order pairing produced on its own would be its own
+        // invention. It must follow the supplied ranking even where that contradicts player code.
+        var players = List.of(score("1", 4, 0), score("2", 4, 0));
+        assertThat(PairingStrategy.ranked(players, rankedContext("2", "1")).stream().map(PairingStrategy.PlayerScore::playerId))
+            .containsExactly("2", "1");
     }
 
     @Test
-    void rankingFallsBackToScoreForRawDiffThenNumericPlayerCode() {
-        var players = List.of(
-            score("10", 4, 0, 20, 100),
-            score("2", 4, 0, 20, 100),
-            score("3", 4, 0, 25, -10),
-            score("4", 4, 0, 20, 200)
-        );
+    void aPlayerTheRankingDoesNotCoverSortsLastOnTheirCode() {
+        // A field can legitimately contain someone with no standing yet; pairing must still work
+        // rather than throwing, and must stay deterministic.
+        var players = List.of(score("10", 0, 0), score("2", 0, 0), score("7", 4, 0));
+        var context = rankedContext("7");
 
-        assertThat(new KingOfTheHillStrategy().generate(players, CONTEXT)).containsExactly(
-            pair("3", "4"), pair("2", "10")
-        );
+        assertThat(PairingStrategy.ranked(players, context).stream().map(PairingStrategy.PlayerScore::playerId))
+            .containsExactly("7", "2", "10");
     }
 
     @Test
-    void rankingHandlesCircularHeadToHeadByUsingTheNextTieBreakers() {
-        var players = List.of(
-            score("1", 4, 0, 10, 10),
-            score("2", 4, 0, 20, 20),
-            score("3", 4, 0, 30, 30),
-            score("4", 4, 0, 0, 0)
-        );
-        var context = new PairingStrategy.PairingContext(2, List.of(), Map.of(
-            "1", Map.of("2", 2, "3", 0),
-            "2", Map.of("1", 0, "3", 2),
-            "3", Map.of("1", 2, "2", 0)
-        ));
+    void withoutAnyRankingPairingFallsBackToNumericPlayerCode() {
+        var players = List.of(score("10", 4, 0), score("2", 4, 0), score("3", 4, 0));
+        assertThat(PairingStrategy.ranked(players, CONTEXT).stream().map(PairingStrategy.PlayerScore::playerId))
+            .containsExactly("2", "3", "10");
+    }
 
-        assertThat(new KingOfTheHillStrategy().generate(players, context)).containsExactly(
-            pair("3", "2"), pair("1", "4")
-        );
+    @Test
+    void byeSelectionTakesTheLastPlayerInRankingOrder() {
+        var players = List.of(score("A", 4, 0), score("B", 4, 0), score("C", 4, 0));
+        assertThat(new KingOfTheHillStrategy().selectBye(players, rankedContext("C", "A", "B"))).isEqualTo("B");
     }
 
     @Test
@@ -144,20 +117,30 @@ class PairingStrategiesTest {
     }
 
     @Test
-    void swissUsesVisibleRankingOrderWhenHiddenTieBreakersDisagree() {
+    void swissOrdersInsideEachScoreGroupByTheRankingItIsGiven() {
+        // The invariant this replaces is unchanged in spirit: Swiss consumes the order the standings
+        // show. What changed is that the order now arrives from the ranking engine instead of being
+        // recomputed here from win points, diff and the player's registration number.
         var players = List.of(
-            score("8", 0, -350, 800, 800), score("7", 0, -350, 700, 700),
-            score("6", 0, -350, 600, 600), score("5", 0, -350, 500, 500),
-            score("4", 0, -350, 400, 400), score("3", 0, -350, 300, 300),
-            score("2", 0, -350, 200, 200), score("1", 0, -350, 100, 100)
+            score("8", 0, -350), score("7", 0, -350), score("6", 0, -350), score("5", 0, -350),
+            score("4", 0, -350), score("3", 0, -350), score("2", 0, -350), score("1", 0, -350)
         );
-        var hiddenTieContext = new PairingStrategy.PairingContext(2, List.of(), Map.of(
-            "8", Map.of("1", 2),
-            "1", Map.of("8", 0)
-        ));
+        var context = rankedContext("8", "7", "6", "5", "4", "3", "2", "1");
 
-        assertThat(new SwissStrategy().generate(players, hiddenTieContext)).containsExactly(
-            pair("1", "5"), pair("2", "6"), pair("3", "7"), pair("4", "8")
+        assertThat(new SwissStrategy().generate(players, context)).containsExactly(
+            pair("8", "4"), pair("7", "3"), pair("6", "2"), pair("5", "1")
+        );
+    }
+
+    @Test
+    void swissStillGroupsByWinPointsEvenWhenRankingOrdersAcrossGroups() {
+        // Score groups are a Swiss mechanic and are untouched: the ranking decides order WITHIN a
+        // group, never whether a 4-point player may meet a 2-point one.
+        var players = List.of(score("A", 4, 0), score("B", 4, 0), score("C", 2, 0), score("D", 2, 0));
+        var context = rankedContext("A", "B", "C", "D");
+
+        assertThat(new SwissStrategy().generate(players, context)).containsExactly(
+            pair("A", "B"), pair("C", "D")
         );
     }
 
@@ -226,12 +209,15 @@ class PairingStrategiesTest {
         }
     }
 
-    private static PairingStrategy.PlayerScore score(String id, int winPoints, int diff) {
-        return new PairingStrategy.PlayerScore(id, "school", winPoints, diff);
+    /** A context carrying an explicit ranked order, as the ranking engine would supply it. */
+    private static PairingStrategy.PairingContext rankedContext(String... playerIdsInOrder) {
+        Map<String, Integer> order = new java.util.LinkedHashMap<>();
+        for (int index = 0; index < playerIdsInOrder.length; index++) order.put(playerIdsInOrder[index], index);
+        return new PairingStrategy.PairingContext(2, List.of(), order);
     }
 
-    private static PairingStrategy.PlayerScore score(String id, int winPoints, int diff, long scoreFor, long rawDiff) {
-        return new PairingStrategy.PlayerScore(id, "school", winPoints, diff, scoreFor, rawDiff);
+    private static PairingStrategy.PlayerScore score(String id, int winPoints, int diff) {
+        return new PairingStrategy.PlayerScore(id, "school", winPoints, diff);
     }
 
     private static PairingStrategy.PlayerScore score(String id, String school) {

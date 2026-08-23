@@ -30,10 +30,12 @@ public final class CardDtos {
         PairingRuleType initialPairingRule
     ) {}
 
-    // Scores are stored as SMALLINT (V19); 30000 leaves headroom under the 32767 column limit.
+    // Scores are stored as SMALLINT (V19); ±30000 leaves headroom under the ±32767 column limit.
+    // Negative scores are valid for a real match (V35 dropped the database CHECK). A BYE is NOT a
+    // real match — it has no opponent — and is still required to be above zero by the entry grid.
     public record FinalResultRequest(
-        @NotNull @Min(0) @Max(30000) Integer scoreOne,
-        @NotNull @Min(0) @Max(30000) Integer scoreTwo,
+        @NotNull @Min(-30000) @Max(30000) Integer scoreOne,
+        @NotNull @Min(-30000) @Max(30000) Integer scoreTwo,
         String password
     ) {}
     public record FinalWinnerRequest(
@@ -60,8 +62,8 @@ public final class CardDtos {
     public record BulkPlayersRequest(@NotNull @Size(min = 1, max = 5000) List<@jakarta.validation.Valid BulkPlayerEntry> players) {}
 
     public record ResultRequest(
-        @NotNull @Min(0) @Max(30000) Integer scoreOne,
-        @NotNull @Min(0) @Max(30000) Integer scoreTwo,
+        @NotNull @Min(-30000) @Max(30000) Integer scoreOne,
+        @NotNull @Min(-30000) @Max(30000) Integer scoreTwo,
         boolean editExisting
     ) {}
 

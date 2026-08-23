@@ -85,7 +85,7 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
           description={`${selectedPlayer.school} · แต้มชัยชนะและผลต่างสะสมคิดรวมจากเกมแรกถึงเกมนั้น`}
           actions={<Button variant="secondary" size="sm" onClick={() => setSelectedId(null)}>ปิดประวัติ</Button>}
         >
-          <PlayerHistoryTable card={card} players={players} playerId={selectedId!} />
+          <PlayerHistoryTable card={rankingCard} players={players} playerId={selectedId!} scope={{ throughGame: selected, includeFinal: false }} />
         </Panel>
       )}
     </>

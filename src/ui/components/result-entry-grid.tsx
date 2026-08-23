@@ -4,6 +4,8 @@ import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Megaphone, Pencil, Sa
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { matchesPlayerCode, normalizePlayerCode } from "@/domain/tournament/player-code";
+import { isUnusualScore, scoreWarnings } from "@/domain/tournament/score-warnings";
+import { appDialog } from "@/application/ui/dialog";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
 import { useTournamentStore, type RemoteResultChange, type RemoteResultNotice } from "@/application/tournament/store";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
@@ -139,13 +141,19 @@ function byeSide(pairing: Pairing | undefined): "one" | "two" | null {
   return one && !two ? "one" : two && !one ? "two" : null;
 }
 
-interface Outcome { resultType: "WIN" | "DRAW"; winnerId?: string; diff: number; }
+export interface Outcome { resultType: "WIN" | "DRAW"; winnerId?: string; diff: number; }
 type SaveResult = { ok: true } | { ok: false; reason: string };
 
-function calcOutcome(one: string, two: string, maxDiff: number, p1: string, p2: string): Outcome | null {
+/** Widest score a real match may record. Mirrors the DTO bounds and the SMALLINT column. */
+export const MIN_SCORE = -30000;
+export const MAX_SCORE = 30000;
+
+export function calcOutcome(one: string, two: string, maxDiff: number, p1: string, p2: string): Outcome | null {
   if (one.trim() === "" || two.trim() === "") return null;
   const a = Number(one); const b = Number(two);
-  if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0 || a > 1_000_000_000 || b > 1_000_000_000) return null;
+  // A real match may be negative: a player can finish a game below zero. A BYE may not — that rule
+  // lives on the bye path, which has no opponent and still requires a score above zero.
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a < MIN_SCORE || b < MIN_SCORE || a > MAX_SCORE || b > MAX_SCORE) return null;
   if (a === b) return { resultType: "DRAW", diff: 0 };
   return { resultType: "WIN", winnerId: a > b ? p1 : p2, diff: Math.min(Math.abs(a - b), maxDiff) };
 }
@@ -293,6 +301,11 @@ const ResultEntryRow = memo(function ResultEntryRow({
   const disabled = locked || saving || savingAll;
   const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
   const base = { one, two };
+  // Which side's typed score is outside the normal band right now — a hint while typing, not a gate.
+  const unusual = [
+    one.trim() !== "" && isUnusualScore(Number(one)) ? p1?.id : null,
+    two.trim() !== "" && isUnusualScore(Number(two)) ? p2?.id : null,
+  ].filter((code): code is string => Boolean(code));
   return <tr className={`egrid-row${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}${highlight ? " egrid-row--flash" : ""}`}>
     <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
     <td className="egrid-td cell-id">{p1?.id}</td>
@@ -301,9 +314,12 @@ const ResultEntryRow = memo(function ResultEntryRow({
     <td className="egrid-td cell-id">{p2?.id}</td>
     <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback="—" gibsonized={pairing.playerTwoGibsonized} /></td>
     <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school}</td>
-    <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => onDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onFocusNext(event.currentTarget, "other"); } }} /></td>
-    <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => onDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await onSaveRow(pairing)) onFocusNext(origin, "next"); }} /></td>
-    <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>{outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ${outcome.diff}`) : "—"}</td>
+    <td className="egrid-td"><input className="egrid-score" type="number" inputMode="text" aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => onDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onFocusNext(event.currentTarget, "other"); } }} /></td>
+    <td className="egrid-td"><input className="egrid-score" type="number" inputMode="text" aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => onDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await onSaveRow(pairing)) onFocusNext(origin, "next"); }} /></td>
+    <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>
+      {outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ${outcome.diff}`) : "—"}
+      {unusual.length > 0 && <span className="cell-score-warning" title={unusual.map((code) => `คะแนน ${code} ผิดปกติ`).join(" · ")} aria-label={`คะแนนผิดปกติ: ${unusual.join(", ")}`}>!</span>}
+    </td>
     <td className="egrid-td cell-action">
       {locked ? (
         <div className="cell-action__group">
@@ -444,9 +460,26 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? base), [field]: value } }));
   }, [clearFlash]);
 
+  /**
+   * Unusual scores are flagged, never blocked. The operator sees which player's score looks odd
+   * and confirms once; the save then proceeds exactly as it would have.
+   */
+  const confirmUnusualScores = useCallback(async (entries: { playerId: string; score: number }[]): Promise<boolean> => {
+    const warnings = scoreWarnings(entries);
+    if (warnings.length === 0) return true;
+    return appDialog.confirm(warnings.map((warning) => warning.message).join("\n"), {
+      title: "ตรวจสอบคะแนนก่อนบันทึก",
+      confirmLabel: "บันทึกต่อ",
+    });
+  }, []);
+
   const saveValues = useCallback(async (pairing: CompletePairing, one: string, two: string): Promise<SaveResult> => {
     if (!calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId))
-      return { ok: false, reason: "คะแนนต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป" };
+      return { ok: false, reason: `คะแนนต้องเป็นจำนวนเต็มระหว่าง ${MIN_SCORE} ถึง ${MAX_SCORE}` };
+    if (!await confirmUnusualScores([
+      { playerId: pairing.playerOneId, score: Number(one) },
+      { playerId: pairing.playerTwoId, score: Number(two) },
+    ])) return { ok: false, reason: "ยกเลิกการบันทึก" };
     setSavingIds((prev) => new Set(prev).add(pairing.id));
     try {
       await onSubmit(pairing, Number(one), Number(two), isRecorded(pairing));
@@ -460,7 +493,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     } finally {
       setSavingIds((prev) => { const next = new Set(prev); next.delete(pairing.id); return next; });
     }
-  }, [maxDiff, onSubmit]);
+  }, [maxDiff, onSubmit, confirmUnusualScores]);
 
   const saveRow = useCallback(async (pairing: Pairing): Promise<boolean> => {
     if (!isCompletePairing(pairing)) return false;
@@ -477,7 +510,10 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     const draft = draftsRef.current[pairing.id];
     const value = draft?.[side] ?? (side === "one" ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "";
     const score = Number(value);
+    // A bye keeps its own rule: the lone player must win, so a score of 0 or less is never a result.
     if (!Number.isInteger(score) || score <= 0) return false;
+    const lonePlayerId = (side === "one" ? pairing.playerOneId : pairing.playerTwoId) ?? "";
+    if (!await confirmUnusualScores([{ playerId: lonePlayerId, score }])) return false;
     const scoreOne = side === "one" ? score : 0;
     const scoreTwo = side === "one" ? 0 : score;
     setSavingIds((prev) => new Set(prev).add(pairing.id));
@@ -493,7 +529,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     } finally {
       setSavingIds((prev) => { const next = new Set(prev); next.delete(pairing.id); return next; });
     }
-  }, [onSubmit]);
+  }, [onSubmit, confirmUnusualScores]);
 
   const saveAll = async () => {
     if (filteredSavable.length === 0) return;
@@ -538,7 +574,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     const oneScore = aIsOne ? qScoreA : qScoreB;
     const twoScore = aIsOne ? qScoreB : qScoreA;
     if (!calcOutcome(oneScore, twoScore, maxDiff, pairing.playerOneId, pairing.playerTwoId)) {
-      setQuickFeedback({ type: "error", message: "ไม่สำเร็จ · คะแนนต้องเป็นจำนวนเต็ม ≥ 0" });
+      setQuickFeedback({ type: "error", message: `ไม่สำเร็จ · คะแนนต้องเป็นจำนวนเต็มระหว่าง ${MIN_SCORE} ถึง ${MAX_SCORE}` });
       return;
     }
     setQuickSaving(true);
@@ -648,14 +684,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
         <input ref={idARef} className="entry-keyin__id" inputMode="numeric" placeholder="รหัส A เช่น 16" value={qIdA} aria-label="รหัสฝ่าย A"
           onChange={(event) => { clearFlash(); setQIdA(event.target.value.toUpperCase()); }}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreARef.current?.focus(); scoreARef.current?.select(); } }} />
-        <input ref={scoreARef} type="number" inputMode="numeric" min={0} className="entry-keyin__score" placeholder="คะแนน A" value={qScoreA} aria-label="คะแนนฝ่าย A"
+        <input ref={scoreARef} type="number" inputMode="text" className="entry-keyin__score" placeholder="คะแนน A" value={qScoreA} aria-label="คะแนนฝ่าย A"
           onChange={(event) => { clearFlash(); setQScoreA(event.target.value); }} onFocus={(event) => event.target.select()}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); idBRef.current?.focus(); idBRef.current?.select(); } }} />
         <span className="entry-keyin__vs">พบ</span>
         <input ref={idBRef} className="entry-keyin__id" inputMode="numeric" placeholder="รหัส B เช่น 16" value={qIdB} aria-label="รหัสฝ่าย B"
           onChange={(event) => { clearFlash(); setQIdB(event.target.value.toUpperCase()); }}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreBRef.current?.focus(); scoreBRef.current?.select(); } }} />
-        <input ref={scoreBRef} type="number" inputMode="numeric" min={0} className="entry-keyin__score" placeholder="คะแนน B" value={qScoreB} aria-label="คะแนนฝ่าย B"
+        <input ref={scoreBRef} type="number" inputMode="text" className="entry-keyin__score" placeholder="คะแนน B" value={qScoreB} aria-label="คะแนนฝ่าย B"
           onChange={(event) => { clearFlash(); setQScoreB(event.target.value); }} onFocus={(event) => event.target.select()}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void quickSave(); } }} />
         <Button className="entry-keyin__save" size="sm" variant="success" disabled={quickSaving} onClick={() => void quickSave()}>{quickSaving ? <LoaderCircle className="loading-spinner" size={14} /> : <Save size={14} />}บันทึกคะแนน</Button>

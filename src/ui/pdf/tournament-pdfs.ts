@@ -252,19 +252,25 @@ export function buildRankingPdf(card: TournamentCard, gameNumber: number, meta: 
   const left = MARGIN;
   const right = doc.pageW - MARGIN;
   const rankW = 40;
-  const wpW = 56;
-  const diffW = 56;
-  const gap = 14;
+  const wpW = 50;
+  const diffW = 52;
+  // ScoreFor and Average Score decide the order once WinPoint and Diff are level, so the printed
+  // ranking must show them too — otherwise the sheet cannot explain its own order.
+  const sumW = 46;
+  const avgW = 50;
+  const gap = 10;
   // Athlete (code + name) and school share the remaining width equally.
-  const equalW = (right - left - rankW - wpW - diffW - gap * 3) / 2;
+  const equalW = (right - left - rankW - wpW - diffW - sumW - avgW - gap * 5) / 2;
   const nameX = left + rankW + gap;
   const schoolX = nameX + equalW + gap;
   const columns: Column[] = [
     { header: "อันดับ", x: left, width: rankW, align: "center" },
     { header: "รหัส · ชื่อ - นามสกุล", x: nameX, width: equalW },
     { header: "โรงเรียน / สถาบัน", x: schoolX, width: equalW },
-    { header: "คะแนนสะสม", x: right - wpW - diffW - gap, width: wpW, align: "right" },
-    { header: "ผลต่างสะสม", x: right - diffW, width: diffW, align: "right" },
+    { header: "คะแนนสะสม", x: right - wpW - diffW - sumW - avgW - gap * 3, width: wpW, align: "right" },
+    { header: "ผลต่างสะสม", x: right - diffW - sumW - avgW - gap * 2, width: diffW, align: "right" },
+    { header: "แต้มรวม", x: right - sumW - avgW - gap, width: sumW, align: "right" },
+    { header: "แต้มเฉลี่ย", x: right - avgW, width: avgW, align: "right" },
   ];
   drawColumnHeader(doc, columns, RANK_HEADER_H);
 
@@ -274,11 +280,14 @@ export function buildRankingPdf(card: TournamentCard, gameNumber: number, meta: 
     if (index % 2 === 1) fillBand(doc, top, RANK_ROW_H, ZEBRA);
     const baseline = top + 19;
     const player = players.get(entry.id);
-    text(doc, String(index + 1), columns[0].x + columns[0].width / 2, baseline, { size: RANK_TEXT_SIZE, bold: true, align: "center" });
+    // The printed rank is the DISPLAYED rank: tied players share a number here as they do on screen.
+    text(doc, String(entry.displayRank), columns[0].x + columns[0].width / 2, baseline, { size: RANK_TEXT_SIZE, bold: true, align: "center" });
     text(doc, codeName(entry.id, player), columns[1].x, baseline, { size: RANK_TEXT_SIZE, maxWidth: columns[1].width });
     text(doc, player?.school ?? "", columns[2].x, baseline, { size: RANK_TEXT_SIZE, color: MUTED, maxWidth: columns[2].width });
     text(doc, String(entry.winPoints), columns[3].x + columns[3].width, baseline, { size: RANK_TEXT_SIZE, bold: true, align: "right" });
     text(doc, signed(entry.diff), columns[4].x + columns[4].width, baseline, { size: RANK_TEXT_SIZE, align: "right", color: MUTED });
+    text(doc, String(entry.scoreFor), columns[5].x + columns[5].width, baseline, { size: RANK_TEXT_SIZE, align: "right", color: MUTED });
+    text(doc, entry.games > 0 ? entry.average.toFixed(1) : "—", columns[6].x + columns[6].width, baseline, { size: RANK_TEXT_SIZE, align: "right" });
     doc.y += RANK_ROW_H;
   });
 

@@ -17,7 +17,7 @@ import static org.mockito.Mockito.when;
 class TournamentCardPairingConfigurationTest {
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final TournamentCardService service = new TournamentCardService(
-        jdbc, mock(PairingStrategyRegistry.class), new ObjectMapper());
+        jdbc, mock(PairingStrategyRegistry.class), new ObjectMapper(), new RankingSource(jdbc));
 
     @Test
     void gameOneReadsTheConfiguredInitialRuleInsteadOfFallingBackToRandom() {

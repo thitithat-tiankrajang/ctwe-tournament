@@ -1,0 +1,1339 @@
+{
+  "$comment": [
+    "The tournament ranking rule as executable cases. Read by BOTH suites - the Node tests in",
+    "src/domain/tournament/ranking.test.ts and the JUnit tests in RankingEngineVectorTest - so the",
+    "TypeScript and Java implementations cannot drift apart without a test failing.",
+    "",
+    "Order is WinPoint -> Diff -> Average Score, then head-to-head as a corrective pass inside a",
+    "group already tied on WinPoint AND Diff. Average Score = scoreFor / games; a bye counts on both",
+    "sides of that division, a penalty on neither.",
+    "",
+    "A meeting with winner:null is a draw. A meeting with penalty:true is not a game and must be",
+    "ignored entirely. 'aggregations' is the number of FULL head-to-head aggregations the engine is",
+    "allowed to perform - it pins the laziness requirement, not just the ordering."
+  ],
+  "vectors": [
+    {
+      "name": "WinPoint outranks everything below it",
+      "players": [
+        {
+          "id": "1",
+          "winPoints": 2,
+          "diff": -500,
+          "scoreFor": 10,
+          "games": 1
+        },
+        {
+          "id": "2",
+          "winPoints": 4,
+          "diff": -900,
+          "scoreFor": 1,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "1",
+          "b": "2",
+          "winner": "1",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "2",
+        "1"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "Diff outranks Average Score",
+      "players": [
+        {
+          "id": "1",
+          "winPoints": 4,
+          "diff": 10,
+          "scoreFor": 100,
+          "games": 1
+        },
+        {
+          "id": "2",
+          "winPoints": 4,
+          "diff": 5,
+          "scoreFor": 9000,
+          "games": 1
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "1",
+        "2"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "Average Score decides when WinPoint and Diff are level",
+      "players": [
+        {
+          "id": "1",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 552,
+          "games": 2
+        },
+        {
+          "id": "2",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 868,
+          "games": 2
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "2",
+        "1"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "Average Score is a rate, not a total - fewer games can rank higher",
+      "players": [
+        {
+          "id": "1",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 1200,
+          "games": 4
+        },
+        {
+          "id": "2",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 800,
+          "games": 2
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "2",
+        "1"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "A bye counts on both sides of the division",
+      "$note": "code 5 on the live card: bye 100 in game 1, drew 3 in game 2 -> 103/2 = 51.5",
+      "players": [
+        {
+          "id": "5",
+          "winPoints": 3,
+          "diff": 100,
+          "scoreFor": 103,
+          "games": 2
+        },
+        {
+          "id": "6",
+          "winPoints": 3,
+          "diff": 100,
+          "scoreFor": 100,
+          "games": 2
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "5",
+        "6"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "A player with no games has an Average of zero, not a division by zero",
+      "players": [
+        {
+          "id": "1",
+          "winPoints": 0,
+          "diff": 0,
+          "scoreFor": 0,
+          "games": 0
+        },
+        {
+          "id": "2",
+          "winPoints": 0,
+          "diff": 0,
+          "scoreFor": 1,
+          "games": 1
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "2",
+        "1"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "H2H example 1 - the top player has no candidate above them",
+      "$note": "A is already first, so nothing can be overtaken and A is never evaluated.",
+      "players": [
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 1
+        },
+        {
+          "id": "B",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4800,
+          "games": 1
+        },
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4500,
+          "games": 1
+        },
+        {
+          "id": "D",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        },
+        {
+          "a": "A",
+          "b": "D",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "H2H example 2a - A beat C and stops, because A did not beat B",
+      "players": [
+        {
+          "id": "B",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 1
+        },
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4500,
+          "games": 1
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        },
+        {
+          "id": "D",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 3500,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "B",
+        "A",
+        "C",
+        "D"
+      ],
+      "aggregations": 1
+    },
+    {
+      "name": "H2H example 2b - A beat C then B, rising one position at a time",
+      "players": [
+        {
+          "id": "B",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 1
+        },
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4500,
+          "games": 1
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        },
+        {
+          "id": "D",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 3500,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        },
+        {
+          "a": "A",
+          "b": "B",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "aggregations": 2
+    },
+    {
+      "name": "H2H example 2c - A beat B but not C, so C blocks the rise",
+      "$note": "The invariant: a win over someone higher is useless while an unbeaten player sits between.",
+      "players": [
+        {
+          "id": "B",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 1
+        },
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4500,
+          "games": 1
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        },
+        {
+          "id": "D",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 3500,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "B",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "B",
+        "C",
+        "A",
+        "D"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "H2H example 2d - a win over a lower player never lifts anyone",
+      "$note": "D is below A, so it is not a candidate. The A-D meeting exists in the data and is never aggregated - only the A-C pair ever becomes adjacent, so exactly one aggregation happens.",
+      "players": [
+        {
+          "id": "B",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 1
+        },
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4500,
+          "games": 1
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        },
+        {
+          "id": "D",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 3500,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        },
+        {
+          "a": "A",
+          "b": "D",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "B",
+        "A",
+        "C",
+        "D"
+      ],
+      "aggregations": 1
+    },
+    {
+      "name": "A player above with an EQUAL Average is not a candidate",
+      "players": [
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "A",
+        "C"
+      ],
+      "$orderNote": "A sorts first on the player-code fallback, not because H2H promoted it.",
+      "aggregations": 0
+    },
+    {
+      "name": "Multiple meetings 2-2 on wins - aggregate Diff decides",
+      "players": [
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 4
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 4
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 300,
+          "pointsA": 500,
+          "pointsB": 200
+        },
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "C",
+          "diff": 100,
+          "pointsA": 200,
+          "pointsB": 300
+        },
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 300,
+          "pointsA": 500,
+          "pointsB": 200
+        },
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "C",
+          "diff": 100,
+          "pointsA": 200,
+          "pointsB": 300
+        }
+      ],
+      "expectedOrder": [
+        "A",
+        "C"
+      ],
+      "aggregations": 1
+    },
+    {
+      "name": "2-2 with Diff level - aggregate points scored decides",
+      "players": [
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 2
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 2
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 200,
+          "pointsA": 900,
+          "pointsB": 100
+        },
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "C",
+          "diff": 200,
+          "pointsA": 300,
+          "pointsB": 700
+        }
+      ],
+      "expectedOrder": [
+        "A",
+        "C"
+      ],
+      "aggregations": 1
+    },
+    {
+      "name": "2-2 with Diff and points level - neither beat the other, nothing moves",
+      "players": [
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 2
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 2
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 200,
+          "pointsA": 500,
+          "pointsB": 400
+        },
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "C",
+          "diff": 200,
+          "pointsA": 400,
+          "pointsB": 500
+        }
+      ],
+      "expectedOrder": [
+        "C",
+        "A"
+      ],
+      "aggregations": 1
+    },
+    {
+      "name": "A draw alone is not a win",
+      "players": [
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 1
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 300,
+          "pointsB": 300
+        }
+      ],
+      "expectedOrder": [
+        "C",
+        "A"
+      ],
+      "aggregations": 1
+    },
+    {
+      "name": "One win plus one draw is 1-0 on wins",
+      "players": [
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 2
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 2
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        },
+        {
+          "a": "A",
+          "b": "C",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 300,
+          "pointsB": 300
+        }
+      ],
+      "expectedOrder": [
+        "A",
+        "C"
+      ],
+      "aggregations": 1
+    },
+    {
+      "name": "Never met - H2H cannot lift anyone, and costs no aggregation",
+      "players": [
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 1
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "C",
+        "A"
+      ],
+      "aggregations": 0
+    },
+    {
+      "name": "A penalty meeting is not a game and is ignored by H2H",
+      "$note": "Only the real meeting counts, and C won it - so A does not rise.",
+      "players": [
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 5000,
+          "games": 1
+        },
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 4000,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "C",
+          "diff": 100,
+          "pointsA": 400,
+          "pointsB": 500
+        },
+        {
+          "a": "A",
+          "b": "C",
+          "winner": "A",
+          "diff": 900,
+          "pointsA": 0,
+          "pointsB": 0,
+          "penalty": true
+        }
+      ],
+      "expectedOrder": [
+        "C",
+        "A"
+      ],
+      "aggregations": 1
+    },
+    {
+      "name": "A cycle terminates and is deterministic",
+      "$note": "1 beat 2, 2 beat 3, 3 beat 1. The rule is positional, so the base order decides.",
+      "players": [
+        {
+          "id": "3",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 30,
+          "games": 1
+        },
+        {
+          "id": "2",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 20,
+          "games": 1
+        },
+        {
+          "id": "1",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 10,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "1",
+          "b": "2",
+          "winner": "1",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        },
+        {
+          "a": "2",
+          "b": "3",
+          "winner": "2",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        },
+        {
+          "a": "3",
+          "b": "1",
+          "winner": "3",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "2",
+        "3",
+        "1"
+      ]
+    },
+    {
+      "name": "Genuinely tied players share a displayed rank",
+      "players": [
+        {
+          "id": "1",
+          "winPoints": 6,
+          "diff": 100,
+          "scoreFor": 900,
+          "games": 3
+        },
+        {
+          "id": "2",
+          "winPoints": 4,
+          "diff": 50,
+          "scoreFor": 600,
+          "games": 3
+        },
+        {
+          "id": "3",
+          "winPoints": 4,
+          "diff": 50,
+          "scoreFor": 600,
+          "games": 3
+        },
+        {
+          "id": "4",
+          "winPoints": 2,
+          "diff": 0,
+          "scoreFor": 300,
+          "games": 3
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "expectedDisplayRanks": {
+        "1": 1,
+        "2": 2,
+        "3": 2,
+        "4": 4
+      },
+      "aggregations": 0
+    },
+    {
+      "name": "The internal order stays total even where the displayed rank repeats",
+      "players": [
+        {
+          "id": "10",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 400,
+          "games": 2
+        },
+        {
+          "id": "2",
+          "winPoints": 4,
+          "diff": 0,
+          "scoreFor": 400,
+          "games": 2
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "2",
+        "10"
+      ],
+      "expectedDisplayRanks": {
+        "2": 1,
+        "10": 1
+      },
+      "aggregations": 0
+    },
+    {
+      "name": "Live card cdea06b8 after game 2 - the whole 25-player field",
+      "$note": "Exported from the real tournament database. Both engines must reproduce this order exactly; it is the parity check between the TypeScript and Java implementations.",
+      "players": [
+        {
+          "id": "1",
+          "winPoints": 1,
+          "diff": -350,
+          "scoreFor": 51,
+          "games": 2
+        },
+        {
+          "id": "2",
+          "winPoints": 0,
+          "diff": -299,
+          "scoreFor": 553,
+          "games": 2
+        },
+        {
+          "id": "3",
+          "winPoints": 2,
+          "diff": 323,
+          "scoreFor": 861,
+          "games": 2
+        },
+        {
+          "id": "4",
+          "winPoints": 4,
+          "diff": 348,
+          "scoreFor": 897,
+          "games": 2
+        },
+        {
+          "id": "5",
+          "winPoints": 3,
+          "diff": 100,
+          "scoreFor": 103,
+          "games": 2
+        },
+        {
+          "id": "6",
+          "winPoints": 3,
+          "diff": 350,
+          "scoreFor": 5472,
+          "games": 2
+        },
+        {
+          "id": "7",
+          "winPoints": 3,
+          "diff": 350,
+          "scoreFor": 552,
+          "games": 2
+        },
+        {
+          "id": "8",
+          "winPoints": 3,
+          "diff": 201,
+          "scoreFor": 666,
+          "games": 2
+        },
+        {
+          "id": "9",
+          "winPoints": 3,
+          "diff": 298,
+          "scoreFor": 851,
+          "games": 2
+        },
+        {
+          "id": "10",
+          "winPoints": 1,
+          "diff": -301,
+          "scoreFor": 569,
+          "games": 2
+        },
+        {
+          "id": "11",
+          "winPoints": 2,
+          "diff": -12,
+          "scoreFor": 556,
+          "games": 2
+        },
+        {
+          "id": "12",
+          "winPoints": 0,
+          "diff": -352,
+          "scoreFor": 457,
+          "games": 2
+        },
+        {
+          "id": "13",
+          "winPoints": 1,
+          "diff": -321,
+          "scoreFor": 547,
+          "games": 2
+        },
+        {
+          "id": "14",
+          "winPoints": 3,
+          "diff": 350,
+          "scoreFor": 868,
+          "games": 2
+        },
+        {
+          "id": "15",
+          "winPoints": 3,
+          "diff": 21,
+          "scoreFor": 576,
+          "games": 2
+        },
+        {
+          "id": "16",
+          "winPoints": 3,
+          "diff": 198,
+          "scoreFor": 690,
+          "games": 2
+        },
+        {
+          "id": "17",
+          "winPoints": 2,
+          "diff": -197,
+          "scoreFor": 493,
+          "games": 2
+        },
+        {
+          "id": "18",
+          "winPoints": 2,
+          "diff": -346,
+          "scoreFor": 478,
+          "games": 2
+        },
+        {
+          "id": "19",
+          "winPoints": 3,
+          "diff": 350,
+          "scoreFor": 448,
+          "games": 2
+        },
+        {
+          "id": "20",
+          "winPoints": 3,
+          "diff": 301,
+          "scoreFor": 870,
+          "games": 2
+        },
+        {
+          "id": "21",
+          "winPoints": 4,
+          "diff": 352,
+          "scoreFor": 6590,
+          "games": 2
+        },
+        {
+          "id": "22",
+          "winPoints": 0,
+          "diff": -210,
+          "scoreFor": 457,
+          "games": 2
+        },
+        {
+          "id": "23",
+          "winPoints": 1,
+          "diff": -350,
+          "scoreFor": 458,
+          "games": 2
+        },
+        {
+          "id": "24",
+          "winPoints": 1,
+          "diff": -350,
+          "scoreFor": 52,
+          "games": 2
+        },
+        {
+          "id": "25",
+          "winPoints": 1,
+          "diff": -350,
+          "scoreFor": 478,
+          "games": 2
+        }
+      ],
+      "meetings": [
+        {
+          "a": "6",
+          "b": "23",
+          "winner": "6",
+          "diff": 350,
+          "pointsA": 5467,
+          "pointsB": 453
+        },
+        {
+          "a": "7",
+          "b": "20",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 5,
+          "pointsB": 5
+        },
+        {
+          "a": "24",
+          "b": "10",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 5,
+          "pointsB": 5
+        },
+        {
+          "a": "1",
+          "b": "19",
+          "winner": "19",
+          "diff": 350,
+          "pointsA": 46,
+          "pointsB": 443
+        },
+        {
+          "a": "7",
+          "b": "24",
+          "winner": "7",
+          "diff": 350,
+          "pointsA": 547,
+          "pointsB": 47
+        },
+        {
+          "a": "9",
+          "b": "16",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 6,
+          "pointsB": 6
+        },
+        {
+          "a": "2",
+          "b": "17",
+          "winner": "17",
+          "diff": 1,
+          "pointsA": 6,
+          "pointsB": 7
+        },
+        {
+          "a": "15",
+          "b": "8",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 8,
+          "pointsB": 8
+        },
+        {
+          "a": "11",
+          "b": "22",
+          "winner": "11",
+          "diff": 9,
+          "pointsA": 9,
+          "pointsB": 0
+        },
+        {
+          "a": "14",
+          "b": "5",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 3,
+          "pointsB": 3
+        },
+        {
+          "a": "20",
+          "b": "10",
+          "winner": "20",
+          "diff": 301,
+          "pointsA": 865,
+          "pointsB": 564
+        },
+        {
+          "a": "21",
+          "b": "12",
+          "winner": "21",
+          "diff": 2,
+          "pointsA": 4,
+          "pointsB": 2
+        },
+        {
+          "a": "9",
+          "b": "2",
+          "winner": "9",
+          "diff": 298,
+          "pointsA": 845,
+          "pointsB": 547
+        },
+        {
+          "a": "16",
+          "b": "17",
+          "winner": "16",
+          "diff": 198,
+          "pointsA": 684,
+          "pointsB": 486
+        },
+        {
+          "a": "15",
+          "b": "11",
+          "winner": "15",
+          "diff": 21,
+          "pointsA": 568,
+          "pointsB": 547
+        },
+        {
+          "a": "8",
+          "b": "22",
+          "winner": "8",
+          "diff": 201,
+          "pointsA": 658,
+          "pointsB": 457
+        },
+        {
+          "a": "3",
+          "b": "25",
+          "winner": "3",
+          "diff": 350,
+          "pointsA": 856,
+          "pointsB": 475
+        },
+        {
+          "a": "4",
+          "b": "13",
+          "winner": "4",
+          "diff": 321,
+          "pointsA": 865,
+          "pointsB": 544
+        },
+        {
+          "a": "14",
+          "b": "12",
+          "winner": "14",
+          "diff": 350,
+          "pointsA": 865,
+          "pointsB": 455
+        },
+        {
+          "a": "21",
+          "b": "18",
+          "winner": "21",
+          "diff": 350,
+          "pointsA": 6586,
+          "pointsB": 474
+        },
+        {
+          "a": "6",
+          "b": "19",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 5,
+          "pointsB": 5
+        },
+        {
+          "a": "23",
+          "b": "1",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 5,
+          "pointsB": 5
+        },
+        {
+          "a": "3",
+          "b": "4",
+          "winner": "4",
+          "diff": 27,
+          "pointsA": 5,
+          "pointsB": 32
+        },
+        {
+          "a": "25",
+          "b": "13",
+          "winner": null,
+          "diff": 0,
+          "pointsA": 3,
+          "pointsB": 3
+        }
+      ],
+      "expectedOrder": [
+        "21",
+        "4",
+        "6",
+        "14",
+        "7",
+        "19",
+        "20",
+        "9",
+        "8",
+        "16",
+        "5",
+        "15",
+        "3",
+        "11",
+        "17",
+        "18",
+        "10",
+        "13",
+        "25",
+        "23",
+        "24",
+        "1",
+        "22",
+        "2",
+        "12"
+      ],
+      "expectedDisplayRanks": {
+        "21": 1,
+        "4": 2,
+        "6": 3,
+        "14": 4,
+        "7": 5,
+        "19": 6,
+        "20": 7,
+        "9": 8,
+        "8": 9,
+        "16": 10,
+        "5": 11,
+        "15": 12,
+        "3": 13,
+        "11": 14,
+        "17": 15,
+        "18": 16,
+        "10": 17,
+        "13": 18,
+        "25": 19,
+        "23": 20,
+        "24": 21,
+        "1": 22,
+        "22": 23,
+        "2": 24,
+        "12": 25
+      }
+    }
+  ]
+}

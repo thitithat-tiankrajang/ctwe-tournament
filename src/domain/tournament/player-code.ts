@@ -38,4 +38,45 @@ export function comparePlayerCodes(first: string | number, second: string | numb
   return a.digits.length - b.digits.length || a.digits.localeCompare(b.digits, "en");
 }
 
+/**
+ * What the operator typed, resolved into the one meaning it can have.
+ *
+ * A code set only when EVERY whitespace/comma/semicolon-separated token looks like a code —
+ * partial splitting would be wrong, because a person's name legitimately contains spaces. So
+ * "5 003 45" is four codes and "สมชาย ใจดี" is one text query, with no ambiguous middle ground.
+ */
+export type SearchQuery =
+  | { kind: "empty" }
+  | { kind: "codes"; tokens: string[] }
+  | { kind: "text"; value: string };
+
+const SEARCH_SEPARATORS = /[\s,;]+/;
+
+/** Parse a search box's raw value. Code tokens are normalized and de-duplicated, order preserved. */
+export function parseSearchQuery(input: string): SearchQuery {
+  const trimmed = input.trim();
+  if (!trimmed) return { kind: "empty" };
+  const tokens = trimmed.split(SEARCH_SEPARATORS).filter(Boolean);
+  if (tokens.length === 0 || !tokens.every((token) => PLAYER_CODE_QUERY.test(token)))
+    return { kind: "text", value: trimmed };
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const token of tokens) {
+    const key = normalizePlayerCode(token);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(token);
+  }
+  return { kind: "codes", tokens: unique };
+}
+
+/**
+ * Code tokens that match none of `values`. The UI names these back to the operator instead of
+ * silently narrowing to nothing — "ไม่พบรหัส 045" is recoverable, an empty board is not.
+ */
+export function unmatchedCodes(tokens: readonly string[], values: Iterable<string | number>): string[] {
+  const candidates = [...values];
+  return tokens.filter((token) => !candidates.some((value) => matchesPlayerCode(value, token)));
+}
+
 export { PLAYER_CODE_QUERY };

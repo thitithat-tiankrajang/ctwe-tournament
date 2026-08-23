@@ -1,9 +1,10 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { matchesPlayerCode } from "@/domain/tournament/player-code";
+import { matchesPlayerCode, parseSearchQuery, unmatchedCodes } from "@/domain/tournament/player-code";
+import { matchesBoardQuery } from "@/domain/tournament/board-search";
 import { Button } from "@/ui/components/button";
 
 export interface GridColumnBase {
@@ -15,8 +16,27 @@ export interface GridColumnBase {
   fitMin?: number;
   /** Automatically keep the full rendered header/cell content visible at the current responsive font size. */
   fitContent?: boolean;
+  /**
+   * How hard this column fights for width, and whether it stays on screen.
+   *
+   * `identity` names the record — seat and player code. Below the desktop breakpoint a LEADING run
+   * of identity columns is frozen to the left edge, so scrolling right to read the opponent never
+   * costs the reader the answer to "whose row is this?". They also get a real width floor rather
+   * than being squeezed to a few pixels. `primary` (the name) shrinks before them; `secondary`
+   * (school) yields first.
+   */
+  priority?: "identity" | "primary" | "secondary";
   align?: "left" | "right" | "center";
+  /** Marks a player-code column: exact-digit matching, and a member of the board search's code group. */
   filterKind?: "playerCode";
+  /**
+   * Removes this column's OWN sort/filter menu. The board search still covers it.
+   *
+   * A pairing row carries two players, so the board has two code columns. Both must be findable —
+   * a player is on side 1 or side 2 depending on seat parity — but only the first carries the
+   * search affordance; the second is a read-only mirror of the same logical field.
+   */
+  searchable?: false;
 }
 
 export interface DataColumn<T> extends GridColumnBase {
@@ -24,6 +44,12 @@ export interface DataColumn<T> extends GridColumnBase {
   render: (row: T) => ReactNode;
   /** Plain text/number accessor that powers Excel sort + filter for this column. */
   value?: (row: T) => string | number;
+  /**
+   * Text the board search should match for this column, when the cell shows more than `value`
+   * carries. The athlete cell renders name AND school, so both must be findable — but `value`
+   * cannot simply include the school, because it also drives sorting and the checkbox filter list.
+   */
+  searchText?: (row: T) => string;
   /** Defaults to true when `value` is set. */
   sortable?: boolean;
   /** Defaults to true when `value` is set (e.g. set false for continuous/unique columns). */
@@ -42,7 +68,11 @@ const headAlignClass = (align?: GridColumnBase["align"]) =>
 /** Screen-fitting column widths, optionally resizable and persisted for staff-facing grids. */
 export function useResizableColumns(columns: readonly { min: number; width: number; fitMin?: number; fitContent?: boolean }[], storageKey: string, resizable = true) {
   const minsRef = useRef(columns.map((column) => column.min)); minsRef.current = columns.map((column) => column.min);
-  const fitMinsRef = useRef(columns.map((column) => column.fitMin ?? 1)); fitMinsRef.current = columns.map((column) => column.fitMin ?? 1);
+  // An identity column that has not declared a floor still gets one: the whole point is that it
+  // cannot be squeezed away. Everything else keeps the historic "no floor" behaviour.
+  const floorOf = (column: { min: number; fitMin?: number; priority?: string }) =>
+    column.fitMin ?? (column.priority === "identity" ? column.min : 1);
+  const fitMinsRef = useRef(columns.map(floorOf)); fitMinsRef.current = columns.map(floorOf);
   const fitContentRef = useRef(columns.map((column) => Boolean(column.fitContent))); fitContentRef.current = columns.map((column) => Boolean(column.fitContent));
   const defaultsRef = useRef(columns.map((column) => column.width)); defaultsRef.current = columns.map((column) => column.width);
   const count = columns.length;
@@ -187,7 +217,64 @@ export interface ExcelHeadControls {
   onClose: () => void;
 }
 
-export function GridHead({ columns, colWidths, startResize, columnFilters, excel, resizable = true }: { columns: GridColumnBase[]; colWidths: number[]; startResize: (index: number, clientX: number) => void; columnFilters?: Partial<Record<string, ReactNode>>; excel?: ExcelHeadControls; resizable?: boolean }) {
+/** How many leading columns form the frozen run. Only a LEADING run can be frozen: a sticky column
+ *  with scrollable content to its left would slide over that content instead of anchoring it. */
+export function frozenRunLength(columns: readonly { priority?: string }[]): number {
+  let length = 0;
+  while (length < columns.length && columns[length].priority === "identity") length += 1;
+  return length;
+}
+
+/**
+ * Left offsets for the frozen run, accumulated from the widths actually rendered.
+ *
+ * Nominal column widths are the wrong input below the desktop breakpoint: there the table switches
+ * to `table-layout: auto`, so the browser — not our width array — decides how wide a column ends up.
+ * Offsetting by the nominal width left a gap between the frozen columns that scrolled content
+ * showed through. Widths are read rather than positions because a cell that is already stuck
+ * reports its stuck position, which would feed back into the next measurement.
+ */
+export function stickyOffsets(columns: readonly { priority?: string }[], widths: readonly number[]): (number | null)[] {
+  const offsets: (number | null)[] = columns.map(() => null);
+  const run = frozenRunLength(columns);
+  let left = 0;
+  for (let index = 0; index < run; index += 1) {
+    offsets[index] = left;
+    left += widths[index] ?? 0;
+  }
+  return offsets;
+}
+
+/** Rendered widths of the frozen run, re-read whenever the grid is laid out or resized. */
+function useRenderedWidths(scrollRef: RefObject<HTMLDivElement | null>, runLength: number, colWidths: readonly number[]) {
+  const [widths, setWidths] = useState<number[] | null>(null);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || runLength === 0) { setWidths(null); return; }
+    const measure = () => {
+      const cells = [...element.querySelectorAll<HTMLTableCellElement>("thead th")].slice(0, runLength);
+      if (cells.length === 0) return;
+      const next = cells.map((cell) => cell.getBoundingClientRect().width);
+      setWidths((prev) => prev && prev.length === next.length && prev.every((value, index) => Math.abs(value - next[index]) < 0.5) ? prev : next);
+    };
+    measure();
+    if (!("ResizeObserver" in window)) return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [scrollRef, runLength, colWidths]);
+  return widths;
+}
+
+/** Class for a frozen cell: the trailing one also carries the edge that separates it from the scroll. */
+function frozenClass(offsets: (number | null)[], index: number): string {
+  if (offsets[index] === null) return "";
+  const isEdge = index + 1 >= offsets.length || offsets[index + 1] === null;
+  return ` egrid-col--frozen${isEdge ? " egrid-col--frozen-edge" : ""}`;
+}
+
+export function GridHead({ columns, colWidths, startResize, columnFilters, excel, resizable = true, frozenOffsets }: { columns: GridColumnBase[]; colWidths: number[]; startResize: (index: number, clientX: number) => void; columnFilters?: Partial<Record<string, ReactNode>>; excel?: ExcelHeadControls; resizable?: boolean; frozenOffsets?: (number | null)[] }) {
+  const sticky = frozenOffsets ?? stickyOffsets(columns, colWidths);
   return (
     <>
       <colgroup>{columns.map((column, index) => <col key={column.key} style={{ width: colWidths[index] }} />)}</colgroup>
@@ -202,7 +289,7 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
             const filterActive = (excel.filters[column.key]?.length ?? 0) > 0
               || Boolean(excel.textFilters[column.key]);
             return (
-              <th scope="col" key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}${filterActive ? " egrid-th--filtered" : ""}${sorted ? " egrid-th--sorted" : ""}${excel.openKey === column.key ? " egrid-th--popup" : ""}`}>
+              <th scope="col" key={column.key} style={sticky[index] === null ? undefined : { left: sticky[index]! }} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}${filterActive ? " egrid-th--filtered" : ""}${sorted ? " egrid-th--sorted" : ""}${excel.openKey === column.key ? " egrid-th--popup" : ""}${column.searchable === false ? " egrid-th--mirror" : ""}${frozenClass(sticky, index)}`}>
                 <div className="egrid-th-bar">
                   {excel.editingKey === column.key ? (
                     <input
@@ -269,7 +356,7 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
             );
           }
           return (
-            <th scope="col" key={column.key} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}`}>
+            <th scope="col" key={column.key} style={sticky[index] === null ? undefined : { left: sticky[index]! }} className={`egrid-th egrid-col-${column.key}${headAlignClass(column.align)}${frozenClass(sticky, index)}`}>
               <span className="egrid-th__label">{column.label}</span>
               {columnFilters?.[column.key] ? <span className="egrid-th__filterwrap">{columnFilters[column.key]}</span> : null}
               {resizer}
@@ -284,7 +371,8 @@ export function GridHead({ columns, colWidths, startResize, columnFilters, excel
 function cellClass<T>(column: DataColumn<T>, row: T) {
   const base = column.align === "right" ? " numeric" : column.align === "center" ? " egrid-td--center" : "";
   const extra = typeof column.cellClassName === "function" ? column.cellClassName(row) : column.cellClassName;
-  return `${base}${extra ? ` ${extra}` : ""}`;
+  const mirror = column.searchable === false ? " egrid-td--mirror" : "";
+  return `${base}${mirror}${extra ? ` ${extra}` : ""}`;
 }
 
 export type SortDir = "asc" | "desc";
@@ -296,6 +384,8 @@ function labelText(label: ReactNode): string {
 /** Shared Excel column controls (sort + multi-select filter) state, reusable across any grid. */
 export function useColumnControls() {
   const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(null);
+  /** One search across the whole board, spanning every column of a logical field. */
+  const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, string[]>>({});
   const [textFilters, setTextFilters] = useState<Record<string, string>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -323,14 +413,14 @@ export function useColumnControls() {
     setSort((current) => current?.key === key ? null : current);
     setEditingKey(key);
   };
-  const clearAll = () => { setSort(null); setFilters({}); setTextFilters({}); setEditingKey(null); };
+  const clearAll = () => { setSort(null); setFilters({}); setTextFilters({}); setEditingKey(null); setQuery(""); };
   const activeFilterKeys = Object.keys(filters).filter((key) => filters[key]?.length);
   const activeTextKeys = Object.keys(textFilters).filter((key) => textFilters[key]?.trim());
   return {
-    sort, filters, textFilters, openKey, openAnchor, editingKey,
-    setOpenKey, closeFilter, setEditingKey, setTextFilter, startTextFilter, setColumnSort, openFilter, applyFilter, clearFilter, clearAll,
+    sort, filters, textFilters, openKey, openAnchor, editingKey, query,
+    setOpenKey, closeFilter, setEditingKey, setTextFilter, startTextFilter, setColumnSort, openFilter, applyFilter, clearFilter, clearAll, setQuery,
     activeFilterKeys, activeTextKeys,
-    active: sort !== null || activeFilterKeys.length > 0 || activeTextKeys.length > 0,
+    active: sort !== null || activeFilterKeys.length > 0 || activeTextKeys.length > 0 || query.trim() !== "",
   };
 }
 
@@ -342,11 +432,18 @@ export function applyColumnControls<T>(
   sort: { key: string; dir: SortDir } | null,
   textFilters: Record<string, string> = {},
   playerCodeKeys: readonly string[] = [],
+  /** Board-level search: ORs across a logical field, then ANDs with the per-column filters. */
+  boardQuery = "",
+  /** Text accessors for the board search; defaults to `accessors`. */
+  searchAccessors: Record<string, (row: T) => string | number> = accessors,
 ): T[] {
   const activeKeys = Object.keys(filters).filter((key) => filters[key]?.length && accessors[key]);
   const textKeys = Object.keys(textFilters).filter((key) => textFilters[key]?.trim() && accessors[key]);
-  let result = activeKeys.length === 0 && textKeys.length === 0 ? rows : rows.filter((row) =>
-    activeKeys.every((key) => filters[key].includes(String(accessors[key](row))))
+  const searchable = Object.keys(searchAccessors);
+  const searching = boardQuery.trim() !== "";
+  let result = activeKeys.length === 0 && textKeys.length === 0 && !searching ? rows : rows.filter((row) =>
+    (!searching || matchesBoardQuery(row, boardQuery, searchAccessors, playerCodeKeys, searchable))
+    && activeKeys.every((key) => filters[key].includes(String(accessors[key](row))))
     && textKeys.every((key) => playerCodeKeys.includes(key)
       ? matchesPlayerCode(accessors[key](row), textFilters[key])
       : String(accessors[key](row))
@@ -456,7 +553,7 @@ export function ColumnFilterDropdown({ label, values, selected, anchor, filterab
 }
 
 /** Generic Excel-style grid: responsive columns, optional resizing, and multi-field filters. */
-export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, resetKey, filterResetKey, rowClassName, tableClassName = "", ariaLabel, emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, onRowClick, onFilterActiveChange }: {
+export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storageKey, resetKey, filterResetKey, rowClassName, tableClassName = "", ariaLabel, emptyText = "ไม่พบรายการ", inlineClear = true, resizableColumns = true, boardSearch = true, searchPlaceholder, onRowClick, onFilterActiveChange }: {
   columns: DataColumn<T>[];
   rows: T[];
   getRowKey: (row: T) => string;
@@ -473,6 +570,9 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
   emptyText?: string;
   inlineClear?: boolean;
   resizableColumns?: boolean;
+  /** One search box covering every column of a logical field. Off for grids with nothing to find. */
+  boardSearch?: boolean;
+  searchPlaceholder?: string;
   onRowClick?: (row: T) => void;
   onFilterActiveChange?: (active: boolean) => void;
 }) {
@@ -511,10 +611,27 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
   );
   // Unique values per filterable column (Excel checkbox list); memoised, so large datasets stay cheap.
   const uniqueValues = useMemo(() => uniqueColumnValues(rows, accessors, filterableKeys), [rows, accessors, filterableKeys]);
+  const searchAccessors = useMemo(() => {
+    const result: Record<string, (row: T) => string | number> = { ...accessors };
+    for (const column of columns) if (column.searchText) result[column.key] = column.searchText;
+    return result;
+  }, [columns, accessors]);
   const visibleRows = useMemo(
-    () => applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys),
-    [rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys],
+    () => applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, controls.query, searchAccessors),
+    [rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, controls.query, searchAccessors],
   );
+  // Codes the operator asked for that are nowhere on this board. Naming them back is the difference
+  // between "045 is not in this game" and an unexplained empty table.
+  const missingCodes = useMemo(() => {
+    const parsed = parseSearchQuery(controls.query);
+    if (parsed.kind !== "codes" || playerCodeKeys.length === 0) return [];
+    const present = rows.flatMap((row) => playerCodeKeys.map((key) => String(accessors[key](row))));
+    return unmatchedCodes(parsed.tokens, present);
+  }, [controls.query, rows, accessors, playerCodeKeys]);
+  const hasSearch = boardSearch && Object.keys(accessors).length > 0;
+  const runLength = frozenRunLength(columns);
+  const renderedWidths = useRenderedWidths(scrollRef, runLength, colWidths);
+  const frozen = stickyOffsets(columns, renderedWidths ?? colWidths);
 
   const anyActive = controls.active;
   const filterActiveCallback = useRef(onFilterActiveChange);
@@ -523,6 +640,30 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
 
   return (
     <div className="entry-grid-wrap">
+      {hasSearch && (
+        <div className="entry-grid-search">
+          <Search size={15} aria-hidden="true" />
+          <input
+            type="search"
+            className="entry-grid-search__input"
+            value={controls.query}
+            onChange={(event) => controls.setQuery(event.target.value)}
+            placeholder={searchPlaceholder ?? (playerCodeKeys.length > 0 ? "ค้นหา รหัส / ชื่อ / โรงเรียน — หลายรหัสได้ เช่น 5 003 45" : "ค้นหาในตาราง")}
+            aria-label={ariaLabel ? `ค้นหาใน${ariaLabel}` : "ค้นหาในตาราง"}
+            enterKeyHint="search"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {controls.query !== "" && (
+            <button type="button" className="entry-grid-search__clear" aria-label="ล้างคำค้นหา" onClick={() => controls.setQuery("")}>
+              <X size={15} />
+            </button>
+          )}
+          {missingCodes.length > 0 && (
+            <span className="entry-grid-search__miss" role="status">ไม่พบรหัส {missingCodes.join(", ")}</span>
+          )}
+        </div>
+      )}
       {/* meta-shell stays mounted (not conditionally rendered) so the chip bar can animate open/closed. */}
       <div className={`entry-grid-meta-shell${anyActive ? " entry-grid-meta-shell--open" : ""}`} aria-hidden={!anyActive}>
         <div className="entry-grid-meta">
@@ -536,9 +677,11 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
       </div>
       <div className="entry-grid-scroll" ref={scrollRef}>
         <table className={`entry-grid${tableClassName ? ` ${tableClassName}` : ""}`} style={{ width: totalWidth }} aria-label={ariaLabel}>
-          <GridHead columns={columns} colWidths={colWidths} startResize={startResize} resizable={resizableColumns} excel={{
-            sortable: (key) => { const column = colByKey.get(key); return Boolean(column?.value) && (column?.sortable ?? true); },
-            filterable: (key) => { const column = colByKey.get(key); return Boolean(column?.value) && (column?.filterable ?? true); },
+          <GridHead columns={columns} colWidths={colWidths} startResize={startResize} resizable={resizableColumns} frozenOffsets={frozen} excel={{
+            // A mirror column (the second player-code column) carries no menu of its own; the board
+            // search above the grid is the one place a code is searched from.
+            sortable: (key) => { const column = colByKey.get(key); return column?.searchable !== false && Boolean(column?.value) && (column?.sortable ?? true); },
+            filterable: (key) => { const column = colByKey.get(key); return column?.searchable !== false && Boolean(column?.value) && (column?.filterable ?? true); },
             sort: controls.sort,
             filters: controls.filters,
             textFilters: controls.textFilters,
@@ -562,7 +705,7 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
                 const extraClass = rowClassName?.(row);
                 return (
                   <tr id={getRowElementId?.(row)} key={getRowKey(row)} className={`egrid-row${onRowClick ? " egrid-row--clickable" : ""}${extraClass ? ` ${extraClass}` : ""}`} onClick={onRowClick ? () => onRowClick(row) : undefined}>
-                    {columns.map((column) => <td key={column.key} className={`egrid-td${cellClass(column, row)}`}>{column.render(row)}</td>)}
+                    {columns.map((column, index) => <td key={column.key} style={frozen[index] === null ? undefined : { left: frozen[index]! }} className={`egrid-td${cellClass(column, row)}${frozenClass(frozen, index)}`}>{column.render(row)}</td>)}
                   </tr>
                 );
               })}

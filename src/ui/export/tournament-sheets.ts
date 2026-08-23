@@ -74,15 +74,18 @@ function download(card: TournamentCard, label: string, sheetName: string, rows: 
 
 // ---- Ranking ---------------------------------------------------------------------------------
 
-const RANKING_HEADER: Cell[] = ["อันดับ", "รหัส", "ชื่อ - นามสกุล", "โรงเรียน / สถาบัน", "ชนะ", "เสมอ", "แพ้", "คะแนนสะสม", "ผลต่างสะสม"];
+const RANKING_HEADER: Cell[] = ["อันดับ", "รหัส", "ชื่อ - นามสกุล", "โรงเรียน / สถาบัน", "ชนะ", "เสมอ", "แพ้", "คะแนนสะสม", "ผลต่างสะสม", "แต้มรวม", "แต้มเฉลี่ย"];
 
 export function downloadRankingSheet(card: TournamentCard, gameNumber: number, meta: SheetMeta = {}): void {
   const players = new Map(card.players.map((player) => [player.id, player]));
   const head = heading(card, meta, "อันดับการแข่งขัน", `หลังจบเกม ${gameNumber}`);
   const rows: Cell[][] = [...head, RANKING_HEADER];
-  rankingAfterGame(card, gameNumber).forEach((entry, index) => {
+  // The exported rank is the DISPLAYED rank, so tied players share a number here exactly as they
+  // do on screen — an export that renumbered them would contradict the standings it came from.
+  rankingAfterGame(card, gameNumber).forEach((entry) => {
     const player = players.get(entry.id);
-    rows.push([index + 1, entry.id, nameOf(player), player?.school ?? "", entry.wins, entry.draws, entry.losses, entry.winPoints, entry.diff]);
+    rows.push([entry.displayRank, entry.id, nameOf(player), player?.school ?? "", entry.wins, entry.draws, entry.losses,
+      entry.winPoints, entry.diff, entry.scoreFor, entry.games > 0 ? Number(entry.average.toFixed(1)) : ""]);
   });
   download(card, `อันดับ เกม ${gameNumber}`, `อันดับ เกม ${gameNumber}`, rows, head.length);
 }

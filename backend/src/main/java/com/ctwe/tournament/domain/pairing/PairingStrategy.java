@@ -1,12 +1,20 @@
 package com.ctwe.tournament.domain.pairing;
 
 import com.ctwe.tournament.domain.model.PairingRuleType;
+import com.ctwe.tournament.domain.ranking.PlayerCodes;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * How a game's matchups are chosen.
+ *
+ * <p><b>Pairing consumes a ranking; it never computes one.</b> The order comes in through
+ * {@link PairingContext#rankOrder()}, produced by the ranking engine from the same rule the
+ * standings display. Strategies used to carry their own comparators — two of them, which disagreed
+ * with each other and with the screen — and that is what made pairing look wrong when players tied.
+ */
 public interface PairingStrategy {
     PairingRuleType type();
     List<Pair> generate(List<PlayerScore> players, PairingContext context);
@@ -17,94 +25,48 @@ public interface PairingStrategy {
         return ranked.isEmpty() ? null : ranked.get(ranked.size() - 1).playerId();
     }
 
+    /**
+     * The players in ranking order.
+     *
+     * <p>A player the ranking did not cover sorts last on their code rather than throwing — a field
+     * can legitimately contain someone with no standing yet (game 1), and pairing must still work.
+     */
     static List<PlayerScore> ranked(List<PlayerScore> players, PairingContext context) {
         PairingContext safeContext = context == null ? new PairingContext(0, List.of()) : context;
-        Map<Integer, List<PlayerScore>> byWinPoints = new java.util.TreeMap<>(Comparator.reverseOrder());
-        for (PlayerScore player : players)
-            byWinPoints.computeIfAbsent(player.winPoints(), ignored -> new ArrayList<>()).add(player);
-
-        List<PlayerScore> result = new ArrayList<>(players.size());
-        for (List<PlayerScore> group : byWinPoints.values()) {
-            Map<String, Integer> headToHeadInGroup = new LinkedHashMap<>();
-            for (PlayerScore player : group) {
-                int points = 0;
-                for (PlayerScore opponent : group) {
-                    if (!player.playerId().equals(opponent.playerId()))
-                        points += safeContext.headToHeadPoints(player.playerId(), opponent.playerId());
-                }
-                headToHeadInGroup.put(player.playerId(), points);
-            }
-            group.sort(rankingWithinSameWinPoints(headToHeadInGroup));
-            result.addAll(group);
-        }
+        List<PlayerScore> result = new ArrayList<>(players);
+        result.sort(Comparator
+            .comparingInt((PlayerScore player) -> safeContext.rankOf(player.playerId()))
+            .thenComparing(PlayerScore::playerId, PlayerCodes::compare));
         return List.copyOf(result);
     }
 
-    private static Comparator<PlayerScore> rankingWithinSameWinPoints(Map<String, Integer> headToHeadPoints) {
-        return (first, second) -> {
-            // Capped cumulative diff is the tie-break every ranking surface shows (standings pages,
-            // PDF, final seeding); pairing must follow it or pairs contradict the visible อันดับ.
-            int byDiff = Integer.compare(second.diff(), first.diff());
-            if (byDiff != 0) return byDiff;
-
-            int byHeadToHead = Integer.compare(
-                headToHeadPoints.getOrDefault(second.playerId(), 0),
-                headToHeadPoints.getOrDefault(first.playerId(), 0)
-            );
-            if (byHeadToHead != 0) return byHeadToHead;
-
-            int byScoreFor = Long.compare(second.scoreFor(), first.scoreFor());
-            if (byScoreFor != 0) return byScoreFor;
-
-            int byRawDiff = Long.compare(second.rawDiff(), first.rawDiff());
-            if (byRawDiff != 0) return byRawDiff;
-
-            return comparePlayerCode(first.playerId(), second.playerId());
-        };
-    }
-
+    /** Numeric player-code ordering. One implementation, shared with the ranking engine. */
     static int comparePlayerCode(String first, String second) {
-        Long firstNumber = numericPlayerCode(first);
-        Long secondNumber = numericPlayerCode(second);
-        if (firstNumber != null && secondNumber != null) {
-            int numeric = Long.compare(firstNumber, secondNumber);
-            if (numeric != 0) return numeric;
-        }
-        return first.compareTo(second);
+        return PlayerCodes.compare(first, second);
     }
 
-    private static Long numericPlayerCode(String playerId) {
-        if (playerId == null || playerId.isBlank()) return null;
-        // Strip any leading letter prefix (the per-card code prefix: A, B, …, AA; or legacy P).
-        String value = playerId.replaceFirst("^[A-Za-z]+", "");
-        if (value.isBlank()) return null;
-        for (int index = 0; index < value.length(); index++)
-            if (!Character.isDigit(value.charAt(index))) return null;
-        try {
-            return Long.parseLong(value);
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
-    }
+    record PlayerScore(String playerId, String school, int winPoints, int diff) {}
 
-    record PlayerScore(String playerId, String school, int winPoints, int diff, long scoreFor, long rawDiff) {
-        public PlayerScore(String playerId, String school, int winPoints, int diff) {
-            this(playerId, school, winPoints, diff, 0, diff);
-        }
-    }
     record Pair(String playerOneId, String playerTwoId) {}
-    record PairingContext(int gameNumber, List<Pair> previousMatches, Map<String, Map<String, Integer>> headToHeadPoints) {
+
+    /**
+     * @param rankOrder player code → position in the internal total order the ranking engine
+     *                  produced. Empty only where no ranking exists yet, in which case every
+     *                  strategy falls back to player-code order.
+     */
+    record PairingContext(int gameNumber, List<Pair> previousMatches, Map<String, Integer> rankOrder) {
         public PairingContext {
             previousMatches = previousMatches == null ? List.of() : List.copyOf(previousMatches);
-            headToHeadPoints = headToHeadPoints == null ? Map.of() : Map.copyOf(headToHeadPoints);
+            rankOrder = rankOrder == null ? Map.of() : Map.copyOf(rankOrder);
         }
 
         public PairingContext(int gameNumber, List<Pair> previousMatches) {
             this(gameNumber, previousMatches, Map.of());
         }
 
-        public int headToHeadPoints(String playerId, String opponentId) {
-            return headToHeadPoints.getOrDefault(playerId, Map.of()).getOrDefault(opponentId, 0);
+        /** Position in the ranked order; unranked players sort last. */
+        public int rankOf(String playerId) {
+            return rankOrder.getOrDefault(playerId, Integer.MAX_VALUE);
         }
 
         public boolean alreadyPlayed(String first, String second) {
