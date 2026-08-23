@@ -607,6 +607,12 @@ h3 { font-size: 15px; margin-bottom: 4px; }
    record rather than a control: quieter ink, no menu, no pointer. */
 .entry-grid th.egrid-th--mirror .egrid-th__label { color: var(--muted); cursor: default; font-weight: 600; }
 .entry-grid td.egrid-td--mirror.cell-id { color: var(--muted); }
+/* ...but NOT in the result-entry grid. There the mirror is still live data an operator reads off
+   the screen while keying scores, so quieting it costs legibility for no gain — the affordance is
+   already carried by the missing menu. Equal specificity to the two rules above (0,3,1): these must
+   stay BELOW them to win on source order. Every other `.entry-grid--match` table keeps the mute. */
+.entry-grid--entry th.egrid-th--mirror .egrid-th__label { color: inherit; font-weight: inherit; }
+.entry-grid--entry td.egrid-td--mirror.cell-id { color: var(--blue-dark); }
 /* Single-row filter bar: every field on one line, action buttons trailing at the end */
 .entry-toolbar { align-items: flex-end; background: var(--surface-hover); border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px 10px; padding: 10px; padding-left: 0;}
 

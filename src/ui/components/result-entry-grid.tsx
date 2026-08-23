@@ -61,8 +61,17 @@ export function formatActor(actor: string | null, roles: string[]): string {
   return role ? `${actor} - ${role}` : actor;
 }
 
-/** Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair). */
-const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "id2", "name2", "school2"];
+/**
+ * Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair).
+ *
+ * `id2` is deliberately absent: the two code columns are ONE searchable field, and รหัส 1 owns its
+ * affordance. รหัส 2 is a read-only mirror — no menu, no sort — but it stays a match target through
+ * `ENTRY_CODE_GROUP`, so a player is still found from either seat.
+ */
+const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "name2", "school2"];
+
+/** The two code columns, matched as one field: filtering รหัส 1 also matches รหัส 2. */
+const ENTRY_CODE_GROUP = ["id1", "id2"];
 
 export interface EntrySlot {
   /** Table/couple number; stable even before the pairing exists (PAIR_RESULT destination). */
@@ -91,7 +100,7 @@ const EDIT_COLUMNS: GridColumnBase[] = [
   { key: "id1", label: "รหัส 1", min: 58, fitMin: 58, width: 72, filterKind: "playerCode" },
   { key: "name1", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138 },
   { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132 },
-  { key: "id2", label: "รหัส 2", min: 58, fitMin: 58, width: 72, filterKind: "playerCode" },
+  { key: "id2", label: "รหัส 2", min: 58, fitMin: 58, width: 72, filterKind: "playerCode", searchable: false },
   { key: "name2", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138 },
   { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132 },
   { key: "score1", label: "คะแนน 1", min: 48, fitMin: 48, width: 62, align: "center" },
@@ -440,7 +449,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const identityRows = useMemo(() => slots.map((slot) => ({ slot, pairing: slot.pairing })), [slots]);
   const uniqueValues = useMemo(() => uniqueColumnValues(identityRows, accessors, ENTRY_FILTER_KEYS), [identityRows, accessors]);
   const filtered = useMemo(() => {
-    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, ["id1", "id2"]);
+    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, ENTRY_CODE_GROUP, ENTRY_CODE_GROUP);
     return status === "all" ? byColumn : byColumn.filter((row) => row.status === status);
   }, [rows, accessors, controls.filters, controls.textFilters, controls.sort, status]);
 
@@ -785,7 +794,10 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
       )}
 
       <div className="entry-grid-scroll entry-grid-scroll--result-entry" ref={scrollRef}>
-        <table className="entry-grid entry-grid--match" style={{ width: totalWidth }} aria-label="กรอกผลการแข่งขัน">
+        {/* `entry-grid--entry` is the discriminator for this table's dissent from the shared mirror
+            styling: `entry-grid--match` is worn by four grids (both result grids, plus the overview's
+            pairing and result tables), and those DO want the muted mirror ink. */}
+        <table className="entry-grid entry-grid--match entry-grid--entry" style={{ width: totalWidth }} aria-label="กรอกผลการแข่งขัน">
           <GridHead columns={EDIT_COLUMNS} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => ENTRY_FILTER_KEYS.includes(key),
             filterable: (key) => ENTRY_FILTER_KEYS.includes(key),

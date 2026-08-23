@@ -425,6 +425,22 @@ export function useColumnControls() {
 }
 
 /** Apply column filters + sort to rows using per-column string/number accessors. */
+/**
+ * Which column keys a text filter typed into `key` is matched against.
+ *
+ * Normally just that column. A key inside `codeFilterGroup` matches the WHOLE group, because the
+ * group's columns hold one logical field split across two cells: a pairing row carries two players,
+ * and which of them a given code belongs to is decided by seat parity — something the operator
+ * cannot see before searching. Without this, searching รหัส 1 for `045` misses every row where 045
+ * happens to sit on side two, which is about half of them, and reports it as an empty board.
+ *
+ * Only the searchable column of a group carries a menu (`searchable: false` marks the mirror), so
+ * one filter box covers the pair.
+ */
+export function filterTargets(key: string, codeFilterGroup: readonly string[] = []): readonly string[] {
+  return codeFilterGroup.includes(key) ? codeFilterGroup : [key];
+}
+
 export function applyColumnControls<T>(
   rows: T[],
   accessors: Record<string, (row: T) => string | number>,
@@ -432,6 +448,11 @@ export function applyColumnControls<T>(
   sort: { key: string; dir: SortDir } | null,
   textFilters: Record<string, string> = {},
   playerCodeKeys: readonly string[] = [],
+  /**
+   * Code columns that form ONE searchable field: a text filter on any member matches all of them.
+   * Empty (the default) keeps every column filtering only itself.
+   */
+  codeFilterGroup: readonly string[] = [],
   /** Board-level search: ORs across a logical field, then ANDs with the per-column filters. */
   boardQuery = "",
   /** Text accessors for the board search; defaults to `accessors`. */
@@ -445,7 +466,8 @@ export function applyColumnControls<T>(
     (!searching || matchesBoardQuery(row, boardQuery, searchAccessors, playerCodeKeys, searchable))
     && activeKeys.every((key) => filters[key].includes(String(accessors[key](row))))
     && textKeys.every((key) => playerCodeKeys.includes(key)
-      ? matchesPlayerCode(accessors[key](row), textFilters[key])
+      ? filterTargets(key, codeFilterGroup)
+        .some((target) => accessors[target] && matchesPlayerCode(accessors[target](row), textFilters[key]))
       : String(accessors[key](row))
         .toLocaleLowerCase("th")
         .includes(textFilters[key].trim().toLocaleLowerCase("th"))));
@@ -617,7 +639,9 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
     return result;
   }, [columns, accessors]);
   const visibleRows = useMemo(
-    () => applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, controls.query, searchAccessors),
+    // No code group: DataGrid's own board search already ORs across the code columns, so its
+    // per-column filters stay per-column exactly as before.
+    () => applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, [], controls.query, searchAccessors),
     [rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, controls.query, searchAccessors],
   );
   // Codes the operator asked for that are nowhere on this board. Naming them back is the difference
