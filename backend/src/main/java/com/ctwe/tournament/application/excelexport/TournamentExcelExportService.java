@@ -60,8 +60,12 @@ public class TournamentExcelExportService {
     private static final int CHUNK_BYTES = 1 << 20;
     private final JdbcTemplate jdbc;
     private final TournamentCardService cardService;
+    /** The archive must rank by the same rule the screen does. */
+    private final com.ctwe.tournament.application.RankingSource rankingSource;
 
-    public TournamentExcelExportService(JdbcTemplate jdbc, TournamentCardService cardService) {
+    public TournamentExcelExportService(JdbcTemplate jdbc, TournamentCardService cardService,
+                                        com.ctwe.tournament.application.RankingSource rankingSource) {
+        this.rankingSource = rankingSource;
         this.jdbc = jdbc;
         this.cardService = cardService;
     }
@@ -388,24 +392,38 @@ public class TournamentExcelExportService {
         Sheet sheet = workbook.createSheet(sheetName);
         cell(sheet.createRow(0), 0, header, "การ์ด: " + cardName);
         Row head = sheet.createRow(1);
-        String[] cols = {"อันดับ", "รหัส", "ชื่อ", "นามสกุล", "โรงเรียน/สถาบัน", "ชนะ", "แพ้", "ผลต่าง"};
+        String[] cols = {"อันดับ", "รหัส", "ชื่อ", "นามสกุล", "โรงเรียน/สถาบัน", "ชนะ", "เสมอ", "แพ้", "คะแนนสะสม", "ผลต่าง", "แต้มรวม", "แต้มเฉลี่ย"};
         for (int i = 0; i < cols.length; i++) cell(head, i, header, cols[i]);
         int line = 2;
-        for (Map<String, Object> standing : jdbc.queryForList("""
-            SELECT s.rank, 'P' || lpad(p.code::text, 3, '0') AS external_id, p.first_name, p.last_name, p.school,
-                   s.wins, s.losses, s.diff
-            FROM standings s JOIN players p ON p.card_id = s.card_id AND p.code = s.player_code
-            WHERE s.card_id = ? ORDER BY s.rank NULLS LAST, s.wins DESC, s.diff DESC
-            """, cardId)) {
+        // The archive is the permanent record, so it must agree with the screen. It used to order by
+        // s.wins — which mis-ranks any card containing a draw, since a draw is a win point but not a
+        // win — and to emit a rank column that was never populated, so อันดับ came out blank. Both
+        // now come from the ranking engine, and a shared rank is shared here too.
+        Map<String, Map<String, Object>> byCode = new java.util.HashMap<>();
+        for (Map<String, Object> person : jdbc.queryForList("""
+            SELECT p.code, 'P' || lpad(p.code::text, 3, '0') AS external_id, p.first_name, p.last_name, p.school,
+                   COALESCE(s.wins, 0) wins, COALESCE(s.draws, 0) draws, COALESCE(s.losses, 0) losses,
+                   COALESCE(s.win_points, 0) win_points, COALESCE(s.diff, 0) diff
+            FROM players p LEFT JOIN standings s ON s.card_id = p.card_id AND p.code = s.player_code
+            WHERE p.card_id = ?
+            """, cardId)) byCode.put(String.valueOf(person.get("code")), person);
+
+        for (var entry : rankingSource.ranked(cardId)) {
+            Map<String, Object> person = byCode.get(entry.playerId());
+            if (person == null) continue;
             Row row = sheet.createRow(line++);
-            cell(row, 0, null, standing.get("rank"));
-            cell(row, 1, null, standing.get("external_id"));
-            cell(row, 2, null, standing.get("first_name"));
-            cell(row, 3, null, standing.get("last_name"));
-            cell(row, 4, null, standing.get("school"));
-            cell(row, 5, null, standing.get("wins"));
-            cell(row, 6, null, standing.get("losses"));
-            cell(row, 7, null, standing.get("diff"));
+            cell(row, 0, null, entry.displayRank());
+            cell(row, 1, null, person.get("external_id"));
+            cell(row, 2, null, person.get("first_name"));
+            cell(row, 3, null, person.get("last_name"));
+            cell(row, 4, null, person.get("school"));
+            cell(row, 5, null, person.get("wins"));
+            cell(row, 6, null, person.get("draws"));
+            cell(row, 7, null, person.get("losses"));
+            cell(row, 8, null, person.get("win_points"));
+            cell(row, 9, null, person.get("diff"));
+            cell(row, 10, null, entry.scoreFor());
+            cell(row, 11, null, entry.games() > 0 ? Math.round(entry.average() * 10) / 10d : null);
         }
         widths(sheet, cols.length, 16);
     }

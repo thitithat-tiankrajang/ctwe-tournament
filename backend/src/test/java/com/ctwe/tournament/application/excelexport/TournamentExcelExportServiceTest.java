@@ -33,7 +33,7 @@ class TournamentExcelExportServiceTest {
 
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final TournamentCardService cards = mock(TournamentCardService.class);
-    private final TournamentExcelExportService service = new TournamentExcelExportService(jdbc, cards);
+    private final TournamentExcelExportService service = new TournamentExcelExportService(jdbc, cards, new com.ctwe.tournament.application.RankingSource(jdbc));
     private final UUID tournamentId = UUID.randomUUID();
 
     @BeforeEach

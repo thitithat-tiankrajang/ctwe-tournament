@@ -14,7 +14,7 @@ public class SwissStrategy implements PairingStrategy {
 
     @Override
     public String selectBye(List<PlayerScore> players, PairingContext context) {
-        var groups = scoreGroups(players);
+        var groups = scoreGroups(players, context);
         for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
             List<PlayerScore> group = groups.get(groupIndex);
             if (group.size() % 2 == 0) continue;
@@ -31,7 +31,7 @@ public class SwissStrategy implements PairingStrategy {
     }
 
     public List<Pair> generate(List<PlayerScore> players, PairingContext context) {
-        var groups = scoreGroups(players);
+        var groups = scoreGroups(players, context);
         var pairs = new ArrayList<Pair>();
 
         for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
@@ -50,17 +50,19 @@ public class SwissStrategy implements PairingStrategy {
         return List.copyOf(pairs);
     }
 
-    private ArrayList<List<PlayerScore>> scoreGroups(List<PlayerScore> players) {
-        // Swiss must consume the exact visible standings order. Hidden head-to-head, score-for,
-        // or raw-diff tie-breakers would move players away from the ranks shown to operators.
-        var ranked = new ArrayList<>(players);
-        ranked.sort((first, second) -> {
-            int byWinPoints = Integer.compare(second.winPoints(), first.winPoints());
-            if (byWinPoints != 0) return byWinPoints;
-            int byDiff = Integer.compare(second.diff(), first.diff());
-            if (byDiff != 0) return byDiff;
-            return PairingStrategy.comparePlayerCode(first.playerId(), second.playerId());
-        });
+    /**
+     * Score groups, in ranking order.
+     *
+     * <p>Swiss consumes the exact order the standings show — that invariant is unchanged and is the
+     * whole reason pairing stays explicable to an operator. What changed is where that order comes
+     * from: the ranking engine, rather than a comparator duplicated here that knew only WinPoint,
+     * Diff and the player's registration number.
+     *
+     * <p>The grouping and pairing mechanics below are untouched: group by win points, pair the top
+     * half against the bottom half, pull one player up from the next group when a group is odd.
+     */
+    private ArrayList<List<PlayerScore>> scoreGroups(List<PlayerScore> players, PairingContext context) {
+        var ranked = PairingStrategy.ranked(players, context);
         Map<Integer, List<PlayerScore>> byScore = new LinkedHashMap<>();
         ranked.forEach(player -> byScore.computeIfAbsent(player.winPoints(), ignored -> new ArrayList<>()).add(player));
         return new ArrayList<>(byScore.values());

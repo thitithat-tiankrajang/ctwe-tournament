@@ -43,12 +43,16 @@ public class TournamentCardService {
     private final JdbcTemplate jdbc;
     private final PairingStrategyRegistry strategies;
     private final ObjectMapper objectMapper;
+    /** The one ranking rule; pairing, seeding and exports all consume its order. */
+    private final RankingSource rankingSource;
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public TournamentCardService(JdbcTemplate jdbc, PairingStrategyRegistry strategies, ObjectMapper objectMapper) {
+    public TournamentCardService(JdbcTemplate jdbc, PairingStrategyRegistry strategies, ObjectMapper objectMapper,
+                                 RankingSource rankingSource) {
         this.jdbc = jdbc;
         this.strategies = strategies;
         this.objectMapper = objectMapper;
+        this.rankingSource = rankingSource;
     }
 
     @Transactional(readOnly = true)
@@ -1051,14 +1055,24 @@ public class TournamentCardService {
         CardRow card = requireStage(cardId, RuntimeStage.FINAL_SEEDING);
         int slotCount = "CHAMPION_AND_THIRD".equals(card.finalType()) ? 2 : 1;
         int needed = slotCount * 2;
-        List<Integer> seeds = jdbc.queryForList("""
-            SELECT s.player_code FROM standings s
-            JOIN players p ON p.card_id = s.card_id AND p.code = s.player_code AND p.terminated_at IS NULL
-            WHERE s.card_id = ?
-            ORDER BY s.rank NULLS LAST, s.win_points DESC, s.diff DESC LIMIT ?
-            """, Integer.class, cardId, needed);
-        if (seeds.size() < needed)
-            throw new IllegalArgumentException("ผู้เล่นไม่พอสำหรับรอบชิง (ต้องการ " + needed + " คน มี " + seeds.size() + " คน)");
+        // Seeding consumes the ranking engine's INTERNAL order. It used to order by a rank column
+        // that was never written, falling through to (win_points, diff) with no tie-break at all —
+        // so whoever reached the final was decided by Postgres row order whenever the cut line fell
+        // inside a tie.
+        var ranked = rankingSource.ranked(cardId);
+        if (ranked.size() < needed)
+            throw new IllegalArgumentException("ผู้เล่นไม่พอสำหรับรอบชิง (ต้องการ " + needed + " คน มี " + ranked.size() + " คน)");
+        List<Integer> seeds = ranked.stream().limit(needed).map(entry -> Integer.parseInt(entry.playerId())).toList();
+        // The seam for the future organiser-choice feature: when the players either side of the cut
+        // line share a displayed rank, the rules did not separate them and a human should. Until that
+        // feature exists the internal order decides, and the ambiguity is recorded rather than hidden.
+        if (ranked.size() > needed && ranked.get(needed - 1).displayRank() == ranked.get(needed).displayRank())
+            audit(cardId, actor, "FINAL_SEED_TIE", null, Map.of(
+                "rank", ranked.get(needed - 1).displayRank(),
+                "decidedBy", "internal order",
+                "candidates", ranked.stream()
+                    .filter(entry -> entry.displayRank() == ranked.get(needed - 1).displayRank())
+                    .map(com.ctwe.tournament.domain.ranking.RankingEngine.Ranked::playerId).toList()));
         jdbc.update("DELETE FROM final_game_results WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM final_pairings WHERE card_id = ?", cardId);
         for (int slot = 0; slot < slotCount; slot++) {
@@ -1509,10 +1523,13 @@ public class TournamentCardService {
             }
         }
 
-        var context = new PairingStrategy.PairingContext(destGame, loadPreviousMatches(cardId), loadHeadToHeadPoints(cardId));
+        // Win points and diff for the mini-group come from the block's own results (they decide the
+        // Swiss score groups); the order WITHIN a group is the card-wide ranking, so this path uses
+        // the same rule as every other surface. The card standings already include these results.
+        var context = new PairingStrategy.PairingContext(destGame, loadPreviousMatches(cardId), rankingSource.order(cardId));
         List<PairingStrategy.PlayerScore> ranked = new ArrayList<>(PairingStrategy.ranked(score.entrySet().stream()
             .map(entry -> new PairingStrategy.PlayerScore(String.valueOf(entry.getKey()), "", (int) entry.getValue()[0],
-                (int) entry.getValue()[1], entry.getValue()[2], entry.getValue()[3]))
+                (int) entry.getValue()[1]))
             .toList(), context));
         PairingStrategy.PlayerScore byePlayer = removeBye(ranked, PairingRuleType.SWISS, context);
         List<PairingStrategy.Pair> pairs = ranked.isEmpty() ? List.of()
@@ -1654,7 +1671,7 @@ public class TournamentCardService {
         if (count("SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = ?", cardId, gameNumber) > 0)
             throw new IllegalArgumentException("มี pairing ของเกมนี้อยู่แล้ว");
         var scores = loadScores(cardId);
-        var context = new PairingStrategy.PairingContext(gameNumber, loadPreviousMatches(cardId), loadHeadToHeadPoints(cardId));
+        var context = new PairingStrategy.PairingContext(gameNumber, loadPreviousMatches(cardId), rankingSource.order(cardId));
         PairingRuleType appliedRule = ruleForGame(cardId, gameNumber);
         if (appliedRule == PairingRuleType.PAIR_RESULT)
             throw new IllegalArgumentException("เกมแบบแพ้เจอแพ้/ชนะเจอชนะต้องถูกสร้างจากผลของเกมก่อนหน้าโดยอัตโนมัติ");
@@ -1935,30 +1952,20 @@ public class TournamentCardService {
             row.snapshotNo() != null || row.pairingPublishedAt() != null);
     }
 
+    /**
+     * The field to be paired. Ranking figures beyond win points and diff are no longer read here:
+     * ordering comes from {@link RankingSource}, so pairing carries only what it needs to form
+     * score groups.
+     */
     private List<PairingStrategy.PlayerScore> loadScores(UUID cardId) {
         return jdbc.query("""
-            SELECT p.code, p.school, COALESCE(s.win_points, 0) win_points, COALESCE(s.diff, 0) diff,
-                   COALESCE(SUM(CASE
-                     WHEN m.player_one = p.code THEN COALESCE(m.score_one, 0)
-                     WHEN m.player_two = p.code THEN COALESCE(m.score_two, 0)
-                     ELSE 0
-                   END), 0) score_for,
-                   COALESCE(SUM(CASE
-                     WHEN m.result_type = 'P' AND (m.player_one = p.code OR m.player_two = p.code)
-                       THEN -COALESCE(m.calculated_diff, 0)
-                     WHEN m.player_one = p.code THEN COALESCE(m.score_one, 0) - COALESCE(m.score_two, 0)
-                     WHEN m.player_two = p.code THEN COALESCE(m.score_two, 0) - COALESCE(m.score_one, 0)
-                     ELSE 0
-                   END), 0) raw_diff
+            SELECT p.code, p.school, COALESCE(s.win_points, 0) win_points, COALESCE(s.diff, 0) diff
             FROM players p LEFT JOIN standings s ON s.card_id = p.card_id AND s.player_code = p.code
-            LEFT JOIN matches m ON m.card_id = p.card_id AND m.result_type IS NOT NULL
-              AND (m.player_one = p.code OR m.player_two = p.code)
             WHERE p.card_id = ? AND p.terminated_at IS NULL
               AND p.rejoin_game <= (SELECT current_game FROM tournament_cards WHERE id = p.card_id)
-            GROUP BY p.code, p.school, s.win_points, s.diff
             ORDER BY p.code
             """, (rs, row) -> new PairingStrategy.PlayerScore(String.valueOf(rs.getInt("code")), rs.getString("school"),
-                rs.getInt("win_points"), rs.getInt("diff"), rs.getLong("score_for"), rs.getLong("raw_diff")), cardId);
+                rs.getInt("win_points"), rs.getInt("diff")), cardId);
     }
 
     private List<PairingStrategy.Pair> loadPreviousMatches(UUID cardId) {
@@ -1967,41 +1974,6 @@ public class TournamentCardService {
             FROM matches
             WHERE card_id = ? AND player_one IS NOT NULL AND player_two IS NOT NULL
             """, (rs, row) -> new PairingStrategy.Pair(String.valueOf(rs.getInt("player_one")), String.valueOf(rs.getInt("player_two"))), cardId);
-    }
-
-    private Map<String, Map<String, Integer>> loadHeadToHeadPoints(UUID cardId) {
-        Map<String, Map<String, Integer>> result = new LinkedHashMap<>();
-        var rows = jdbc.query("""
-            SELECT player_one, player_two, winner, result_type
-            FROM matches
-            WHERE card_id = ? AND result_type IS NOT NULL
-              AND player_one IS NOT NULL AND player_two IS NOT NULL
-            """, (rs, row) -> new HeadToHeadRow(rs.getInt("player_one"), rs.getInt("player_two"),
-                nullableInt(rs, "winner"), rtName(rs.getString("result_type"))), cardId);
-        for (HeadToHeadRow row : rows) {
-            String one = String.valueOf(row.one());
-            String two = String.valueOf(row.two());
-            if ("DRAW".equals(row.resultType())) {
-                addHeadToHeadPoints(result, one, two, 1);
-                addHeadToHeadPoints(result, two, one, 1);
-            } else if ("WIN".equals(row.resultType()) && row.winner() != null) {
-                String winner = String.valueOf(row.winner());
-                String loser = row.winner().equals(row.one()) ? two : one;
-                addHeadToHeadPoints(result, winner, loser, 2);
-                addHeadToHeadPoints(result, loser, winner, 0);
-            } else {
-                // A director penalty has no winner: both sides remain tied on H2H and fall through
-                // to score-for / raw-diff / code tie-breakers.
-                addHeadToHeadPoints(result, one, two, 0);
-                addHeadToHeadPoints(result, two, one, 0);
-            }
-        }
-        return result;
-    }
-
-    private void addHeadToHeadPoints(Map<String, Map<String, Integer>> result, String player, String opponent, int points) {
-        result.computeIfAbsent(player, ignored -> new LinkedHashMap<>())
-            .merge(opponent, points, Integer::sum);
     }
 
     private void recalculateStandings(UUID cardId) {
@@ -2033,6 +2005,21 @@ public class TournamentCardService {
         }
         // Games missed while terminated are now real bye+ลงดาบ rows (a lone-player PENALTY), so they are
         // already counted above by the PENALTY branch — no separate carry adjustment is needed.
+        writeDisplayRanks(cardId);
+    }
+
+    /**
+     * Publish the DISPLAYED rank into {@code standings.rank}.
+     *
+     * <p>The column existed but was never written — 518 of 518 rows were NULL — while three queries
+     * already ordered by it and silently fell through. Filling it makes those queries mean what they
+     * say, and it is the shared rank, so genuinely tied players carry the same number here as they
+     * do on screen and in an export.
+     */
+    private void writeDisplayRanks(UUID cardId) {
+        for (var entry : rankingSource.ranked(cardId))
+            jdbc.update("UPDATE standings SET rank = ? WHERE card_id = ? AND player_code = ?",
+                entry.displayRank(), cardId, Integer.parseInt(entry.playerId()));
     }
 
     PairingRuleType ruleForGame(UUID cardId, int gameNumber) {
@@ -2330,6 +2317,5 @@ public class TournamentCardService {
     private record PairResultDestination(Integer oneId, Integer twoId, boolean hasResult) {}
     private record ScoreRow(Integer one, Integer two, Integer winner, String resultType, int calculatedDiff) {}
     private record MatchScoreRow(Integer one, Integer two, Integer winner, String resultType, int scoreOne, int scoreTwo, int calculatedDiff) {}
-    private record HeadToHeadRow(int one, int two, Integer winner, String resultType) {}
     private record AutoMatch(int gameNumber, int tableNumber, boolean onePresent, boolean twoPresent) {}
 }

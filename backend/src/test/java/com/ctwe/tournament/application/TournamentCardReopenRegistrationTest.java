@@ -55,7 +55,8 @@ class TournamentCardReopenRegistrationTest {
         TournamentCardService service = spy(new TournamentCardService(
             jdbc,
             mock(PairingStrategyRegistry.class),
-            new ObjectMapper()
+            new ObjectMapper(),
+            new RankingSource(jdbc)
         ));
         doReturn(null).when(service).get(cardId, true);
         return service;
