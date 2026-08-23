@@ -4,7 +4,8 @@ import { create } from "zustand";
 import type { AuditEntry, BackOfficeCardSummary, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
-import { comparePlayerCodes } from "@/domain/tournament/player-code";
+import { rank } from "@/domain/tournament/ranking";
+import type { RankedPlayer } from "@/domain/tournament/history";
 import { hasStaffAccess } from "@/domain/tournament/roles";
 
 export interface AuthState {
@@ -1287,4 +1288,17 @@ export const selectTournamentCardList = (
   const rows = selectCardList(cards, summaries);
   return tournamentId ? rows.filter((row) => row.tournamentId === tournamentId) : rows;
 };
-export const rankPlayers = (players: Player[]) => [...players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff || comparePlayerCodes(a.id, b.id));
+/**
+ * Rank a plain player list — the pre-tournament case, where no results exist yet.
+ *
+ * Delegates to the ranking engine so this list obeys the same rule as every other standings
+ * surface. There is no match history to consult, so no head-to-head is applied.
+ */
+export const rankPlayers = (players: Player[]): RankedPlayer[] => {
+  const byId = new Map(players.map((player) => [player.id, player]));
+  return rank(players.map((player) => ({
+    playerId: player.id, winPoints: player.winPoints, diff: player.diff, scoreFor: 0, games: 0,
+  }))).map((entry) => ({
+    ...byId.get(entry.playerId)!, scoreFor: 0, games: 0, average: entry.average, displayRank: entry.displayRank,
+  }));
+};

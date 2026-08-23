@@ -2,7 +2,7 @@
 
 import { Building2, Check, ChevronDown, Hash, Search, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { matchesPlayerCode, PLAYER_CODE_QUERY } from "@/domain/tournament/player-code";
+import { matchesPlayerCode, parseSearchQuery, unmatchedCodes } from "@/domain/tournament/player-code";
 import type { Player } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 
@@ -10,6 +10,29 @@ export interface OverviewRecordFilterValue {
   mode: "player" | "school";
   playerIds: string[];
   schools: string[];
+  /**
+   * What the viewer typed. This is part of the FILTER, not a scratch value for narrowing the option
+   * list — typing it changes the board immediately, and nothing but an explicit clear discards it.
+   * Previously three separate code paths called setQuery(""), so pressing Enter or "เสร็จสิ้น"
+   * silently threw the query away and the board never changed: the reported "กดแล้วไม่เจอข้อมูล".
+   */
+  query: string;
+}
+
+/** Does this player satisfy the typed query, in the mode the viewer is searching in? */
+export function matchesRecordQuery(
+  player: { id: string; firstName: string; lastName: string; school: string },
+  value: OverviewRecordFilterValue,
+): boolean {
+  const parsed = parseSearchQuery(value.query);
+  if (parsed.kind === "empty") return false;
+  if (value.mode === "school")
+    return parsed.kind === "text"
+      ? player.school.toLocaleLowerCase("th").includes(parsed.value.toLocaleLowerCase("th"))
+      : false;
+  if (parsed.kind === "codes") return parsed.tokens.some((token) => matchesPlayerCode(player.id, token));
+  return `${player.id} ${player.firstName} ${player.lastName} ${player.school}`
+    .toLocaleLowerCase("th").includes(parsed.value.toLocaleLowerCase("th"));
 }
 
 /**
@@ -28,9 +51,10 @@ function transformTranslateY(transform: string): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
+/** Code tokens in `query`, or null when it is not a pure code set. Parsing lives in the domain. */
 function codeTokens(query: string): string[] | null {
-  const tokens = query.split(/[\s,;]+/).filter(Boolean);
-  return tokens.length > 0 && tokens.every((token) => PLAYER_CODE_QUERY.test(token)) ? tokens : null;
+  const parsed = parseSearchQuery(query);
+  return parsed.kind === "codes" ? parsed.tokens : null;
 }
 
 /**
@@ -126,7 +150,9 @@ export function OverviewRecordFilter({
     query.addEventListener("change", sync);
     return () => query.removeEventListener("change", sync);
   }, []);
-  const [query, setQuery] = useState("");
+  const query = value.query;
+  const setQuery = useCallback((next: string) => onChange({ ...value, query: next }), [onChange, value]);
+  const [missing, setMissing] = useState<string[]>([]);
   // Keep row positions stable while the picker is open. Live SSE result updates may replace the
   // players array, but those updates must not move a different row underneath an active tap.
   const pickerPlayers = open ? playersSnapshotRef.current : players;
@@ -147,7 +173,7 @@ export function OverviewRecordFilter({
     closingRef.current = false;
     dragRef.current.pointerId = -1;
     setOpen(false);
-    setQuery("");
+    // The query SURVIVES closing. "เสร็จสิ้น" means "I am done choosing", not "discard what I typed".
   }, []);
 
   const close = useCallback(() => {
@@ -315,8 +341,9 @@ export function OverviewRecordFilter({
     snapSheetBack();
   };
   const changeMode = (mode: OverviewRecordFilterValue["mode"]) => {
+    // The query is kept: switching what it searches should not delete it.
     onChange({ ...value, mode });
-    setQuery("");
+    setMissing([]);
   };
   const togglePlayer = useCallback((playerId: string) => {
     const selected = new Set(value.playerIds);
@@ -328,34 +355,47 @@ export function OverviewRecordFilter({
     if (selected.has(school)) selected.delete(school); else selected.add(school);
     onChange({ ...value, schools: [...selected] });
   }, [onChange, value]);
+  /**
+   * Enter on a code set: pin every matching code as a chip and NAME the ones that matched nothing.
+   * The query is cleared only when something was actually pinned — a query that resolved to nobody
+   * stays on screen so the viewer can see and correct what they typed.
+   */
   const selectTypedCodes = () => {
     const tokens = value.mode === "player" ? codeTokens(query) : null;
     if (!tokens) return false;
     const selected = new Set(value.playerIds);
+    const before = selected.size;
     // Resolve prefix-aware: a bare "1" must find A001 (every card's ids carry a letter prefix).
     for (const token of tokens) {
       for (const player of players) {
         if (matchesPlayerCode(player.id, token)) selected.add(player.id);
       }
     }
-    onChange({ ...value, playerIds: [...selected] });
-    setQuery("");
+    const missed = unmatchedCodes(tokens, players.map((player) => player.id));
+    setMissing(missed);
+    const pinned = selected.size > before;
+    onChange({ ...value, playerIds: [...selected], query: pinned ? "" : query });
     return true;
   };
+  /**
+   * Enter on free text. Exactly one match is pinned as a chip and the query is cleared, because the
+   * viewer clearly meant that record. Otherwise the query STAYS — it is already filtering the board
+   * live, so leaving it in place is the correct outcome, and clearing it would undo their search.
+   */
   const singleEnterMatch = () => {
     const normalized = query.trim().toLocaleLowerCase("th");
+    setMissing([]);
     if (!normalized) return;
     if (value.mode === "player") {
       const matched = sortedPlayers.filter((player) =>
         `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLocaleLowerCase("th").includes(normalized));
-      if (matched.length === 1) togglePlayer(matched[0].id);
+      if (matched.length === 1) onChange({ ...value, playerIds: [...new Set([...value.playerIds, matched[0].id])], query: "" });
     } else {
       const matched = schools.filter((school) => school.toLocaleLowerCase("th").includes(normalized));
-      if (matched.length === 1) toggleSchool(matched[0]);
+      if (matched.length === 1) onChange({ ...value, schools: [...new Set([...value.schools, matched[0]])], query: "" });
     }
-    setQuery("");
   };
-  const clear = () => onChange({ mode: value.mode, playerIds: [], schools: [] });
+  const clear = () => { setMissing([]); onChange({ mode: value.mode, playerIds: [], schools: [], query: "" }); };
 
   return (
     <div
@@ -371,9 +411,11 @@ export function OverviewRecordFilter({
       >
         <Search size={16} aria-hidden="true" />
         <span className={`overview-record-filter__trigger-label${activeCount > 0 ? " overview-record-filter__trigger-label--active" : ""}`}>
-          {activeCount > 0
-            ? `กรองอยู่ ${activeCount} ${value.mode === "player" ? "รหัส" : "โรงเรียน"}`
-            : "ค้นหานักกีฬา / โรงเรียน"}
+          {query.trim() !== ""
+            ? `ค้นหา "${query.trim()}"${activeCount > 0 ? ` + ${activeCount} ที่เลือกไว้` : ""}`
+            : activeCount > 0
+              ? `กรองอยู่ ${activeCount} ${value.mode === "player" ? "รหัส" : "โรงเรียน"}`
+              : "ค้นหานักกีฬา / โรงเรียน"}
         </span>
         {activeCount > 0 && <span className="overview-record-filter__count">{activeCount}</span>}
         <ChevronDown size={15} className="overview-record-filter__chevron" aria-hidden="true" />
@@ -439,6 +481,9 @@ export function OverviewRecordFilter({
                 <X size={16} />
               </button>
             </div>
+            {missing.length > 0 && (
+              <p className="overview-record-filter__missing" role="status">ไม่พบรหัส {missing.join(", ")}</p>
+            )}
             <div className="overview-record-filter__chips" aria-label="รายการที่เลือก — แตะเพื่อเอาออก">
               {selectedChips.length === 0
                 ? <span className="overview-record-filter__chips-empty">ยังไม่ได้เลือกรายการ</span>
@@ -462,7 +507,10 @@ export function OverviewRecordFilter({
             </div>
             <footer>
               <span>เลือกอยู่ {activeCount} รายการ</span>
-              <Button type="button" variant="secondary" size="sm" disabled={value.playerIds.length === 0 && value.schools.length === 0} onClick={clear}><X size={14} />ล้างทั้งหมด</Button>
+              {/* A typed query filters the board on its own, so it must also be clearable on its own:
+                  gating this on chips alone left a viewer whose search matched nobody with a filtered
+                  board and no way back. */}
+              <Button type="button" variant="secondary" size="sm" disabled={value.playerIds.length === 0 && value.schools.length === 0 && query.trim() === ""} onClick={clear}><X size={14} />ล้างทั้งหมด</Button>
               <Button type="button" size="sm" className="overview-record-filter__done" onClick={close}>เสร็จสิ้น</Button>
             </footer>
           </section>

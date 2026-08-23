@@ -4,6 +4,8 @@ import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Megaphone, Pencil, Sa
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { matchesPlayerCode, normalizePlayerCode } from "@/domain/tournament/player-code";
+import { isUnusualScore, scoreWarnings } from "@/domain/tournament/score-warnings";
+import { appDialog } from "@/application/ui/dialog";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
 import { useTournamentStore, type RemoteResultChange, type RemoteResultNotice } from "@/application/tournament/store";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
@@ -293,6 +295,11 @@ const ResultEntryRow = memo(function ResultEntryRow({
   const disabled = locked || saving || savingAll;
   const outcome = calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId);
   const base = { one, two };
+  // Which side's typed score is outside the normal band right now — a hint while typing, not a gate.
+  const unusual = [
+    one.trim() !== "" && isUnusualScore(Number(one)) ? p1?.id : null,
+    two.trim() !== "" && isUnusualScore(Number(two)) ? p2?.id : null,
+  ].filter((code): code is string => Boolean(code));
   return <tr className={`egrid-row${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}${changed ? " egrid-row--dirty" : ""}${locked ? " egrid-row--locked" : ""}${failed ? " egrid-row--failed" : ""}${highlight ? " egrid-row--flash" : ""}`}>
     <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
     <td className="egrid-td cell-id">{p1?.id}</td>
@@ -303,7 +310,10 @@ const ResultEntryRow = memo(function ResultEntryRow({
     <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school}</td>
     <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => onDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onFocusNext(event.currentTarget, "other"); } }} /></td>
     <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={0} aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => onDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await onSaveRow(pairing)) onFocusNext(origin, "next"); }} /></td>
-    <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>{outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ${outcome.diff}`) : "—"}</td>
+    <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>
+      {outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ${outcome.diff}`) : "—"}
+      {unusual.length > 0 && <span className="cell-score-warning" title={unusual.map((code) => `คะแนน ${code} ผิดปกติ`).join(" · ")} aria-label={`คะแนนผิดปกติ: ${unusual.join(", ")}`}>!</span>}
+    </td>
     <td className="egrid-td cell-action">
       {locked ? (
         <div className="cell-action__group">
@@ -444,9 +454,26 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? base), [field]: value } }));
   }, [clearFlash]);
 
+  /**
+   * Unusual scores are flagged, never blocked. The operator sees which player's score looks odd
+   * and confirms once; the save then proceeds exactly as it would have.
+   */
+  const confirmUnusualScores = useCallback(async (entries: { playerId: string; score: number }[]): Promise<boolean> => {
+    const warnings = scoreWarnings(entries);
+    if (warnings.length === 0) return true;
+    return appDialog.confirm(warnings.map((warning) => warning.message).join("\n"), {
+      title: "ตรวจสอบคะแนนก่อนบันทึก",
+      confirmLabel: "บันทึกต่อ",
+    });
+  }, []);
+
   const saveValues = useCallback(async (pairing: CompletePairing, one: string, two: string): Promise<SaveResult> => {
     if (!calcOutcome(one, two, maxDiff, pairing.playerOneId, pairing.playerTwoId))
       return { ok: false, reason: "คะแนนต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป" };
+    if (!await confirmUnusualScores([
+      { playerId: pairing.playerOneId, score: Number(one) },
+      { playerId: pairing.playerTwoId, score: Number(two) },
+    ])) return { ok: false, reason: "ยกเลิกการบันทึก" };
     setSavingIds((prev) => new Set(prev).add(pairing.id));
     try {
       await onSubmit(pairing, Number(one), Number(two), isRecorded(pairing));
@@ -460,7 +487,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     } finally {
       setSavingIds((prev) => { const next = new Set(prev); next.delete(pairing.id); return next; });
     }
-  }, [maxDiff, onSubmit]);
+  }, [maxDiff, onSubmit, confirmUnusualScores]);
 
   const saveRow = useCallback(async (pairing: Pairing): Promise<boolean> => {
     if (!isCompletePairing(pairing)) return false;
@@ -477,7 +504,10 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     const draft = draftsRef.current[pairing.id];
     const value = draft?.[side] ?? (side === "one" ? pairing.scoreOne : pairing.scoreTwo)?.toString() ?? "";
     const score = Number(value);
+    // A bye keeps its own rule: the lone player must win, so a score of 0 or less is never a result.
     if (!Number.isInteger(score) || score <= 0) return false;
+    const lonePlayerId = (side === "one" ? pairing.playerOneId : pairing.playerTwoId) ?? "";
+    if (!await confirmUnusualScores([{ playerId: lonePlayerId, score }])) return false;
     const scoreOne = side === "one" ? score : 0;
     const scoreTwo = side === "one" ? 0 : score;
     setSavingIds((prev) => new Set(prev).add(pairing.id));
@@ -493,7 +523,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     } finally {
       setSavingIds((prev) => { const next = new Set(prev); next.delete(pairing.id); return next; });
     }
-  }, [onSubmit]);
+  }, [onSubmit, confirmUnusualScores]);
 
   const saveAll = async () => {
     if (filteredSavable.length === 0) return;
