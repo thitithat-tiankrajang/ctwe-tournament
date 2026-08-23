@@ -1690,6 +1690,31 @@ public class TournamentCardService {
      * Undo the destination slots derived from one source result. A destination result must be
      * withdrawn/cleared first; silently changing an already-played pairing would corrupt history.
      */
+    /**
+     * Has anything derived from this source result already been PLAYED?
+     *
+     * <p>Shared by {@link #clearPairResultSource}, which refuses in that case, and by the force-commit
+     * pre-check, which needs the same answer BEFORE offering a button. One implementation because two
+     * copies of this arithmetic would drift, and the drift would show up as a confirmation screen
+     * promising a removal the transaction then refuses.
+     */
+    boolean pairResultDestinationHasResult(UUID cardId, int sourceGame, int sourceTableNumber) {
+        int deferred = deferredSwissTableCount(cardId, sourceGame);
+        int sourceTables = gameMatchCount(cardId, sourceGame);
+        int firstDeferred = deferred == 0 ? Integer.MAX_VALUE : sourceTables - deferred + 1;
+        int destinationGame = sourceGame + 1;
+        if (sourceTableNumber >= firstDeferred)
+            return count("""
+                SELECT COUNT(*) FROM matches
+                WHERE card_id = ? AND game_number = ? AND table_number > ? AND result_type IS NOT NULL
+                """, cardId, destinationGame, firstDeferred - 1) > 0;
+        int groupStart = ((sourceTableNumber - 1) / 2) * 2 + 1;
+        return count("""
+            SELECT COUNT(*) FROM matches
+            WHERE card_id = ? AND game_number = ? AND table_number IN (?, ?) AND result_type IS NOT NULL
+            """, cardId, destinationGame, groupStart, groupStart + 1) > 0;
+    }
+
     private void clearPairResultSource(UUID cardId, int sourceGame, int sourceTableNumber) {
         int deferred = deferredSwissTableCount(cardId, sourceGame);
         int sourceTables = gameMatchCount(cardId, sourceGame);
@@ -1697,11 +1722,7 @@ public class TournamentCardService {
         int destinationGame = sourceGame + 1;
         if (sourceTableNumber >= firstDeferred) {
             int topTables = firstDeferred - 1;
-            long recorded = count("""
-                SELECT COUNT(*) FROM matches
-                WHERE card_id = ? AND game_number = ? AND table_number > ? AND result_type IS NOT NULL
-                """, cardId, destinationGame, topTables);
-            if (recorded > 0)
+            if (pairResultDestinationHasResult(cardId, sourceGame, sourceTableNumber))
                 throw new IllegalArgumentException("ถอนดาบไม่ได้ เพราะมีการกรอกผลเกมปลายทางแล้ว");
             jdbc.update("DELETE FROM matches WHERE card_id = ? AND game_number = ? AND table_number > ?",
                 cardId, destinationGame, topTables);
@@ -1709,11 +1730,7 @@ public class TournamentCardService {
         }
 
         int groupStart = ((sourceTableNumber - 1) / 2) * 2 + 1;
-        long recorded = count("""
-            SELECT COUNT(*) FROM matches
-            WHERE card_id = ? AND game_number = ? AND table_number IN (?, ?) AND result_type IS NOT NULL
-            """, cardId, destinationGame, groupStart, groupStart + 1);
-        if (recorded > 0)
+        if (pairResultDestinationHasResult(cardId, sourceGame, sourceTableNumber))
             throw new IllegalArgumentException("ถอนดาบไม่ได้ เพราะมีการกรอกผลเกมปลายทางแล้ว");
         String slot = sourceTableNumber == groupStart ? "player_one" : "player_two";
         jdbc.update("UPDATE matches SET " + slot + " = NULL WHERE card_id = ? AND game_number = ? AND table_number IN (?, ?)",
@@ -2119,7 +2136,12 @@ public class TournamentCardService {
             .merge(opponent, points, Integer::sum);
     }
 
-    private void recalculateStandings(UUID cardId) {
+    /**
+     * Zero every standing and replay every recorded result. Package-private so the pairing tool can
+     * call it after a force commit: a full replay is correct by construction after a removal, which
+     * is why nothing here needs an incremental unwind.
+     */
+    void recalculateStandings(UUID cardId) {
         jdbc.update("UPDATE standings SET wins = 0, draws = 0, losses = 0, win_points = 0, diff = 0 WHERE card_id = ?", cardId);
         var results = jdbc.query("""
             SELECT player_one, player_two, winner, result_type, calculated_diff
@@ -2240,9 +2262,13 @@ public class TournamentCardService {
 
     private void saveResultColumns(UUID cardId, MatchKey key, Integer winner, int scoreOne, int scoreTwo,
                                    String resultType, int calculatedDiff, String actor) {
+        // Clearing the withdrawal marker is part of saving, not a separate step: a row with both a
+        // result and a "withdrawn" flag would tell the audience two contradictory things, and the DB
+        // CHECK (matches_withdrawn_is_unscored) refuses it outright.
         jdbc.update("""
             UPDATE matches SET winner = ?, score_one = ?, score_two = ?, result_type = ?, calculated_diff = ?,
-                               submitted_by = ?, submitted_at = now()
+                               submitted_by = ?, submitted_at = now(),
+                               result_withdrawn_at = NULL, result_withdrawn_by = NULL
             WHERE card_id = ? AND game_number = ? AND table_number = ?
             """, winner, scoreOne, scoreTwo, rtCode(resultType), calculatedDiff, actor, cardId, key.gameNumber(), key.tableNumber());
     }
@@ -2450,6 +2476,82 @@ public class TournamentCardService {
             SELECT COUNT(*) FROM matches
             WHERE card_id = ? AND ((player_one = ? AND player_two = ?) OR (player_one = ? AND player_two = ?))
             """, cardId, one, two, two, one) > 0;
+    }
+
+    /**
+     * Why this result cannot be destroyed, or null when it can be.
+     *
+     * <p>Computed BEFORE the confirmation screen offers a button, so an unrecoverable case is shown
+     * as a reason rather than as a transaction that fails after the operator has read the list of
+     * results they were about to erase and typed a confirmation.
+     *
+     * <p>Deliberately inherits ถอนดาบ's existing refusal instead of inventing a stronger one: a
+     * cascade through a PAIR_RESULT chain could wipe a whole round from a single click.
+     */
+    public String unwindBlocker(UUID cardId, int game, int table) {
+        var row = jdbc.query("""
+            SELECT result_type, snapshot_no FROM matches
+            WHERE card_id = ? AND game_number = ? AND table_number = ?
+            """, (rs, index) -> new String[] {
+                rtName(rs.getString("result_type")),
+                rs.getObject("snapshot_no") == null ? null : String.valueOf(rs.getInt("snapshot_no")) },
+            cardId, game, table).stream().findFirst().orElse(null);
+        if (row == null || row[0] == null) return null;                    // nothing to remove
+        if (row[1] != null) return "ผลของคู่นี้ยืนยันแล้ว (snapshot) ลบไม่ได้";
+        if ("PENALTY".equals(row[0])) return "ผลนี้ถูกลงดาบอยู่ ต้องถอนดาบก่อน";
+
+        // cardSummary, NOT cardRow: cardRow takes SELECT ... FOR UPDATE, and this runs inside the
+        // dry run's read-only transaction where PostgreSQL refuses that outright. Anything reachable
+        // from validate() must stay lock-free.
+        if (!cardSummary(cardId).editableGames().contains(game))
+            return "อยู่นอก block ปัจจุบัน จึงลบผลไม่ได้";
+        if (isOutgoingPairResult(cardId, game) && pairResultDestinationHasResult(cardId, game, table))
+            return "เกมปลายทางที่มาจากผลนี้กรอกผลไปแล้ว";
+        return null;
+    }
+
+    /** One result exactly as the confirmation screen and the audit record must show it. */
+    public CardDtos.DestroyedResult resultDetail(UUID cardId, int game, int table) {
+        String prefix = jdbc.queryForObject(
+            "SELECT code_prefix FROM tournament_cards WHERE id = ?", String.class, cardId);
+        return jdbc.query("""
+            SELECT player_one, player_two, score_one, score_two, result_type, winner,
+                   calculated_diff, submitted_by, submitted_at
+            FROM matches WHERE card_id = ? AND game_number = ? AND table_number = ?
+            """, (rs, index) -> new CardDtos.DestroyedResult(
+                game, table,
+                pcode(prefix, nullableInt(rs, "player_one")), pcode(prefix, nullableInt(rs, "player_two")),
+                nullableInt(rs, "score_one"), nullableInt(rs, "score_two"),
+                rtName(rs.getString("result_type")), pcode(prefix, nullableInt(rs, "winner")),
+                nullableInt(rs, "calculated_diff"), rs.getString("submitted_by"),
+                rs.getTimestamp("submitted_at") == null ? null : rs.getTimestamp("submitted_at").toInstant().toString()),
+            cardId, game, table).stream().findFirst().orElse(null);
+    }
+
+    /**
+     * Destroy one result: unwind whatever it derived, clear the score columns, and mark the match
+     * publicly WITHDRAWN if the audience had already been shown it.
+     *
+     * <p>No standings work here — the caller rebuilds once for the whole commit, and
+     * {@code recalculateStandings} is a full replay from {@code matches} rather than an incremental
+     * unwind, so there is nothing per-result to get wrong.
+     */
+    public void unwindResult(UUID cardId, int game, int table, String actor) {
+        MatchKey key = new MatchKey(game, table);
+        MatchPlayers match = matchRow(cardId, key);
+        // A destination materialised from this source result stops being derivable from anything.
+        if (match.snapshotNo() == null && isOutgoingPairResult(cardId, game))
+            clearPairResultSource(cardId, game, table);
+
+        boolean wasPublic = match.pairingPublishedAt() != null || match.snapshotNo() != null;
+        jdbc.update("""
+            UPDATE matches
+            SET winner = NULL, score_one = NULL, score_two = NULL, result_type = NULL,
+                calculated_diff = NULL, submitted_by = NULL, submitted_at = NULL,
+                result_withdrawn_at = CASE WHEN ? THEN now() ELSE NULL END,
+                result_withdrawn_by = CASE WHEN ? THEN ? ELSE NULL END
+            WHERE card_id = ? AND game_number = ? AND table_number = ?
+            """, wasPublic, wasPublic, actor, cardId, game, table);
     }
 
     public void touchCard(UUID cardId) { touch(cardId); }

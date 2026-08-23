@@ -151,8 +151,25 @@ public final class CardDtos {
                             String actualOne, String actualTwo) {}
 
     /**
+     * One competition result a force commit would destroy, in full.
+     *
+     * <p>Everything a person needs to recognise it — both players, both scores, the winner, who
+     * entered it and when. The confirmation screen shows exactly this, and the audit record keeps
+     * exactly this, because once the commit runs the match row no longer carries any of it.
+     */
+    public record DestroyedResult(int game, int table, String playerOne, String playerTwo,
+                                  Integer scoreOne, Integer scoreTwo, String resultType,
+                                  String winner, Integer calculatedDiff,
+                                  String submittedBy, String submittedAt) {}
+
+    /**
      * The dry run's answer, and the entire content of the confirmation sheet. Commit runs the same
      * evaluation, so a preview can never promise something the commit then refuses.
+     *
+     * <p>{@code resultsToRemove} is populated whenever the change set collides with recorded results,
+     * whether or not force was asked for — the operator has to see what standing in the way costs.
+     * {@code forceAvailable} is false when any of them cannot be safely unwound, so the button is
+     * never offered for a removal that would fail.
      */
     public record PairingValidationResponse(
         boolean ok,
@@ -161,7 +178,9 @@ public final class CardDtos {
         List<PairingWarning> warnings,
         List<PairingBlock> blocks,
         List<SlotDrift> drift,
-        List<ScreeningHold> pool
+        List<ScreeningHold> pool,
+        List<DestroyedResult> resultsToRemove,
+        boolean forceAvailable
     ) {}
 
     /** One open hold, as the right-hand panel renders it. */

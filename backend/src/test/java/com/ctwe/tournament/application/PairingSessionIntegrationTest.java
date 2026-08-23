@@ -279,15 +279,28 @@ class PairingSessionIntegrationTest {
                 .extracting(CardDtos.PairingBlock::code).contains("HAS_RESULT"));
     }
 
+    /**
+     * Force is not a mode, it is permission to destroy results. Asking for it when the change set
+     * collides with nothing must behave exactly like an ordinary commit — no results erased, no
+     * confirmation theatre, nothing extra written.
+     */
     @Test
-    void forceIsRefusedUntilItsOwnPhase() {
+    void forceWithNothingToDestroyIsJustAnOrdinaryCommit() {
         UUID cardId = cardWithPairing(8);
-        var forced = new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
-            List.of(), List.of(), List.of(), List.of(), List.of());
-        assertThatThrownBy(() -> session.commit(cardId, forced, ACTOR))
-            .isInstanceOf(PairingSessionService.PairingRejectedException.class)
-            .satisfies(error -> assertThat(((PairingSessionService.PairingRejectedException) error).blocks())
-                .extracting(CardDtos.PairingBlock::code).contains("FORCE_UNAVAILABLE"));
+        int[] slot = fullSlot(cardId);
+        String held = id(cardId, slot[2]);
+
+        var outcome = session.commit(cardId, new CardDtos.PairingCommitRequest(
+            UUID.randomUUID(), "x", true,
+            List.of(slot(1, slot[1], held, id(cardId, slot[3]))), List.of(),
+            List.of(new CardDtos.ScreenEntry(held, "NO_SHOW", null)), List.of(), List.of()), ACTOR);
+
+        assertThat(outcome.changedSlots()).hasSize(1);
+        assertThat(pool.openCodes(cardId)).containsExactly(slot[2]);
+        Long destroyed = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM audit_logs WHERE card_id = ? AND action = 'FORCE_REMOVE_RESULT'",
+            Long.class, cardId);
+        assertThat(destroyed).isZero();
     }
 
     // ---- concurrency -------------------------------------------------------
@@ -450,6 +463,142 @@ class PairingSessionIntegrationTest {
         assertThat(session.commit(cardId, body, ACTOR).changedSlots())
             .as("the replay applied nothing, so it has nothing to announce")
             .isEmpty();
+    }
+
+    // ---- force commit (P4) --------------------------------------------------
+
+    /** A recorded result stops an ordinary commit, and says so rather than failing obscurely. */
+    @Test
+    void aRecordedResultBlocksAnOrdinaryCommitAndNamesTheForceRoute() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+
+        var verdict = session.validate(cardId, request(
+            List.of(slot(1, slot[1], id(cardId, slot[2]), id(cardId, slot[3]))),
+            List.of(slot(1, slot[1], id(cardId, slot[2]), null)),
+            List.of(), List.of(), List.of()));
+
+        assertThat(verdict.blocks()).extracting(CardDtos.PairingBlock::code).contains("HAS_RESULT");
+        assertThat(verdict.resultsToRemove()).singleElement()
+            .satisfies(doomed -> {
+                assertThat(doomed.table()).isEqualTo(slot[1]);
+                assertThat(doomed.scoreOne()).isEqualTo(300);
+                assertThat(doomed.submittedBy()).isEqualTo(ACTOR);
+            });
+        assertThat(verdict.forceAvailable())
+            .as("an ordinary game result with nothing derived from it can be unwound")
+            .isTrue();
+    }
+
+    /**
+     * Force destroys the result, applies the change, and rebuilds standings — and the destroyed
+     * result survives ONLY in the audit, which is why that row carries the whole thing.
+     */
+    @Test
+    void forceDestroysTheResultAppliesTheChangeAndAuditsWhatItErased() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        String one = id(cardId, slot[2]);
+        String two = id(cardId, slot[3]);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+
+        var forced = new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
+            List.of(slot(1, slot[1], one, two)), List.of(),
+            List.of(new CardDtos.ScreenEntry(one, "NO_SHOW", null)), List.of(), List.of());
+        session.commit(cardId, forced, "director01");
+
+        var row = jdbc.queryForMap(
+            "SELECT result_type, score_one, player_one, result_withdrawn_by FROM matches"
+                + " WHERE card_id = ? AND game_number = 1 AND table_number = ?", cardId, slot[1]);
+        assertThat(row.get("result_type")).as("the result is gone").isNull();
+        assertThat(row.get("score_one")).isNull();
+        assertThat(row.get("player_one")).as("and the staged screening applied").isNull();
+
+        var audits = jdbc.queryForList("""
+            SELECT old_value::text FROM audit_logs
+            WHERE card_id = ? AND action = 'FORCE_REMOVE_RESULT'
+            """, String.class, cardId);
+        assertThat(audits).singleElement().satisfies(value -> assertThat(value)
+            .contains("300").contains("200").contains(ACTOR).contains(one));
+    }
+
+    /** A result the audience had already seen is marked withdrawn, never silently vanished. */
+    @Test
+    void aDestroyedPublicResultIsMarkedWithdrawn() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        String one = id(cardId, slot[2]);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+        jdbc.update("UPDATE matches SET pairing_published_at = now() WHERE card_id = ? AND game_number = 1",
+            cardId);
+        long publicBefore = publicVersion(cardId);
+
+        session.commit(cardId, new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
+            List.of(slot(1, slot[1], one, id(cardId, slot[3]))), List.of(),
+            List.of(new CardDtos.ScreenEntry(one, "NO_SHOW", null)), List.of(), List.of()), "director01");
+
+        Boolean withdrawn = jdbc.queryForObject(
+            "SELECT result_withdrawn_at IS NOT NULL FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
+            Boolean.class, cardId, slot[1]);
+        assertThat(withdrawn).as("a score cannot just disappear from a public scoreboard").isTrue();
+        assertThat(publicVersion(cardId))
+            .as("and the withdrawal has to reach the audience")
+            .isGreaterThan(publicBefore);
+    }
+
+    /** Entering a replacement clears the marker: the row is an ordinary scored pairing again. */
+    @Test
+    void aReplacementResultClearsTheWithdrawnMarker() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        String one = id(cardId, slot[2]);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+        jdbc.update("UPDATE matches SET pairing_published_at = now() WHERE card_id = ? AND game_number = 1",
+            cardId);
+        session.commit(cardId, new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
+            List.of(slot(1, slot[1], one, id(cardId, slot[3]))), List.of(),
+            List.of(new CardDtos.ScreenEntry(one, "NO_SHOW", null)), List.of(), List.of()), "director01");
+
+        // The slot is now a bye for the remaining player; staff score it normally.
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(0, 250, false), ACTOR);
+
+        Boolean withdrawn = jdbc.queryForObject(
+            "SELECT result_withdrawn_at IS NOT NULL FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
+            Boolean.class, cardId, slot[1]);
+        assertThat(withdrawn).isFalse();
+    }
+
+    /** Snapshot immutability is absolute: force may not touch a confirmed result. */
+    @Test
+    void forceCannotTouchASnapshottedResult() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+        jdbc.update("""
+            INSERT INTO pairing_snapshots (card_id, snapshot_no, game_from, game_to, confirmed_at)
+            VALUES (?, 1, 1, 1, now())
+            """, cardId);
+        jdbc.update("UPDATE matches SET snapshot_no = 1 WHERE card_id = ? AND game_number = 1 AND table_number = ?",
+            cardId, slot[1]);
+
+        assertThat(cards.unwindBlocker(cardId, 1, slot[1]))
+            .as("a confirmed result is permanent — that is what makes published results trustworthy")
+            .contains("snapshot");
+    }
+
+    /** ลงดาบ has its own withdrawal path; force must not become a second one. */
+    @Test
+    void forceCannotClearAPenaltyResult() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        jdbc.update("""
+            UPDATE matches SET result_type = 'P', score_one = 0, score_two = 0, calculated_diff = 50,
+                               submitted_by = ?, submitted_at = now()
+            WHERE card_id = ? AND game_number = 1 AND table_number = ?
+            """, ACTOR, cardId, slot[1]);
+
+        assertThat(cards.unwindBlocker(cardId, 1, slot[1])).contains("ถอนดาบ");
     }
 
     // ---- I9: the audience never learns of a hold ---------------------------

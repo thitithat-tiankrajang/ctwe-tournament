@@ -136,7 +136,7 @@ export interface PairingChange {
 
 /** Something the commit causes that the operator did not directly drag. */
 export interface PairingConsequence {
-  kind: "BECOMES_BYE" | "BECOMES_VOID" | "UNVOIDED" | "POOL_ADD" | "POOL_REMOVE";
+  kind: "BECOMES_BYE" | "BECOMES_VOID" | "UNVOIDED" | "POOL_ADD" | "POOL_REMOVE" | "RESULT_REMOVED";
   game: number | null;
   table: number | null;
   player: string | null;
@@ -153,6 +153,25 @@ export interface SlotDrift {
   actualTwo: string | null;
 }
 
+/**
+ * One competition result a force commit would destroy, in full: both players, both scores, the
+ * winner, and who entered it when. The confirmation screen shows exactly this — a password proves
+ * identity, not intent, so the operator has to read what they are about to erase.
+ */
+export interface DestroyedResult {
+  game: number;
+  table: number;
+  playerOne: string | null;
+  playerTwo: string | null;
+  scoreOne?: number;
+  scoreTwo?: number;
+  resultType?: string;
+  winner: string | null;
+  calculatedDiff?: number;
+  submittedBy?: string;
+  submittedAt?: string;
+}
+
 /** The dry run's answer, and the whole content of the confirmation sheet. */
 export interface PairingValidation {
   ok: boolean;
@@ -162,6 +181,10 @@ export interface PairingValidation {
   blocks: PairingBlock[];
   drift: SlotDrift[];
   pool: ScreeningHold[];
+  /** Results the change set collides with, whether or not force was asked for. */
+  resultsToRemove: DestroyedResult[];
+  /** False when any of them cannot be safely unwound — the button must not be offered. */
+  forceAvailable: boolean;
 }
 
 /** A staged change set. `expect` is the per-slot precondition the server re-checks under lock. */

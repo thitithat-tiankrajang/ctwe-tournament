@@ -119,17 +119,35 @@ public class PairingSessionService {
         if (!unacknowledged.isEmpty())
             throw new PairingRejectedException(List.of(), unacknowledged);
 
+        // Destruction first: a slot cannot be rearranged while it still carries the result that made
+        // it un-rearrangeable, and the audit row must capture the result BEFORE anything overwrites it.
+        var destroyed = response.resultsToRemove();
+        for (var doomed : destroyed) {
+            cards.writeAudit(cardId, actor, "FORCE_REMOVE_RESULT", doomed, Map.of(
+                "removedBy", actor,
+                "commitKey", request.commitKey().toString(),
+                "cause", "MULTI_SWITCH_FORCE"));
+            cards.unwindResult(cardId, doomed.game(), doomed.table(), actor);
+        }
+
         applyPairing(cardId, evaluation, actor);
         applyScreening(cardId, request, evaluation, actor);
+
+        // One full replay from `matches`, not an incremental unwind — correct by construction after
+        // any removal, and cheap insurance against a ranking screen that disagrees with the results.
+        if (!destroyed.isEmpty()) cards.recalculateStandings(cardId);
 
         cards.touchCard(cardId);
         // Screening alone never reaches the public. Only a slot the audience has already been shown
         // bumps the public version — which is how "the public never sees screening" holds while
         // "committed pairing changes are public" also holds.
-        if (evaluation.touchesPublishedPairing()) cards.publishPublicVersion(cardId);
+        // A destroyed result the audience had already seen must not simply vanish from a public
+        // scoreboard: the row is marked withdrawn, and the version bump is what carries that to them.
+        if (evaluation.touchesPublishedPairing() || !destroyed.isEmpty())
+            cards.publishPublicVersion(cardId);
         writeAudit(cardId, request, evaluation, actor);
         return new CommitOutcome(cards.get(cardId, true), response.changes(),
-            evaluation.touchesPublishedPairing());
+            evaluation.touchesPublishedPairing() || !destroyed.isEmpty());
     }
 
     // -------------------------------------------------------------- evaluate
@@ -146,13 +164,10 @@ public class PairingSessionService {
         List<CardDtos.PairingWarning> warnings = new ArrayList<>();
         List<CardDtos.PairingConsequence> consequences = new ArrayList<>();
         List<CardDtos.SlotDrift> drift = new ArrayList<>();
-
-        // Force commit destroys competition results and arrives in its own phase, behind its own
-        // confirmation. Rejecting it as a block rather than a bare 501 means the UI renders the
-        // reason like any other refusal.
-        if (request.force())
-            blocks.add(block("FORCE_UNAVAILABLE", null, null,
-                "ยังไม่เปิดใช้งานการบังคับ commit (ลบผลที่ขัดกัน)"));
+        List<CardDtos.DestroyedResult> resultsToRemove = new ArrayList<>();
+        // False the moment any collided result cannot be safely unwound, so the confirmation screen
+        // shows a reason instead of a button that would fail after the operator committed to it.
+        boolean forceAvailable = true;
 
         // ---- stage: the tool only ever edits a live, generated, unsnapshotted pairing ----
         if (card.status() == CardStatus.FINISHED || card.status() == CardStatus.CLOSED)
@@ -259,10 +274,23 @@ public class PairingSessionService {
             if (!editableGames.contains(key.game()))
                 blocks.add(block("GAME_NOT_EDITABLE", key.game(), key.table(),
                     "แก้ได้เฉพาะเกมใน block ปัจจุบัน " + editableGames));
-            // Screening must never destroy a played match, and P2 has no force path at all.
-            if (before.resultType() != null)
-                blocks.add(block("HAS_RESULT", key.game(), key.table(),
-                    "คู่ที่ " + key.table() + " เกม " + key.game() + " กรอกผลแล้ว"));
+            // A recorded result stops an ordinary commit outright. Force can clear it — but only
+            // when it is genuinely unwindable, which is the pre-check below, not a promise.
+            if (before.resultType() != null) {
+                String reason = cards.unwindBlocker(cardId, key.game(), key.table());
+                if (!request.force())
+                    blocks.add(block("HAS_RESULT", key.game(), key.table(),
+                        "คู่ที่ " + key.table() + " เกม " + key.game()
+                            + " กรอกผลแล้ว — ต้องใช้การบังคับบันทึกเพื่อลบผลนั้น"));
+                else if (reason != null)
+                    blocks.add(block("UNWINDABLE", key.game(), key.table(),
+                        "คู่ที่ " + key.table() + " เกม " + key.game() + ": " + reason));
+                var detail = cards.resultDetail(cardId, key.game(), key.table());
+                if (detail != null) {
+                    resultsToRemove.add(detail);
+                    if (reason != null) forceAvailable = false;
+                }
+            }
         }
 
         // A player may sit in at most one seat.
@@ -363,9 +391,14 @@ public class PairingSessionService {
             !current.get(entry.getKey()).sameOccupancy(entry.getValue())
                 && current.get(entry.getKey()).publishedAt() != null);
 
+        for (var doomed : resultsToRemove)
+            consequences.add(new CardDtos.PairingConsequence(
+                "RESULT_REMOVED", doomed.game(), doomed.table(), doomed.winner()));
+
         var response = new CardDtos.PairingValidationResponse(
             blocks.isEmpty() && drift.isEmpty(),
-            changes, consequences, warnings, blocks, drift, openHolds(cardId));
+            changes, consequences, warnings, blocks, drift, openHolds(cardId),
+            List.copyOf(resultsToRemove), forceAvailable);
         return new Evaluation(response, current, desired, origins, touchesPublished);
     }
 
@@ -446,6 +479,8 @@ public class PairingSessionService {
         after.put("acknowledged", request.confirmWarnings());
         after.put("commitKey", request.commitKey().toString());
         after.put("forced", request.force());
+        after.put("resultsRemoved", evaluation.response().resultsToRemove().stream()
+            .map(doomed -> "g" + doomed.game() + "t" + doomed.table()).toList());
         cards.writeAudit(cardId, actor, "PAIRING_COMMIT", before, after);
     }
 
@@ -525,7 +560,7 @@ public class PairingSessionService {
     private Evaluation rejection(List<CardDtos.PairingBlock> blocks, List<CardDtos.PairingWarning> warnings,
                                  List<CardDtos.SlotDrift> drift, UUID cardId) {
         var response = new CardDtos.PairingValidationResponse(false, List.of(), List.of(),
-            warnings, blocks, drift, openHolds(cardId));
+            warnings, blocks, drift, openHolds(cardId), List.of(), false);
         return new Evaluation(response, Map.of(), Map.of(), Map.of(), false);
     }
 

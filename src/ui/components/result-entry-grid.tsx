@@ -855,7 +855,8 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
     score1: (pairing) => pairing.scoreOne ?? "—",
     score2: (pairing) => pairing.scoreTwo ?? "—",
     diff: (pairing) => recordedDiff(pairing) ?? "—",
-    winner: (pairing) => pairing.resultType === "DRAW" ? "เสมอ" : pairing.winnerId ?? "—",
+    winner: (pairing) => pairing.resultWithdrawn ? "ถอนผล"
+      : pairing.resultType === "DRAW" ? "เสมอ" : pairing.winnerId ?? "—",
   }), [players]);
   const uniqueValues = useMemo(
     () => uniqueColumnValues(pairings, accessors, VIEW_FILTER_KEYS),
@@ -910,7 +911,7 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
                 <td className="egrid-td egrid-td--center cell-score">{penalty ? "-" : pairing.scoreOne ?? "—"}</td>
                 <td className="egrid-td egrid-td--center cell-score">{penalty ? "-" : pairing.scoreTwo ?? "—"}</td>
                 <td className={`egrid-td egrid-td--center cell-diff cell-diff--${!recorded ? "pending" : penalty ? "penalty" : draw ? "draw" : "win"}`}>{!recorded ? "—" : penalty ? `-${diff ?? 0}` : draw ? "0" : `${diff}`}</td>
-                <td className={`egrid-td${recorded && !draw && !penalty ? " cell-id" : ""}`}>{!recorded ? "—" : penalty ? "ลงดาบ" : draw ? "เสมอ" : pairing.winnerId ?? "—"}</td>
+                <td className={`egrid-td${recorded && !draw && !penalty ? " cell-id" : ""}`}>{pairing.resultWithdrawn ? <span className="result-withdrawn">ถอนผล</span> : !recorded ? "—" : penalty ? "ลงดาบ" : draw ? "เสมอ" : pairing.winnerId ?? "—"}</td>
               </tr>;
             })}
         </tbody>

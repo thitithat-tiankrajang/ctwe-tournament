@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AuditEntry, BackOfficeCardSummary, CreateCardInput, ManagedUser, Pairing, PairingChange, PairingChangeSet, PairingValidation, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ScreeningHold, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, BackOfficeCardSummary, CreateCardInput, DestroyedResult, ManagedUser, Pairing, PairingChange, PairingChangeSet, PairingValidation, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ScreeningHold, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
 import { comparePlayerCodes } from "@/domain/tournament/player-code";
@@ -205,9 +205,12 @@ interface TournamentState {
    */
   openPairingSession: (cardId: string, password: string) => Promise<ScreeningHold[]>;
   /** Dry run. Writes nothing, and answers exactly what the commit would do. */
-  validatePairingChange: (cardId: string, changes: PairingChangeSet) => Promise<PairingValidation>;
-  /** Apply a staged change set atomically: pairings, pool and audit in one transaction. */
-  commitPairingChange: (cardId: string, changes: PairingChangeSet, password: string, commitKey: string) => Promise<void>;
+  validatePairingChange: (cardId: string, changes: PairingChangeSet, force?: boolean) => Promise<PairingValidation>;
+  /**
+   * Apply a staged change set atomically: pairings, pool, destroyed results and audit in one
+   * transaction. `force` additionally erases the results the change set collides with.
+   */
+  commitPairingChange: (cardId: string, changes: PairingChangeSet, password: string, commitKey: string, force?: boolean) => Promise<void>;
   restorePlayers: (cardId: string, playerIds: string[], password: string, lossPoints: number, unpair: boolean) => Promise<void>;
   closeCard: (cardId: string) => Promise<void>;
   deleteCard: (cardId: string) => Promise<void>;
@@ -1122,24 +1125,24 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         body: JSON.stringify({ password }),
       });
     },
-    async validatePairingChange(cardId, changes) {
+    async validatePairingChange(cardId, changes, force = false) {
       // commitKey and password are required by the shared request shape but unused by the dry run.
       return request<PairingValidation>(`/api/cards/${cardId}/pairing/validate`, {
         method: "POST",
         body: JSON.stringify({
           commitKey: "00000000-0000-4000-8000-000000000000",
           password: "",
-          force: false,
+          force,
           ...changes,
         }),
       });
     },
-    async commitPairingChange(cardId, changes, password, commitKey) {
+    async commitPairingChange(cardId, changes, password, commitKey, force = false) {
       // The key is generated once per attempt by the caller and reused across retries, so a commit
       // that times out on a venue network can be pressed again without applying twice.
       await mutateCard(`/api/cards/${cardId}/pairing/commit`, cardId, {
         method: "POST",
-        body: JSON.stringify({ commitKey, password, force: false, ...changes }),
+        body: JSON.stringify({ commitKey, password, force, ...changes }),
       });
     },
     async terminatePlayers(cardId, playerIds, password) {

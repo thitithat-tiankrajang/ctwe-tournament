@@ -84,6 +84,21 @@ class PairingSessionReadOnlyTest {
             assertThat(verdict).isNotNull();
             assertThat(verdict.ok()).as("the dry run must not need a row lock").isTrue();
             assertThat(verdict.changes()).hasSize(1);
+
+            // And again over a slot that HAS a result, which is the branch that reaches
+            // unwindBlocker — a second lock-taking call hid there and only surfaced in the browser.
+            cards.submitResult(cardId, "g1t" + slot[1],
+                new CardDtos.ResultRequest(300, 200, false), ACTOR);
+            var forced = new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
+                List.of(new CardDtos.SlotState(1, slot[1], one, two)),
+                List.of(new CardDtos.SlotState(1, slot[1], one, null)),
+                List.of(), List.of(), List.of());
+            var forcedVerdict = template.execute(status -> session.validate(cardId, forced));
+
+            assertThat(forcedVerdict).isNotNull();
+            assertThat(forcedVerdict.resultsToRemove())
+                .as("the force pre-check must also run without taking a lock")
+                .hasSize(1);
         } finally {
             cards.delete(cardId);
         }

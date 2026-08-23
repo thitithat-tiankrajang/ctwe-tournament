@@ -15,6 +15,7 @@ import type {
 import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
+import { ForceCommitConfirm } from "@/ui/components/force-commit-confirm";
 import { PairingDiffSheet } from "@/ui/components/pairing-diff-sheet";
 import { type SlotRow, liveSlots, usePairingBaseline } from "@/ui/components/use-pairing-baseline";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
@@ -70,6 +71,8 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
   const [reason, setReason] = useState<ScreeningReason>("NO_SHOW");
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState<PairingValidation | null>(null);
+  /** Acknowledged warnings carried into the force confirmation, so nothing is re-asked there. */
+  const [forcing, setForcing] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [wideEnough, setWideEnough] = useState(true);
@@ -93,6 +96,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     setAvailable([]);
     setHeld(null);
     setPreview(null);
+    setForcing(null);
     setError("");
     setNote("");
     // Open on the problem filter only when there ARE problems. Defaulting to it unconditionally
@@ -196,7 +200,11 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
   };
 
   const seatClick = (slot: SlotRow, side: 1 | 2) => {
-    if (slot.hasResult || conflictOf(slot.game, slot.table)) return;
+    // A scored slot IS reachable in place mode — repairing a table that has already been played is
+    // exactly what force commit exists for, and locking it here would make that path unreachable.
+    // The collision surfaces in the diff sheet, where destroying the result takes its own
+    // confirmation. Screen mode keeps it locked: screening must never destroy a result.
+    if (conflictOf(slot.game, slot.table)) return;
     const occupant = side === 1 ? slot.one : slot.two;
     if (held !== null) place(slot, side);
     else if (occupant !== null) lift(slot, side);
@@ -258,15 +266,35 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     }
   };
 
-  const commit = async (password: string, acknowledged: string[]) => {
+  const commit = async (password: string, acknowledged: string[], force = false) => {
     setBusy(true);
     setError("");
     try {
-      await commitPairingChange(card.id, changeSet(acknowledged), password, crypto.randomUUID());
+      await commitPairingChange(card.id, changeSet(acknowledged), password, crypto.randomUUID(), force);
       onClose();
     } catch (failure) {
       setError(isBadPassword(failure) ? "รหัสผ่านไม่ถูกต้อง"
         : failure instanceof Error ? failure.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Re-run the dry run WITH force, so the confirmation lists exactly what the forced commit will
+   * destroy. The non-forced preview reports the collision; only the forced one reports whether each
+   * result can actually be unwound.
+   */
+  const prepareForce = async (acknowledged: string[]) => {
+    setBusy(true);
+    setError("");
+    try {
+      const forced = await validatePairingChange(card.id, changeSet(acknowledged), true);
+      setPreview(forced);
+      if (forced.forceAvailable && forced.resultsToRemove.length > 0) setForcing(acknowledged);
+      else setError("ลบผลของคู่เหล่านี้ไม่ได้ — มีผลอื่นที่คำนวณต่อจากผลนี้ไปแล้ว");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "ตรวจสอบไม่สำเร็จ");
     } finally {
       setBusy(false);
     }
@@ -437,13 +465,24 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
           </Button>
         </footer>
 
-        {preview && (
+        {preview && forcing === null && (
           <PairingDiffSheet
             validation={preview}
             players={players}
             busy={busy}
             onCancel={() => setPreview(null)}
             onConfirm={commit}
+            onForce={(acknowledged) => void prepareForce(acknowledged)}
+          />
+        )}
+
+        {preview && forcing !== null && (
+          <ForceCommitConfirm
+            results={preview.resultsToRemove}
+            players={players}
+            busy={busy}
+            onCancel={() => setForcing(null)}
+            onConfirm={(password) => void commit(password, forcing, true)}
           />
         )}
       </section>
@@ -466,7 +505,9 @@ function Seat({
   onClick: (slot: SlotRow, side: 1 | 2) => void;
 }) {
   const player = code ? players.get(code) : undefined;
-  const disabled = slot.hasResult || locked;
+  // Screen mode refuses a scored seat outright. Place mode allows it and lets the diff sheet decide,
+  // because rearranging a played table is a legitimate (if heavy) repair.
+  const disabled = locked || (mode === "screen" && slot.hasResult);
 
   if (mode === "screen") {
     if (code === null) return <span className="pairing-tool__empty">— ว่าง —</span>;

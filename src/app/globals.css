@@ -1507,3 +1507,19 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .diff-sheet__after { font-weight: 700; }
 .diff-sheet__section:last-of-type { padding-bottom: 14px; }
 .diff-sheet__ack { align-items: flex-start; cursor: pointer; display: flex; font-size: 13px; gap: 7px; padding: 4px 0; }
+
+/* A result the audience had already seen, removed by a force commit. Rendered as WITHDRAWN rather
+   than as "—": an empty cell reads as "not played yet", which is a different and misleading fact. */
+.result-withdrawn { background: var(--red-soft); color: var(--red-dark); font-size: var(--text-sm); font-weight: 800; padding: 1px 6px; }
+
+/* The last screen before a competition result is destroyed. Wider than a normal confirm because the
+   whole point is that the operator reads every row of what they are erasing. */
+.force-confirm { max-height: 88vh; overflow-y: auto; width: min(660px, 96vw); }
+.force-confirm > p { padding-bottom: 0; }
+.force-confirm__list { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: 0; padding: 12px 16px; }
+.force-confirm__list > li { background: var(--red-soft); border-left: 3px solid var(--red); display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; }
+.force-confirm__slot { color: var(--red-dark); font-size: var(--text-sm); font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.force-confirm__players { font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 700; }
+.force-confirm__meta { color: var(--muted); font-size: var(--text-sm); }
+.force-confirm > .form-label { display: block; margin: 0; padding: 12px 16px 4px; }
+.force-confirm > .input, .force-confirm > .fresh-secret-input { margin: 0 16px; width: calc(100% - 32px); }

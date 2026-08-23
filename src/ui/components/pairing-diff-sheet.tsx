@@ -26,6 +26,7 @@ const CONSEQUENCE_LABELS: Record<string, string> = {
   UNVOIDED: "นำคู่ที่ยกเลิกไว้กลับมาใช้",
   POOL_ADD: "เข้า Screening Pool",
   POOL_REMOVE: "ออกจาก Screening Pool",
+  RESULT_REMOVED: "ลบผลที่บันทึกไว้แล้ว",
 };
 
 interface Props {
@@ -34,9 +35,11 @@ interface Props {
   busy: boolean;
   onCancel: () => void;
   onConfirm: (password: string, acknowledged: string[]) => void;
+  /** Offered only when the change set collides with recorded results that CAN be unwound. */
+  onForce?: (acknowledged: string[]) => void;
 }
 
-export function PairingDiffSheet({ validation, players, busy, onCancel, onConfirm }: Props) {
+export function PairingDiffSheet({ validation, players, busy, onCancel, onConfirm, onForce }: Props) {
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
   const [password, setPassword] = useState("");
   // Not dismissible while committing: this sheet sits over the tool, and Escape cancelling a write
@@ -141,6 +144,17 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
             <ul className="diff-sheet__list diff-sheet__list--plain">
               {validation.blocks.map((block, index) => <li key={index}>{block.message}</li>)}
             </ul>
+            {validation.resultsToRemove.length > 0 && (
+              validation.forceAvailable
+                ? <p className="page-description">
+                    คู่เหล่านี้กรอกผลไว้แล้ว หากจำเป็นต้องแก้จริง ๆ ต้องลบผลนั้นทิ้ง
+                    ซึ่งเป็นการกระทำที่ย้อนกลับไม่ได้และต้องยืนยันอีกชั้นหนึ่ง
+                  </p>
+                : <p className="page-description">
+                    ลบผลของคู่เหล่านี้ไม่ได้ เพราะมีผลอื่นที่คำนวณต่อจากผลนี้ไปแล้ว
+                    ต้องจัดการผลปลายทางก่อน
+                  </p>
+            )}
           </section>
         )}
 
@@ -155,6 +169,14 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
 
         <footer>
           <Button variant="secondary" onClick={onCancel}>กลับไปแก้ไข</Button>
+          {/* Offered only when every colliding result can actually be unwound — never as a button
+              that would fail after the operator has already committed to it. */}
+          {blocked && onForce && validation.resultsToRemove.length > 0 && validation.forceAvailable && (
+            <Button variant="danger" onClick={() => onForce([...acknowledged])} disabled={busy}>
+              <ShieldAlert size={14} />
+              ลบผล {validation.resultsToRemove.length} คู่ แล้วบันทึก…
+            </Button>
+          )}
           {!blocked && (
             <Button onClick={() => onConfirm(password, [...acknowledged])} disabled={!canCommit}>
               {busy ? <LoaderCircle className="loading-spinner" size={14} /> : null}
