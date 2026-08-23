@@ -167,11 +167,25 @@ class PublicCardProjectionGoldenTest {
             // Back-office only — audit must not leak.
             List.of(new CardDtos.AuditResponse("a1", "2026-08-01T10:00:00Z", "director01", "PUBLISH_GAME_RESULTS", null, "game [1]")),
             finalRound == null ? "NONE" : "CHAMPION_AND_THIRD", finalRound == null ? 0 : 3,
-            finalRound, true, Instant.parse("2026-08-01T03:00:00Z"), "A");
+            finalRound, true, Instant.parse("2026-08-01T03:00:00Z"), "A",
+            // Deliberately NON-empty. The projection must strip it, and the golden records that it
+            // does: an empty fixture here would only prove that empty stays empty, which is not the
+            // invariant. A hold names a minor and says they are suspected absent — if that ever
+            // reaches an anonymous viewer, this file changes and the test fails.
+            heldPlayers());
     }
 
     private List<CardDtos.SnapshotResponse> confirmedSnapshots() {
         return List.of(new CardDtos.SnapshotResponse("s1", List.of(1, 2), pairings(), "2026-08-01T11:00:00Z"));
+    }
+
+    /** Two players held in the Screening Pool, with the context a pool card renders. */
+    private List<CardDtos.ScreeningHold> heldPlayers() {
+        return List.of(
+            new CardDtos.ScreeningHold("A002", "2026-08-01T10:32:00Z", "director01", "NO_SHOW",
+                null, 3, 5, 1, "A012", false),
+            new CardDtos.ScreeningHold("A007", "2026-08-01T10:41:00Z", "director01", "LATE",
+                "แจ้งว่ารถติด", 3, 2, 2, "A003", true));
     }
 
     private List<CardDtos.SnapshotResponse> snapshotsWithNullConfirmedAt() {
@@ -187,15 +201,15 @@ class PublicCardProjectionGoldenTest {
     private List<CardDtos.PairingResponse> pairings() {
         return List.of(
             // decided win, with a Gibsonized player on seat one
-            new CardDtos.PairingResponse("m-1-1", 1, 1, "P001", "P002", "P001", 420, 300, "WIN", 120, true, false, true),
+            new CardDtos.PairingResponse("m-1-1", 1, 1, "P001", "P002", "P001", 420, 300, "WIN", 120, true, false, true, false, false),
             // draw
-            new CardDtos.PairingResponse("m-1-2", 1, 2, "P002", "P003", null, 350, 350, "DRAW", 0, false, false, true),
+            new CardDtos.PairingResponse("m-1-2", 1, 2, "P002", "P003", null, 350, 350, "DRAW", 0, false, false, true, false, false),
             // penalty ("ลงดาบ") — both sides lose
-            new CardDtos.PairingResponse("m-2-1", 2, 1, "P001", "P003", null, null, null, "PENALTY", 0, false, false, true),
+            new CardDtos.PairingResponse("m-2-1", 2, 1, "P001", "P003", null, null, null, "PENALTY", 0, false, false, true, false, false),
             // bye — no opponent
-            new CardDtos.PairingResponse("m-2-2", 2, 2, "P002", null, null, null, null, null, null, false, false, true),
+            new CardDtos.PairingResponse("m-2-2", 2, 2, "P002", null, null, null, null, null, null, false, false, true, false, false),
             // pair-result destination slot still waiting for a winner, not yet published
-            new CardDtos.PairingResponse("m-3-1", 3, 1, null, null, null, null, null, null, null, false, false, false));
+            new CardDtos.PairingResponse("m-3-1", 3, 1, null, null, null, null, null, null, null, false, false, false, false, false));
     }
 
     private CardDtos.FinalRoundResponse finalRound() {

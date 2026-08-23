@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AuditEntry, BackOfficeCardSummary, CreateCardInput, ManagedUser, Pairing, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
+import type { AuditEntry, BackOfficeCardSummary, CreateCardInput, DestroyedResult, ManagedUser, Pairing, PairingChange, PairingChangeSet, PairingValidation, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ScreeningHold, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
 import { rank } from "@/domain/tournament/ranking";
@@ -95,6 +95,27 @@ export interface RemoteResultNotice {
   changes: RemoteResultChange[];
 }
 
+/**
+ * A committed pairing change made by someone else, with the slots it touched and who touched them.
+ *
+ * Like {@link RemoteResultNotice} this is a NOTIFICATION channel, not a reconciliation mechanism —
+ * the card state itself arrives on the same event and is applied normally. This carries only what a
+ * warning has to say: which slots moved, and whose name to put on them.
+ */
+export interface RemotePairingNotice {
+  seq: number;
+  cardId: string;
+  version: number;
+  actor: string | null;
+  changedSlots: PairingChange[];
+}
+
+/** Advisory "someone else has the pairing tool open". Grants nothing, blocks nothing. */
+export interface PairingPresence {
+  cardId: string;
+  actors: string[];
+}
+
 /** A card as a list or sidebar needs it: the twelve summary fields plus where the row came from. */
 export type CardListRow = Omit<BackOfficeCardSummary, "scope"> & {
   /** True when a full, SSE-patched card backs this row rather than a summary. */
@@ -125,8 +146,16 @@ interface TournamentState {
   applyResultPatch: (cardId: string, version: number, changedPairings: Pairing[]) => boolean;
   /** Latest result event authored by SOMEONE ELSE; null until one arrives. See RemoteResultNotice. */
   remoteResult: RemoteResultNotice | null;
+  remotePairing: RemotePairingNotice | null;
+  pairingPresence: PairingPresence | null;
   /** Raise the notice for a staff result event. Called BEFORE the patch, while `before` still exists. */
   noteRemoteResultChange: (cardId: string, version: number, changedPairings: Pairing[], actor: string | null, actorRoles: string[]) => void;
+  /** A pairing commit landed from another session: record which slots moved and who moved them. */
+  noteRemotePairingChange: (cardId: string, version: number, changedSlots: PairingChange[], actor: string | null) => void;
+  /** Another director opened or closed the pairing tool. */
+  notePairingPresence: (cardId: string, actor: string, open: boolean) => void;
+  /** Tell everyone else this session has opened or closed the tool. Fire and forget. */
+  announcePairingPresence: (cardId: string, open: boolean) => Promise<void>;
   applyPairingsPatch: (cardId: string, version: number, gameNumber: number, pairings: Pairing[]) => boolean;
   applySnapshotPublish: (cardId: string, version: number, publish: SnapshotPublishPatch) => boolean;
   /** Re-check a staff/director/admin session; redirects to login if it is gone. */
@@ -168,6 +197,21 @@ interface TournamentState {
   undoPairing: (cardId: string, password: string) => Promise<void>;
   unpairCurrentPairing: (cardId: string, password: string) => Promise<void>;
   terminatePlayers: (cardId: string, playerIds: string[], password: string) => Promise<void>;
+  /**
+   * Verify the director's password and open the pairing tool, returning the current pool.
+   *
+   * The rule is authenticate-on-open and authenticate-on-commit. There is no session token: two
+   * plain verifications satisfy it without adding server state that guards nothing the commit's own
+   * check does not already guard.
+   */
+  openPairingSession: (cardId: string, password: string) => Promise<ScreeningHold[]>;
+  /** Dry run. Writes nothing, and answers exactly what the commit would do. */
+  validatePairingChange: (cardId: string, changes: PairingChangeSet, force?: boolean) => Promise<PairingValidation>;
+  /**
+   * Apply a staged change set atomically: pairings, pool, destroyed results and audit in one
+   * transaction. `force` additionally erases the results the change set collides with.
+   */
+  commitPairingChange: (cardId: string, changes: PairingChangeSet, password: string, commitKey: string, force?: boolean) => Promise<void>;
   restorePlayers: (cardId: string, playerIds: string[], password: string, lossPoints: number, unpair: boolean) => Promise<void>;
   closeCard: (cardId: string) => Promise<void>;
   deleteCard: (cardId: string) => Promise<void>;
@@ -709,6 +753,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     cards: [],
     summaries: [],
     remoteResult: null,
+    remotePairing: null,
+    pairingPresence: null,
     auth: anonymous,
     loading: true,
     error: null,
@@ -795,6 +841,34 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
           cardId, version, actor, actorRoles, changes,
         },
       }));
+    },
+    noteRemotePairingChange(cardId, version, changedSlots, actor) {
+      // Our own echo is not a conflict. Without this the operator who just committed would be told
+      // their own change conflicted with itself.
+      const me = get().auth.username;
+      if (actor && me && actor === me) return;
+      if (changedSlots.length === 0) return;
+      set((state) => ({
+        remotePairing: { seq: (state.remotePairing?.seq ?? 0) + 1, cardId, version, actor, changedSlots },
+      }));
+    },
+    notePairingPresence(cardId, actor, open) {
+      const me = get().auth.username;
+      if (me && actor === me) return;
+      set((state) => {
+        const held = state.pairingPresence?.cardId === cardId ? state.pairingPresence.actors : [];
+        const actors = open
+          ? (held.includes(actor) ? held : [...held, actor])
+          : held.filter((name) => name !== actor);
+        return { pairingPresence: actors.length > 0 ? { cardId, actors } : null };
+      });
+    },
+    async announcePairingPresence(cardId, open) {
+      // Advisory: a failed announcement costs an indicator, never correctness, so it never surfaces
+      // an error to the operator mid-repair.
+      try {
+        await request(`/api/cards/${cardId}/pairing/presence?open=${open}`, { method: "POST" });
+      } catch { /* indicator only */ }
     },
     applyPairingsPatch,
     applySnapshotPublish,
@@ -1045,6 +1119,32 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async unpairCurrentPairing(cardId, password) {
       await mutateCard(`/api/cards/${cardId}/pairings/unpair`, cardId, { method: "POST", body: JSON.stringify({ password }) });
+    },
+    async openPairingSession(cardId, password) {
+      return request<ScreeningHold[]>(`/api/cards/${cardId}/pairing/session`, {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+    },
+    async validatePairingChange(cardId, changes, force = false) {
+      // commitKey and password are required by the shared request shape but unused by the dry run.
+      return request<PairingValidation>(`/api/cards/${cardId}/pairing/validate`, {
+        method: "POST",
+        body: JSON.stringify({
+          commitKey: "00000000-0000-4000-8000-000000000000",
+          password: "",
+          force,
+          ...changes,
+        }),
+      });
+    },
+    async commitPairingChange(cardId, changes, password, commitKey, force = false) {
+      // The key is generated once per attempt by the caller and reused across retries, so a commit
+      // that times out on a venue network can be pressed again without applying twice.
+      await mutateCard(`/api/cards/${cardId}/pairing/commit`, cardId, {
+        method: "POST",
+        body: JSON.stringify({ commitKey, password, force, ...changes }),
+      });
     },
     async terminatePlayers(cardId, playerIds, password) {
       await mutateCard(`/api/cards/${cardId}/players/terminate`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password }) });

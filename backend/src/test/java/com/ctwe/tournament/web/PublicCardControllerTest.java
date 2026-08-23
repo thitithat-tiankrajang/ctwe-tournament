@@ -94,7 +94,7 @@ class PublicCardControllerTest {
             cardId, UUID.randomUUID(), "Card", "Division", CardStatus.RUNNING,
             RuntimeStage.RESULT_COLLECTION, 2, version, List.of(),
             com.ctwe.tournament.domain.model.PairingRuleType.RANDOM, List.of(), List.of(),
-            List.of(), List.of(), List.of(), "NONE", 0, null, false, Instant.EPOCH, "A");
+            List.of(), List.of(), List.of(), "NONE", 0, null, false, Instant.EPOCH, "A", List.of());
     }
 
     private PublicCardDtos.CardSummary summary() {

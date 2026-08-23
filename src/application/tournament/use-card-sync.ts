@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { Pairing, TournamentCard } from "@/domain/tournament/types";
+import type { Pairing, PairingChange, TournamentCard } from "@/domain/tournament/types";
 import { useTournamentStore } from "./store";
 import { useRealtimeConfig } from "./use-realtime-config";
 
@@ -23,6 +23,20 @@ interface CardStateEvent extends CardChangeEvent {
   card: TournamentCard;
 }
 
+/** Staff pairing delta: the new card, which slots moved, and who moved them. */
+interface StaffPairingChangeEvent extends CardStateEvent {
+  changedSlots?: PairingChange[];
+  actor?: string;
+}
+
+/** Advisory presence. Carries no version — it is not card state. */
+interface PairingPresenceEvent {
+  cardId: string;
+  actor: string;
+  open: boolean;
+  at: string;
+}
+
 /**
  * Live multi-user sync: while a card is open, subscribe to server-sent card change events so every
  * screen (staff + directors, many machines) sees each other's edits immediately. EventSource handles
@@ -32,6 +46,8 @@ interface CardStateEvent extends CardChangeEvent {
 export function useCardSync(cardId: string | undefined) {
   const syncCard = useTournamentStore((state) => state.syncCard);
   const noteRemoteResultChange = useTournamentStore((state) => state.noteRemoteResultChange);
+  const noteRemotePairingChange = useTournamentStore((state) => state.noteRemotePairingChange);
+  const notePairingPresence = useTournamentStore((state) => state.notePairingPresence);
   const applyCardState = useTournamentStore((state) => state.applyCardState);
   const applyResultPatch = useTournamentStore((state) => state.applyResultPatch);
   const ensureSessionAlive = useTournamentStore((state) => state.ensureSessionAlive);
@@ -98,6 +114,29 @@ export function useCardSync(cardId: string | undefined) {
           void syncCard(cardId);
         }
       });
+      source.addEventListener("pairing", (event) => {
+        if (!active) return;
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as StaffPairingChangeEvent;
+          if (payload.cardId !== cardId) return;
+          // Record who moved what BEFORE applying the new card: the tool marks exactly those slots
+          // conflicted, and result entry locks the one row it affects with a name on it. A bare
+          // state bump carries neither.
+          noteRemotePairingChange(cardId, payload.version, payload.changedSlots ?? [], payload.actor ?? null);
+          applyCardState(payload.card);
+          currentVersionRef.current = Math.max(currentVersionRef.current ?? 0, payload.version);
+        } catch {
+          void syncCard(cardId);
+        }
+      });
+      source.addEventListener("pairing-presence", (event) => {
+        if (!active) return;
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as PairingPresenceEvent;
+          if (payload.cardId !== cardId) return;
+          notePairingPresence(cardId, payload.actor, payload.open);
+        } catch { /* advisory only: a malformed presence event is not worth a resync */ }
+      });
       source.onerror = () => {
         // CONNECTING = browser is retrying on its own. CLOSED = the server refused the stream —
         // often an expired session (401): verify it and route to login if it is really gone.
@@ -109,5 +148,6 @@ export function useCardSync(cardId: string | undefined) {
       active = false;
       source?.close();
     };
-  }, [applyCardState, applyResultPatch, cardId, ensureSessionAlive, noteRemoteResultChange, sseAllowed, syncCard]);
+  }, [applyCardState, applyResultPatch, cardId, ensureSessionAlive, noteRemotePairingChange,
+      notePairingPresence, noteRemoteResultChange, sseAllowed, syncCard]);
 }
