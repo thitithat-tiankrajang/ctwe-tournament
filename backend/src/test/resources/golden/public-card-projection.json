@@ -84,9 +84,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -98,9 +100,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -112,9 +116,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -126,9 +132,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -140,9 +148,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -236,9 +246,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -250,9 +262,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -264,9 +278,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -278,9 +294,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -292,9 +310,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     }, {
@@ -311,9 +331,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -325,9 +347,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -339,9 +363,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -353,9 +379,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -367,9 +395,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -463,9 +493,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -477,9 +509,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -491,9 +525,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -505,9 +541,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -519,9 +557,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -615,9 +655,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -629,9 +671,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -643,9 +687,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -657,9 +703,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -671,9 +719,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -767,9 +817,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -781,9 +833,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -795,9 +849,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -809,9 +865,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -823,9 +881,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     }, {
@@ -842,9 +902,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -856,9 +918,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -870,9 +934,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -884,9 +950,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -898,9 +966,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -1026,9 +1096,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -1040,9 +1112,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -1054,9 +1128,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1068,9 +1144,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1082,9 +1160,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -1210,9 +1290,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -1224,9 +1306,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -1238,9 +1322,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1252,9 +1338,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1266,9 +1354,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -1394,9 +1484,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -1408,9 +1500,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -1422,9 +1516,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1436,9 +1532,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1450,9 +1548,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -1578,9 +1678,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -1592,9 +1694,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -1606,9 +1710,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1620,9 +1726,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1634,9 +1742,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -1730,9 +1840,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -1744,9 +1856,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -1758,9 +1872,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1772,9 +1888,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1786,9 +1904,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -1882,9 +2002,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -1896,9 +2018,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -1910,9 +2034,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1924,9 +2050,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -1938,9 +2066,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],
@@ -2034,9 +2164,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P002",
         "resultType" : "WIN",
+        "resultWithdrawn" : false,
         "scoreOne" : 420,
         "scoreTwo" : 300,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : "P001"
       }, {
         "calculatedDiff" : 0,
@@ -2048,9 +2180,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "DRAW",
+        "resultWithdrawn" : false,
         "scoreOne" : 350,
         "scoreTwo" : 350,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : 0,
@@ -2062,9 +2196,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : "P003",
         "resultType" : "PENALTY",
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -2076,9 +2212,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 2,
+        "voided" : false,
         "winnerId" : null
       }, {
         "calculatedDiff" : null,
@@ -2090,9 +2228,11 @@
         "playerTwoGibsonized" : false,
         "playerTwoId" : null,
         "resultType" : null,
+        "resultWithdrawn" : false,
         "scoreOne" : null,
         "scoreTwo" : null,
         "tableNumber" : 1,
+        "voided" : false,
         "winnerId" : null
       } ]
     } ],

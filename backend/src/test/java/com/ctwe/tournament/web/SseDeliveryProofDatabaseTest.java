@@ -105,6 +105,11 @@ class SseDeliveryProofDatabaseTest {
     @AfterEach
     void cleanup() {
         if (cardId != null) {
+            // This teardown is not transactional, so the append-only guards on pairing_snapshots
+            // (V2) and audit_logs (V37) apply to it exactly as they do to production code. Both are
+            // opened for this connection the same way TournamentCardService.delete() opens them.
+            jdbc.execute("SET app.allow_snapshot_delete = 'on'");
+            jdbc.execute("SET app.allow_audit_delete = 'on'");
             jdbc.update("DELETE FROM final_game_results WHERE card_id = ?", cardId);
             jdbc.update("DELETE FROM final_pairings WHERE card_id = ?", cardId);
             jdbc.update("DELETE FROM standings WHERE card_id = ?", cardId);
@@ -113,9 +118,13 @@ class SseDeliveryProofDatabaseTest {
             jdbc.update("DELETE FROM pairing_snapshots WHERE card_id = ?", cardId);
             jdbc.update("DELETE FROM pairing_rules WHERE card_id = ?", cardId);
             jdbc.update("DELETE FROM games WHERE card_id = ?", cardId);
+            jdbc.update("DELETE FROM screening_pool WHERE card_id = ?", cardId);
+            jdbc.update("DELETE FROM pairing_commits WHERE card_id = ?", cardId);
             jdbc.update("DELETE FROM players WHERE card_id = ?", cardId);
             jdbc.update("DELETE FROM audit_logs WHERE card_id = ?", cardId);
             jdbc.update("DELETE FROM tournament_cards WHERE id = ?", cardId);
+            jdbc.execute("RESET app.allow_snapshot_delete");
+            jdbc.execute("RESET app.allow_audit_delete");
         }
         for (String user : List.of(WRITER, OBSERVER)) {
             jdbc.update("DELETE FROM tournament_members WHERE username = ?", user);

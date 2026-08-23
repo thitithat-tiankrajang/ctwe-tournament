@@ -81,6 +81,18 @@ export interface Pairing {
   playerOneGibsonized?: boolean;
   playerTwoGibsonized?: boolean;
   pairingPublished?: boolean;
+  /**
+   * The slot lost both players to screening. It keeps its table number so seat numbering and printed
+   * table cards stay valid, but it holds nobody and needs no result — every completeness check skips
+   * it, and so must every score input.
+   */
+  voided?: boolean;
+  /**
+   * A result the audience had already seen was removed by a force commit, and no replacement has been
+   * entered yet. Shown as withdrawn rather than as "not yet played", and cleared the moment staff
+   * submit a new result.
+   */
+  resultWithdrawn?: boolean;
 }
 
 export interface PairingSnapshot {

@@ -187,15 +187,15 @@ class PublicCardProjectionGoldenTest {
     private List<CardDtos.PairingResponse> pairings() {
         return List.of(
             // decided win, with a Gibsonized player on seat one
-            new CardDtos.PairingResponse("m-1-1", 1, 1, "P001", "P002", "P001", 420, 300, "WIN", 120, true, false, true),
+            new CardDtos.PairingResponse("m-1-1", 1, 1, "P001", "P002", "P001", 420, 300, "WIN", 120, true, false, true, false, false),
             // draw
-            new CardDtos.PairingResponse("m-1-2", 1, 2, "P002", "P003", null, 350, 350, "DRAW", 0, false, false, true),
+            new CardDtos.PairingResponse("m-1-2", 1, 2, "P002", "P003", null, 350, 350, "DRAW", 0, false, false, true, false, false),
             // penalty ("ลงดาบ") — both sides lose
-            new CardDtos.PairingResponse("m-2-1", 2, 1, "P001", "P003", null, null, null, "PENALTY", 0, false, false, true),
+            new CardDtos.PairingResponse("m-2-1", 2, 1, "P001", "P003", null, null, null, "PENALTY", 0, false, false, true, false, false),
             // bye — no opponent
-            new CardDtos.PairingResponse("m-2-2", 2, 2, "P002", null, null, null, null, null, null, false, false, true),
+            new CardDtos.PairingResponse("m-2-2", 2, 2, "P002", null, null, null, null, null, null, false, false, true, false, false),
             // pair-result destination slot still waiting for a winner, not yet published
-            new CardDtos.PairingResponse("m-3-1", 3, 1, null, null, null, null, null, null, null, false, false, false));
+            new CardDtos.PairingResponse("m-3-1", 3, 1, null, null, null, null, null, null, null, false, false, false, false, false));
     }
 
     private CardDtos.FinalRoundResponse finalRound() {

@@ -43,12 +43,15 @@ public class TournamentCardService {
     private final JdbcTemplate jdbc;
     private final PairingStrategyRegistry strategies;
     private final ObjectMapper objectMapper;
+    private final ScreeningPoolStore screeningPool;
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public TournamentCardService(JdbcTemplate jdbc, PairingStrategyRegistry strategies, ObjectMapper objectMapper) {
+    public TournamentCardService(JdbcTemplate jdbc, PairingStrategyRegistry strategies,
+                                 ObjectMapper objectMapper, ScreeningPoolStore screeningPool) {
         this.jdbc = jdbc;
         this.strategies = strategies;
         this.objectMapper = objectMapper;
+        this.screeningPool = screeningPool;
     }
 
     @Transactional(readOnly = true)
@@ -376,9 +379,14 @@ public class TournamentCardService {
             if (pendingPairing)
                 throw new IllegalArgumentException("ต้องกรอกผลคู่ของ " + pcode(code) + " ในเกมปัจจุบันก่อนจึงจะ terminate ได้");
         }
-        for (int code : codes)
+        for (int code : codes) {
             jdbc.update("UPDATE players SET terminated_at = now(), terminated_by = ? WHERE card_id = ? AND code = ? AND terminated_at IS NULL",
                 actor, cardId, code);
+            // Termination is one of the two exits from the Screening Pool, so it closes any open hold
+            // in the same transaction. Without this a terminated player stays in the pool forever and
+            // the review gate can never pass — the pool would become unemptiable by its own rules.
+            screeningPool.close(cardId, code, ScreeningPoolStore.Resolution.TERMINATED, actor);
+        }
         touch(cardId);
         publishPublicIfPlayersVisible(cardId);
         audit(cardId, actor, "TERMINATE_PLAYERS", null, Map.of(
@@ -608,9 +616,10 @@ public class TournamentCardService {
             throw new IllegalArgumentException("PAIR_RESULT cannot be used for game 1");
         jdbc.update("DELETE FROM table_seats WHERE card_id = ?", cardId);
         List<PairingStrategy.PlayerScore> players = new ArrayList<>(jdbc.query("""
-            SELECT code, school FROM players
-            WHERE card_id = ? AND terminated_at IS NULL AND rejoin_game <= 1
-            ORDER BY code
+            SELECT p.code, p.school FROM players p
+            WHERE p.card_id = ? AND p.terminated_at IS NULL AND p.rejoin_game <= 1
+            """ + NOT_SCREENED + """
+            ORDER BY p.code
             """, (rs, row) -> new PairingStrategy.PlayerScore(
                 String.valueOf(rs.getInt("code")), rs.getString("school"), 0, 0), cardId));
         var context = new PairingStrategy.PairingContext(1, List.of());
@@ -752,6 +761,9 @@ public class TournamentCardService {
     @EvictPublicCard
     public CardDtos.CardResponse publishPairResultDestination(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
+        // Mints an immutable snapshot for the source game (confirmSourceGameSnapshot), so the pool
+        // must be resolved here just as it must before review.
+        requireScreeningPoolEmpty(cardId);
         int sourceGame = card.currentGame();
         if (sourceGame >= card.numberOfGames() || !isOutgoingPairResult(cardId, sourceGame))
             throw new IllegalArgumentException("เกมปัจจุบันไม่ได้ใช้กติกาชนะพบชนะ–แพ้พบแพ้");
@@ -882,7 +894,10 @@ public class TournamentCardService {
         String resultType;
         int calculatedDiff = Math.min(Math.abs(scoreOne - scoreTwo), match.maxDiff());
         if (bye) {
-            // The lone player must win; the entered margin becomes their diff (capped by max diff).
+            // A bye is defined purely by shape — one player, one empty seat — with no record of WHY the
+            // seat is empty. It is a WIN for the lone player, but it contributes ZERO diff: nobody
+            // played, and this system's ranking leads with capped diff, so a hand-typed bye margin
+            // would reorder real standings on the strength of a game that never happened.
             boolean presentIsOne = match.oneId() != null;
             int presentScore = presentIsOne ? scoreOne : scoreTwo;
             int otherScore = presentIsOne ? scoreTwo : scoreOne;
@@ -890,6 +905,10 @@ public class TournamentCardService {
                 throw new IllegalArgumentException("คู่ที่ไม่มีคู่แข่ง (บาย) ต้องให้ผู้เล่นที่อยู่เป็นผู้ชนะเท่านั้น");
             winner = presentIsOne ? match.oneId() : match.twoId();
             resultType = "WIN";
+            // The empty seat always scores 0, and the margin never becomes an advantage.
+            scoreOne = presentIsOne ? presentScore : 0;
+            scoreTwo = presentIsOne ? 0 : presentScore;
+            calculatedDiff = 0;
         } else {
             winner = draw ? null : scoreOne > scoreTwo ? match.oneId() : match.twoId();
             resultType = draw ? "DRAW" : "WIN";
@@ -937,7 +956,8 @@ public class TournamentCardService {
                 SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
                        m.player_one_gibsonized, m.player_two_gibsonized,
                        m.score_one, m.score_two, m.result_type, m.calculated_diff,
-                       m.snapshot_no, m.pairing_published_at, s.confirmed_at
+                       m.snapshot_no, m.pairing_published_at, m.voided_at, m.result_withdrawn_at,
+                   s.confirmed_at
                 FROM matches m
                 LEFT JOIN pairing_snapshots s ON s.card_id = m.card_id AND s.snapshot_no = m.snapshot_no
                 WHERE m.card_id = ? AND m.snapshot_no IS NULL
@@ -951,7 +971,8 @@ public class TournamentCardService {
             SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
                    m.player_one_gibsonized, m.player_two_gibsonized,
                    m.score_one, m.score_two, m.result_type, m.calculated_diff,
-                   m.snapshot_no, m.pairing_published_at, s.confirmed_at
+                   m.snapshot_no, m.pairing_published_at, m.voided_at, m.result_withdrawn_at,
+                   s.confirmed_at
             FROM matches m
             LEFT JOIN pairing_snapshots s ON s.card_id = m.card_id AND s.snapshot_no = m.snapshot_no
             WHERE m.card_id = ? AND m.snapshot_no IS NULL
@@ -965,23 +986,63 @@ public class TournamentCardService {
     @Transactional
     public CardDtos.CardResponse reviewResults(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_COLLECTION);
+        requireScreeningPoolEmpty(cardId);
         List<Integer> games = activeResultGames(card);
         int firstGame = games.get(0);
         int lastGame = games.get(games.size() - 1);
-        // ceil(N/2) matches per game accounts for a possible bye (one-player pairing).
-        long expected = (blockParticipants(cardId, firstGame, lastGame) + 1) / 2 * games.size();
-        long total = count("SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number BETWEEN ? AND ? AND snapshot_no IS NULL",
-            cardId, firstGame, lastGame);
+        requireBlockFullyResolved(cardId, games);
         long completed = count("""
             SELECT COUNT(*) FROM matches
             WHERE card_id = ? AND game_number BETWEEN ? AND ? AND snapshot_no IS NULL
               AND result_type IN ('W', 'D', 'P') AND calculated_diff IS NOT NULL
             """, cardId, firstGame, lastGame);
-        if (total != expected || completed != expected)
-            throw new IllegalArgumentException("ต้องบันทึกผลให้ครบทุกคู่ของเกม " + games + " ก่อน Review (" + completed + "/" + expected + ")");
         jdbc.update("UPDATE tournament_cards SET runtime_stage = 'RESULT_REVIEW', version = version + 1 WHERE id = ?", cardId);
         audit(cardId, actor, "REVIEW_RESULTS", completed + " results", "ready to publish games " + games);
         return get(cardId, true);
+    }
+
+    /**
+     * The block is finished: every live slot has a result, and every eligible player is accounted for
+     * in every game of it.
+     *
+     * <p>This replaces the old {@code expected = ceil(blockParticipants / 2) * games} comparison. That
+     * count was a proxy for "nothing is missing" and had already needed two special cases (byes, and
+     * mid-block termination); a voided slot would have been the third, and it breaks the proxy in both
+     * directions at once — the row exists so it is counted, but it can never be completed, so review
+     * would throw forever.
+     *
+     * <p>Checking the real conditions is also strictly stronger. The arithmetic could pass with the
+     * right NUMBER of matches while one player was missing from a game and another was in it twice.
+     * And the errors name what the director must fix instead of reporting "expected 17, found 16".
+     */
+    private void requireBlockFullyResolved(UUID cardId, List<Integer> games) {
+        int firstGame = games.get(0);
+        int lastGame = games.get(games.size() - 1);
+
+        // (a) Every slot that is still live. A voided slot is resolved by definition — it holds nobody
+        //     and can never hold a result — so it is excluded rather than counted and never completed.
+        long unresolved = count("""
+            SELECT COUNT(*) FROM matches
+            WHERE card_id = ? AND game_number BETWEEN ? AND ? AND snapshot_no IS NULL
+              AND voided_at IS NULL AND result_type IS NULL
+            """, cardId, firstGame, lastGame);
+        if (unresolved > 0)
+            throw new IllegalArgumentException(
+                "ยังมีคู่ที่ยังไม่ได้บันทึกผลในเกม " + games + " จำนวน " + unresolved + " คู่");
+
+        // (b) Every eligible player appears in every game of the block. Held players are excluded
+        //     because the gate above has already proven there are none; terminated players and those
+        //     who rejoin later are excluded because they are not expected to play.
+        long unaccounted = count("""
+            SELECT COUNT(*) FROM players p, generate_series(?, ?) AS g(n)
+            WHERE p.card_id = ? AND p.terminated_at IS NULL AND p.rejoin_game <= g.n
+              AND NOT EXISTS (SELECT 1 FROM matches m
+                    WHERE m.card_id = p.card_id AND m.game_number = g.n
+                      AND (m.player_one = p.code OR m.player_two = p.code))
+            """ + NOT_SCREENED, firstGame, lastGame, cardId);
+        if (unaccounted > 0)
+            throw new IllegalArgumentException(
+                "มีผู้เล่นที่ยังไม่มีคู่ในเกม " + games + " จำนวน " + unaccounted + " คน");
     }
 
     @Transactional
@@ -996,15 +1057,16 @@ public class TournamentCardService {
     @EvictPublicCard
     public CardDtos.CardResponse publishResults(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.RESULT_REVIEW);
+        requireScreeningPoolEmpty(cardId);
         var rows = pairingRows(cardId);
         List<Integer> gameNumbers = activeResultGames(card);
         var current = rows.stream().filter(row -> gameNumbers.contains(row.gameNumber())).toList();
         if (current.isEmpty()) throw new IllegalArgumentException("No pairing preview exists for the current game");
         var bundleRows = rows.stream().filter(row -> row.snapshotNo() == null && gameNumbers.contains(row.gameNumber())).toList();
-        long expected = (blockParticipants(cardId, gameNumbers.get(0), gameNumbers.get(gameNumbers.size() - 1)) + 1) / 2 * gameNumbers.size();
-        if (bundleRows.size() != expected)
-            throw new IllegalArgumentException("Pairing block ไม่ครบ: พบ " + bundleRows.size() + " จาก " + expected + " คู่");
-        if (bundleRows.stream().anyMatch(row -> row.scoreOne() == null || row.scoreTwo() == null || row.resultType() == null))
+        requireBlockFullyResolved(cardId, gameNumbers);
+        // A voided slot carries no result by construction and is exempt; every other row must be scored.
+        if (bundleRows.stream().anyMatch(row -> !row.voided()
+                && (row.scoreOne() == null || row.scoreTwo() == null || row.resultType() == null)))
             throw new IllegalArgumentException("Every match requires a calculated result before confirmation");
 
         int gameFrom = gameNumbers.get(0);
@@ -1165,6 +1227,7 @@ public class TournamentCardService {
         String resultType;
         int calculatedDiff = Math.min(Math.abs(scoreOne - scoreTwo), match.maxDiff());
         if (bye) {
+            // Same rule as submitResult: a bye wins with zero diff regardless of the entered margin.
             boolean presentIsOne = match.oneId() != null;
             int presentScore = presentIsOne ? scoreOne : scoreTwo;
             int otherScore = presentIsOne ? scoreTwo : scoreOne;
@@ -1172,6 +1235,9 @@ public class TournamentCardService {
                 throw new IllegalArgumentException("คู่ที่ไม่มีคู่แข่ง (บาย) ต้องให้ผู้เล่นที่อยู่เป็นผู้ชนะเท่านั้น");
             winner = presentIsOne ? match.oneId() : match.twoId();
             resultType = "WIN";
+            scoreOne = presentIsOne ? presentScore : 0;
+            scoreTwo = presentIsOne ? 0 : presentScore;
+            calculatedDiff = 0;
         } else {
             winner = draw ? null : scoreOne > scoreTwo ? match.oneId() : match.twoId();
             resultType = draw ? "DRAW" : "WIN";
@@ -1297,9 +1363,14 @@ public class TournamentCardService {
         jdbc.update("DELETE FROM pairing_snapshots WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM final_game_results WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM final_pairings WHERE card_id = ?", cardId);
+        // Screening holds reference players, so they go before them.
+        jdbc.update("DELETE FROM screening_pool WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM pairing_commits WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM players WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM pairing_rules WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM games WHERE card_id = ?", cardId);
+        // audit_logs is append-only (V37); the trigger only permits deletion under this flag.
+        jdbc.execute("SET LOCAL app.allow_audit_delete = 'on'");
         jdbc.update("DELETE FROM audit_logs WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM tournament_cards WHERE id = ?", cardId);
     }
@@ -1396,6 +1467,10 @@ public class TournamentCardService {
         jdbc.execute("SET LOCAL app.allow_snapshot_delete = 'on'");
         jdbc.update("DELETE FROM pairing_snapshots WHERE card_id = ?", cardId);
         jdbc.update("DELETE FROM table_seats WHERE card_id = ?", cardId);
+        // A reset card starts from registration with nobody held and no commit history to replay
+        // against: a surviving hold would block the very first review of the rebuilt card.
+        jdbc.update("DELETE FROM screening_pool WHERE card_id = ?", cardId);
+        jdbc.update("DELETE FROM pairing_commits WHERE card_id = ?", cardId);
         jdbc.update("UPDATE standings SET wins = 0, draws = 0, losses = 0, win_points = 0, diff = 0, rank = NULL WHERE card_id = ?", cardId);
         jdbc.update("UPDATE games SET status = 'PENDING' WHERE card_id = ?", cardId);
         jdbc.update("UPDATE tournament_cards SET status = 'DRAFT', runtime_stage = 'PLAYER_REGISTRATION', current_game = 1, version = version + 1 WHERE id = ?", cardId);
@@ -1907,7 +1982,8 @@ public class TournamentCardService {
             SELECT m.game_number, m.table_number, m.player_one, m.player_two, m.winner,
                    m.player_one_gibsonized, m.player_two_gibsonized,
                    m.score_one, m.score_two, m.result_type, m.calculated_diff,
-                   m.snapshot_no, m.pairing_published_at, s.confirmed_at
+                   m.snapshot_no, m.pairing_published_at, m.voided_at, m.result_withdrawn_at,
+                   s.confirmed_at
             FROM matches m
             LEFT JOIN pairing_snapshots s ON s.card_id = m.card_id AND s.snapshot_no = m.snapshot_no
             WHERE m.card_id = ? ORDER BY m.game_number, m.table_number
@@ -1920,7 +1996,8 @@ public class TournamentCardService {
             rs.getBoolean("player_one_gibsonized"), rs.getBoolean("player_two_gibsonized"),
             nullableInt(rs, "score_one"), nullableInt(rs, "score_two"), rtName(rs.getString("result_type")),
             nullableInt(rs, "calculated_diff"), nullableInt(rs, "snapshot_no"),
-            rs.getTimestamp("pairing_published_at"), rs.getTimestamp("confirmed_at"));
+            rs.getTimestamp("pairing_published_at"), rs.getTimestamp("confirmed_at"),
+            rs.getTimestamp("voided_at") != null, rs.getTimestamp("result_withdrawn_at") != null);
     }
 
     private CardDtos.PairingResponse toPairingResponse(PairingRow row, boolean includeResult, String codePrefix) {
@@ -1932,7 +2009,8 @@ public class TournamentCardService {
             includeResult ? row.resultType() : null,
             includeResult ? row.calculatedDiff() : null,
             row.playerOneGibsonized(), row.playerTwoGibsonized(),
-            row.snapshotNo() != null || row.pairingPublishedAt() != null);
+            row.snapshotNo() != null || row.pairingPublishedAt() != null,
+            row.voided(), row.resultWithdrawn());
     }
 
     private List<PairingStrategy.PlayerScore> loadScores(UUID cardId) {
@@ -1955,6 +2033,7 @@ public class TournamentCardService {
               AND (m.player_one = p.code OR m.player_two = p.code)
             WHERE p.card_id = ? AND p.terminated_at IS NULL
               AND p.rejoin_game <= (SELECT current_game FROM tournament_cards WHERE id = p.card_id)
+            """ + NOT_SCREENED + """
             GROUP BY p.code, p.school, s.win_points, s.diff
             ORDER BY p.code
             """, (rs, row) -> new PairingStrategy.PlayerScore(String.valueOf(rs.getInt("code")), rs.getString("school"),
@@ -2253,15 +2332,61 @@ public class TournamentCardService {
 
     private long count(String sql, Object... args) { return Objects.requireNonNull(jdbc.queryForObject(sql, Long.class, args)); }
     /** Players still in the running competition — terminated players are excluded from pairing/counts/seeds. */
-    private long activePlayerCount(UUID cardId) { return count("SELECT COUNT(*) FROM players WHERE card_id = ? AND terminated_at IS NULL", cardId); }
+    /**
+     * Excludes players currently held in the Screening Pool, for queries that alias {@code players}
+     * as {@code p}. A held player is still a competitor — in ranking, not terminated — but must not
+     * be paired, counted as a block participant, or seeded, until the director resolves the hold.
+     *
+     * <p>Kept as one constant because five call sites need identical semantics; five hand-written
+     * copies would drift, and a generator that disagrees with the review gate about who is playing
+     * produces a card that cannot be published.
+     */
+    private static final String NOT_SCREENED = """
+        AND NOT EXISTS (SELECT 1 FROM screening_pool sp
+                        WHERE sp.card_id = p.card_id AND sp.player_code = p.code
+                          AND sp.resolved_at IS NULL)
+        """;
+
+    /**
+     * No screening may cross a gate that finalises a game.
+     *
+     * <p>Called by {@code reviewResults}, {@code publishResults} and {@code publishNextPairing}. The
+     * third is the one that is easy to miss: it runs in the MIDDLE of a PAIR_RESULT block rather than
+     * at the end of one, and it mints an immutable snapshot via {@code confirmSourceGameSnapshot} —
+     * so anything that must be resolved before publish must be resolved before it too.
+     *
+     * <p>This single constraint is what bounds the whole feature. Because a hold can never outlive
+     * the game it was taken in, there is no multi-game absence bookkeeping, no interaction with
+     * restore, and no lasting divergence between what staff see and what the public sees.
+     */
+    private void requireScreeningPoolEmpty(UUID cardId) {
+        var held = jdbc.queryForList("""
+            SELECT player_code FROM screening_pool
+            WHERE card_id = ? AND resolved_at IS NULL ORDER BY player_code
+            """, Integer.class, cardId);
+        if (!held.isEmpty())
+            throw new IllegalArgumentException("ต้องจัดการผู้เล่นใน Screening Pool ให้ครบก่อน (คืนเข้าคู่ หรือ terminate): "
+                + held.stream().map(TournamentCardService::pcode).toList());
+    }
+
+    private long activePlayerCount(UUID cardId) {
+        return count("SELECT COUNT(*) FROM players p WHERE p.card_id = ? AND p.terminated_at IS NULL "
+            + NOT_SCREENED, cardId);
+    }
     /** Active players eligible for a given game (excludes those restored to rejoin from a later game). */
     private long activeInGame(UUID cardId, int game) {
-        return count("SELECT COUNT(*) FROM players WHERE card_id = ? AND terminated_at IS NULL AND rejoin_game <= ?", cardId, game);
+        return count("SELECT COUNT(*) FROM players p WHERE p.card_id = ? AND p.terminated_at IS NULL"
+            + " AND p.rejoin_game <= ? " + NOT_SCREENED, cardId, game);
     }
 
     /**
      * Players counted for a result block: active players plus any terminated after they already played
      * in this block (so terminating a player mid-block does not desync the expected match count).
+     *
+     * <p>Held players are excluded at the top level rather than only from the first disjunct. A hold
+     * cannot be taken over a player who already has a result in the block (validation forbids it), so
+     * the two branches can never disagree, and the top-level form says the intended thing outright:
+     * a held player is not a participant in this block.
      */
     private long blockParticipants(UUID cardId, int gameFrom, int gameTo) {
         return count("""
@@ -2270,7 +2395,7 @@ public class TournamentCardService {
                 SELECT 1 FROM matches m
                 WHERE m.card_id = p.card_id AND m.game_number BETWEEN ? AND ? AND m.snapshot_no IS NULL
                   AND m.result_type IS NOT NULL AND (m.player_one = p.code OR m.player_two = p.code)))
-            """, cardId, gameFrom, gameFrom, gameTo);
+            """ + NOT_SCREENED, cardId, gameFrom, gameFrom, gameTo);
     }
     private void touch(UUID cardId) { jdbc.update("UPDATE tournament_cards SET version = version + 1 WHERE id = ?", cardId); }
     private void publishPublic(UUID cardId) {
@@ -2323,7 +2448,8 @@ public class TournamentCardService {
     private record PairingRow(int gameNumber, int tableNumber, Integer playerOne, Integer playerTwo, Integer winner,
                               boolean playerOneGibsonized, boolean playerTwoGibsonized,
                               Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
-                              Integer snapshotNo, Timestamp pairingPublishedAt, Timestamp confirmedAt) {}
+                              Integer snapshotNo, Timestamp pairingPublishedAt, Timestamp confirmedAt,
+                              boolean voided, boolean resultWithdrawn) {}
     private record GibsonPairingPlan(List<PairingStrategy.Pair> pairs, Set<String> gibsonizedPlayerIds) {}
     private record PairResultSource(int tableNumber, Integer oneId, Integer twoId, Integer winnerId, String resultType) {}
     private record PairResultSlots(Integer upper, Integer lower) {}

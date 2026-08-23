@@ -31,9 +31,15 @@ class PublicSnapshotGoldenTest {
     private static final Path GOLDEN = Path.of("src/test/resources/golden/public-snapshot-payload.json");
     private static final Path ACTUAL = Path.of("target/public-snapshot-actual.json");
 
-    /** Fingerprint of the golden payload. Changing this is a deliberate act, never a merge artifact. */
+    /**
+     * Fingerprint of the golden payload. Changing this is a deliberate act, never a merge artifact.
+     *
+     * <p>Repinned for V36: {@code PairingResponse} gained {@code voided} and {@code resultWithdrawn}.
+     * The regenerated golden was audited as purely additive — both fields present on every pairing,
+     * always {@code false}, with no line removed and no existing value changed.
+     */
     private static final String EXPECTED_CHECKSUM =
-        "sha256-dfb2ef77e4e43b3740b60a44f2c70727da0026aa9b99769e6a5e567530b4a722";
+        "sha256-73036ecc45d091ad75c68bd0f83288b28bd479cafd21ed353c4e25e83086463d";
 
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final TournamentCardService cards = mock(TournamentCardService.class);

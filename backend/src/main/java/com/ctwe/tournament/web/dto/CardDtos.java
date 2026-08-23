@@ -110,10 +110,20 @@ public final class CardDtos {
     public record PlayerResponse(String id, String firstName, String lastName, String school, String division,
                                  int wins, int draws, int losses, int winPoints, int diff, boolean terminated) {}
     public record TableResponse(String id, int number, List<String> playerIds) {}
+    /**
+     * {@code voided} — the slot lost both players to screening. It keeps its table number so seat
+     * numbering and printed materials stay valid, holds nobody, and needs no result.
+     *
+     * <p>{@code resultWithdrawn} — a result the audience had already seen was removed by a force
+     * commit and no replacement has been entered yet. Rendered as withdrawn rather than as
+     * "not yet played", and cleared the moment staff submit a new result. Both flags reach anonymous
+     * viewers through {@code PublicCardProjection}, which reuses this shape rather than defining its
+     * own — the property that keeps the live API and published snapshots from ever disagreeing.
+     */
     public record PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
                                   String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
                                   boolean playerOneGibsonized, boolean playerTwoGibsonized,
-                                  boolean pairingPublished) {}
+                                  boolean pairingPublished, boolean voided, boolean resultWithdrawn) {}
     public record SnapshotResponse(String id, List<Integer> gameNumbers, List<PairingResponse> pairings, String confirmedAt) {}
     /** Lightweight result-save response: changed source/destination rows only, plus the card version. */
     public record ResultPatch(long version, List<PairingResponse> changedPairings) {}
