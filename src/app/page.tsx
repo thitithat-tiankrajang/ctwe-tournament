@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Eye, LogIn, Settings, ShieldCheck, Trophy } from "lucide-react";
+import { Eye, LoaderCircle, LogIn, Settings, ShieldCheck, Trophy } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTournamentStore, type TournamentArchive } from "@/application/tournament/store";
 import { isAdmin, isDirector, isResultStaff } from "@/domain/tournament/roles";
 import type { Tournament } from "@/domain/tournament/types";
 import { ArchiveList } from "@/ui/components/archive-list";
 import { Badge } from "@/ui/components/badge";
+import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import { Button } from "@/ui/components/button";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { SystemOffPanel } from "@/ui/components/system-off-panel";
@@ -23,6 +24,7 @@ import { fetchSystemState, systemIsOff, type SystemState } from "@/infrastructur
  */
 export default function Home() {
   const router = useRouter();
+  const { pending: navPending, navigate } = useNavigateWithPending();
   const auth = useTournamentStore((state) => state.auth);
   const authLoading = useTournamentStore((state) => state.loading);
   const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
@@ -39,11 +41,15 @@ export default function Home() {
   const [archives, setArchives] = useState<TournamentArchive[]>([]);
   const [loading, setLoading] = useState(true);
   const [staffNoAccess, setStaffNoAccess] = useState(false);
+  // Both buttons push to the same href, so the pending flag alone cannot say WHICH row was
+  // clicked. Feedback has to appear on the row the operator pressed, not on all of them.
+  const [enteringId, setEnteringId] = useState<string | null>(null);
 
   // Directors manage; admins only watch. Both set the active tournament and open its card list.
   const enterTournament = (tournament: Tournament) => {
+    setEnteringId(tournament.id);
     setActiveTournament({ id: tournament.id, name: tournament.name });
-    router.push("/cards");
+    navigate("/cards");
   };
 
   const refresh = useCallback(async () => {
@@ -180,8 +186,8 @@ export default function Home() {
                   <div className="competition-card__footer">
                     <small>{t.directors.length > 0 ? `ผู้อำนวยการ ${t.directors.length} คน` : (admin ? "รายการแข่งขัน" : "รายการที่คุณดูแล")}</small>
                     {admin
-                      ? <Button variant="secondary" size="sm" onClick={() => enterTournament(t)}><Eye size={15} />เข้าชม</Button>
-                      : <Button variant="success" size="sm" onClick={() => enterTournament(t)}><Settings size={15} />จัดการ</Button>}
+                      ? <Button variant="secondary" size="sm" onClick={() => enterTournament(t)}>{navPending && enteringId === t.id ? <LoaderCircle className="loading-spinner" size={15} /> : <Eye size={15} />}เข้าชม</Button>
+                      : <Button variant="success" size="sm" onClick={() => enterTournament(t)}>{navPending && enteringId === t.id ? <LoaderCircle className="loading-spinner" size={15} /> : <Settings size={15} />}จัดการ</Button>}
                   </div>
                 </article>
               ))}

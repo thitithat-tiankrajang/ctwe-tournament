@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronRight, DoorOpen, Plus, Trash2, Trophy } from "lucide-react";
+import { ChevronRight, DoorOpen, LoaderCircle, Plus, Trash2, Trophy } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { selectCardList, useTournamentStore, type CardListRow } from "@/application/tournament/store";
 import { canManageTournament, hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import type { TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
+import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { EmptyState, PageHeader } from "@/ui/components/page";
@@ -15,6 +16,7 @@ import { cardStageInfo } from "@/ui/components/stage-info";
 
 export default function CardsPage() {
   const router = useRouter();
+  const { pending: navPending, navigate } = useNavigateWithPending();
   const cards = useTournamentStore((state) => state.cards);
   // Select the two sources separately — both are stable references — and merge in a memo. Selecting
   // the merged array inside the store selector would build a new array on every store read and
@@ -46,7 +48,7 @@ export default function CardsPage() {
   }, [loading, activeTournament, router]);
 
   // Directors/admins exit a tournament from here (there is no exit button in the sidebar).
-  const exitTournament = () => { setActiveTournament(null); router.push("/"); };
+  const exitTournament = () => { setActiveTournament(null); navigate("/"); };
 
   // Back-office users must enter a tournament first; public viewers see all published cards.
   const needsTournament = isStaff && !activeTournament;
@@ -85,7 +87,7 @@ export default function CardsPage() {
         description={activeTournament ? "รุ่นการแข่งขัน (card) ทั้งหมดของรายการนี้ — จัดการผู้เล่น เกม และผลลัพธ์แยกแต่ละรุ่น" : "หนึ่งการ์ดต่อหนึ่งรุ่นการแข่งขัน จัดการผู้เล่น เกม และผลลัพธ์แยกจากกันอย่างชัดเจน"}
         actions={activeTournament && (admin || director) ? (
           <div className="page-actions">
-            <Button variant="secondary" onClick={exitTournament}><DoorOpen size={16} />ออกจากรายการแข่งขัน</Button>
+            <Button variant="secondary" onClick={exitTournament}>{navPending ? <LoaderCircle className="loading-spinner" size={16} /> : <DoorOpen size={16} />}ออกจากรายการแข่งขัน</Button>
             {director && <Link prefetch={false} href={createHref}><Button><Plus size={17} />สร้างการ์ด</Button></Link>}
           </div>
         ) : undefined}

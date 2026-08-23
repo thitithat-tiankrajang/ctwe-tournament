@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowRight, LockKeyhole, RefreshCw, Shuffle, Sparkles, Undo2 } from "lucide-react";
+import { useParams } from "next/navigation";
+import { ArrowRight, LoaderCircle, LockKeyhole, RefreshCw, Shuffle, Sparkles, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { isBadPassword, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
@@ -10,6 +10,7 @@ import { canManageTournament } from "@/domain/tournament/roles";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import { Button } from "@/ui/components/button";
+import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { pairingRuleForGame } from "@/ui/components/game-flow";
 import { CustomCombobox } from "@/ui/components/institution-combobox";
@@ -21,7 +22,7 @@ import { PairingToolButtons, ScreeningGenerationWarning } from "@/ui/components/
 
 export default function TablesPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
+  const { pending: navPending, navigate } = useNavigateWithPending();
   const cards = useTournamentStore((state) => state.cards);
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
@@ -133,7 +134,7 @@ export default function TablesPage() {
       confirmLabel: "Finish pairing",
     })) return;
     setBusy(true);
-    try { await confirmPairing(id); router.push(`/cards/${id}/games`); }
+    try { await confirmPairing(id); navigate(`/cards/${id}/games`); }
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยืนยัน pairing ไม่สำเร็จ", "ยืนยัน Pairing ไม่สำเร็จ", true); }
     finally { setBusy(false); }
   };
@@ -172,7 +173,7 @@ export default function TablesPage() {
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${stageLabels[card.runtimeStage]}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{screeningAvailable && <PairingToolButtons card={card} />}{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing <ArrowRight size={16} /></Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
+      <PageHeader eyebrow={`${card.name} · ${stageLabels[card.runtimeStage]}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{screeningAvailable && <PairingToolButtons card={card} />}{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing {navPending ? <LoaderCircle className="loading-spinner" size={16} /> : <ArrowRight size={16} />}</Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
 
       {!pairingActive ? (
         browseGames.length === 0 ? (
