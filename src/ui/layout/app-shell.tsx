@@ -31,6 +31,7 @@ import { useFullCard } from "@/application/tournament/use-full-card";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
 import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import { foldersAfterOpening } from "@/ui/layout/card-folders";
+import { NavLinkIcon } from "@/ui/layout/nav-pending";
 import type { RuntimeStage } from "@/domain/tournament/types";
 import { toast } from "@/application/ui/toast";
 import { Button } from "@/ui/components/button";
@@ -77,7 +78,7 @@ function NavigationLink({ href, label, icon: Icon, active, workflow = false, col
   const nudge = workflow && !active;
   return (
     <Link prefetch={false} className={`nav-link${active ? " nav-link--active" : ""}${nudge ? " nav-link--workflow" : ""}${nested ? " nav-link--nested" : ""}${collapsed ? " nav-link--icon" : ""}`} href={href} title={collapsed ? label : undefined} aria-current={active ? "page" : undefined}>
-      <Icon size={18} aria-hidden="true" />
+      <NavLinkIcon icon={Icon} size={18} />
       {!collapsed && <span className="nav-link__text">{label}</span>}
       {!collapsed && nudge && <span className="nav-link__flag">ทำต่อ</span>}
     </Link>
