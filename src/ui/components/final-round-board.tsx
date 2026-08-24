@@ -8,6 +8,7 @@ import { Button } from "@/ui/components/button";
 import { appDialog } from "@/application/ui/dialog";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
 import { Panel } from "@/ui/components/page";
+import { ScoreInput } from "@/ui/components/score-input";
 
 const slotTitle = (slot: number) => (slot === 0 ? "ชิงอันดับ 1 - 2" : "ชิงอันดับ 3 - 4");
 const winnerPlace = (slot: number) => (slot === 0 ? 1 : 3);
@@ -228,9 +229,9 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
           <header><Crown size={18} /><strong>สรุปผลผู้ชนะ</strong><span>กรอกเองทั้งหมด</span></header>
           <div className="final-summary-form">
             <label>ผู้ชนะ<select className="select" disabled={!editable} value={summary.winnerId} onChange={(event) => setSummary((prev) => ({ ...prev, winnerId: event.target.value }))}><option value="">เลือกผู้ชนะ</option><option value={slot.playerOneId}>{name(slot.playerOneId)}</option><option value={slot.playerTwoId}>{name(slot.playerTwoId)}</option></select></label>
-            <label>ชนะ<input className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.wins} onChange={(event) => setSummary((prev) => ({ ...prev, wins: event.target.value }))} /></label>
-            <label>แพ้<input className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.losses} onChange={(event) => setSummary((prev) => ({ ...prev, losses: event.target.value }))} /></label>
-            <label>Total diff<input className="input" disabled={!editable} type="number" inputMode="numeric" value={summary.diff} onChange={(event) => setSummary((prev) => ({ ...prev, diff: event.target.value }))} /></label>
+            <label>ชนะ<ScoreInput className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.wins} onChange={(event) => setSummary((prev) => ({ ...prev, wins: event.target.value }))} /></label>
+            <label>แพ้<ScoreInput className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.losses} onChange={(event) => setSummary((prev) => ({ ...prev, losses: event.target.value }))} /></label>
+            <label>Total diff<ScoreInput className="input" disabled={!editable} type="number" inputMode="numeric" value={summary.diff} onChange={(event) => setSummary((prev) => ({ ...prev, diff: event.target.value }))} /></label>
             {editable
               ? <Button size="sm" variant="success" disabled={savingSummary} onClick={() => void saveSummary()}>{savingSummary ? <LoaderCircle className="loading-spinner" size={13} /> : <Save size={13} />}บันทึกสรุปผล</Button>
               : onOpenHistory && <button type="button" className="final-history-link" onClick={onOpenHistory}>ดูประวัติรอบชิง</button>}
@@ -248,7 +249,7 @@ function ScoreCell({ editable, value, onChange, onOpenHistory }: {
   onOpenHistory?: () => void;
 }) {
   return editable
-    ? <input className="input final-score" type="number" min={0} inputMode="numeric" value={value} onChange={(event) => onChange(event.target.value)} />
+    ? <ScoreInput className="input final-score" type="number" min={0} inputMode="numeric" value={value} onChange={(event) => onChange(event.target.value)} />
     : onOpenHistory
       ? <button type="button" className="final-score-readonly" onClick={onOpenHistory}>{value || "—"}</button>
       : <span className="final-score-readonly final-score-readonly--static">{value || "—"}</span>;

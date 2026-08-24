@@ -623,16 +623,12 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .entry-grid-search__clear { align-items: center; background: none; border: 1px solid var(--border-control); color: var(--muted); cursor: pointer; display: flex; height: 34px; justify-content: center; width: 34px; }
 .entry-grid-search__clear:hover { background: var(--surface-sunken); color: var(--ink); }
 .entry-grid-search__miss { background: var(--yellow-soft); border: 1px solid var(--yellow-border); color: var(--yellow-on-soft); font-size: 12px; font-weight: 700; padding: 3px 8px; }
-/* The second code column mirrors a field that is searched from the box above, so it reads as a
-   record rather than a control: quieter ink, no menu, no pointer. */
+/* A mirror column carries no menu: its whole field is filtered from the first column. The HEADER
+   says so with quieter ink and no pointer. The VALUE deliberately does not — it is live data an
+   operator reads off the screen while keying scores, so dimming it costs legibility for a signal
+   the header already carries. The cell keeps whatever its own class gives it, which means `.cell-id`
+   stays blue, identical to รหัส 1. One rule, every grid, no per-table carve-out. */
 .entry-grid th.egrid-th--mirror .egrid-th__label { color: var(--muted); cursor: default; font-weight: 600; }
-.entry-grid td.egrid-td--mirror.cell-id { color: var(--muted); }
-/* ...but NOT in the result-entry grid. There the mirror is still live data an operator reads off
-   the screen while keying scores, so quieting it costs legibility for no gain — the affordance is
-   already carried by the missing menu. Equal specificity to the two rules above (0,3,1): these must
-   stay BELOW them to win on source order. Every other `.entry-grid--match` table keeps the mute. */
-.entry-grid--entry th.egrid-th--mirror .egrid-th__label { color: inherit; font-weight: inherit; }
-.entry-grid--entry td.egrid-td--mirror.cell-id { color: var(--blue-dark); }
 /* Single-row filter bar: every field on one line, action buttons trailing at the end */
 .entry-toolbar { align-items: flex-end; background: var(--surface-hover); border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px 10px; padding: 10px; padding-left: 0;}
 

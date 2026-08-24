@@ -182,15 +182,15 @@ test("the winner column is its own field - it answers who won, not who played", 
   assert.ok(!winner.includes("field:"), "winner must not join another column's field");
 });
 
-test("the entry grid keeps รหัส 2 blue instead of the muted mirror ink", () => {
+test("the mirror mutes its HEADER only - the value reads exactly like side 1", () => {
   const css = readFileSync(GLOBALS, "utf8");
-  const muted = css.indexOf(".entry-grid td.egrid-td--mirror.cell-id");
-  const blue = css.indexOf(".entry-grid--entry td.egrid-td--mirror.cell-id");
-  assert.ok(muted >= 0, "the shared mirror rule is gone - overview tables lost their muted ink");
-  assert.ok(blue >= 0, "the entry-grid carve-out is missing - รหัส 2 renders grey");
-  // Equal specificity (0,3,1): the carve-out only wins on source order.
-  assert.ok(blue > muted, "the carve-out must sit BELOW the shared rule or it loses the cascade");
-  assert.match(css.slice(blue), /^\.entry-grid--entry td\.egrid-td--mirror\.cell-id \{ color: var\(--blue-dark\); \}/);
+  assert.match(css, /\.entry-grid th\.egrid-th--mirror \.egrid-th__label \{ color: var\(--muted\);/,
+    "the mirror header must stay muted - it is the only thing marking the column as menu-less");
+  // No rule may recolour a mirror CELL. Muting it costs legibility in every grid, and a blue
+  // carve-out for one grid is the same mistake in the other direction - the value simply inherits.
+  assert.ok(!/td\.egrid-td--mirror\.cell-id \{/.test(css),
+    "a mirror cell must take its ink from .cell-id, not from a mirror-specific rule");
+  assert.match(css, /\.cell-id \{ color: var\(--blue-dark\)/, "รหัส cells are blue; the mirror inherits that");
 });
 
 const actionOf = (canPenalty: boolean) => {
@@ -238,12 +238,13 @@ test("persisted grid widths are versioned past the 220px layout", () => {
   assert.ok(!source.includes("ctwe.gridWidths.v2."), "the old key must not linger");
 });
 
-test("only the entry grid dissents - the overview tables keep the muted mirror", () => {
-  const source = readFileSync(COMPONENT, "utf8");
-  // `entry-grid--match` is shared by four grids; the carve-out must key on the narrower class.
-  assert.match(source, /entry-grid entry-grid--match entry-grid--entry/);
-  const overview = readFileSync(join(process.cwd(), "src", "ui", "components", "card-overview.tsx"), "utf8");
-  assert.ok(!overview.includes("entry-grid--entry"), "the overview must not opt into the blue mirror");
+test("no grid carries a per-table mirror exception any more", () => {
+  // `entry-grid--entry` existed only to except this one table from the mirror ink. One shared rule
+  // replaced it, so the class and every selector naming it must be gone, not merely unused.
+  for (const file of ["result-entry-grid.tsx", "card-overview.tsx", "standings-grids.tsx"])
+    assert.ok(!readFileSync(join(process.cwd(), "src", "ui", "components", file), "utf8").includes("entry-grid--entry"),
+      `${file} still names the removed carve-out class`);
+  assert.ok(!readFileSync(GLOBALS, "utf8").includes("entry-grid--entry"), "the carve-out rules are still in the CSS");
 });
 
 test("a void slot renders as a plain row of em dashes - no waiting text, no badge", () => {
@@ -272,3 +273,12 @@ test("void is internal - it never appears as a status the operator can pick", ()
   assert.match(source, /type RowStatus = [^;]*"void"/, "void must still exist as a row status");
 });
 
+test("every competition score input is wheel-guarded", () => {
+  // type=number steps on wheel while focused; these are the fields where that silently corrupts a
+  // recorded result. Configuration inputs are deliberately left alone.
+  for (const [file, expected] of [["result-entry-grid.tsx", 5], ["override-editor.tsx", 2], ["final-round-board.tsx", 4]] as const) {
+    const source = readFileSync(join(process.cwd(), "src", "ui", "components", file), "utf8");
+    assert.equal((source.match(/<ScoreInput/g) ?? []).length, expected, `${file} lost a ScoreInput`);
+    assert.ok(!/<input[^>]*type="number"/.test(source), `${file} still has a raw number input`);
+  }
+});

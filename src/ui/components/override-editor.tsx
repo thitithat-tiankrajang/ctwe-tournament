@@ -9,6 +9,7 @@ import { appDialog } from "@/application/ui/dialog";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { Panel } from "@/ui/components/page";
+import { ScoreInput } from "@/ui/components/score-input";
 
 const validScore = (value: string) => value.trim() !== "" && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 1_000_000_000;
 
@@ -77,8 +78,8 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
                         <td title={nameOf(pairing.playerOneId)}>{nameOf(pairing.playerOneId)}</td>
                         <td title={nameOf(pairing.playerTwoId)}>{nameOf(pairing.playerTwoId)}</td>
                         <td className="numeric">{penalty ? <Badge tone="danger">ลงดาบ −{pairing.calculatedDiff ?? 0}</Badge> : <>{pairing.scoreOne ?? "—"} : {pairing.scoreTwo ?? "—"}</>}</td>
-                        <td>{penalty ? <Badge tone="danger">ล็อก</Badge> : <input className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 1 คู่ ${pairing.tableNumber}`} value={draft.one} disabled={committing} onChange={(event) => setScore(pairing, "one", event.target.value)} />}</td>
-                        <td>{penalty ? <Button size="sm" variant="secondary" disabled={committing} onClick={() => onRevokePenalty(pairing)}>ถอนดาบ</Button> : <input className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 2 คู่ ${pairing.tableNumber}`} value={draft.two} disabled={committing} onChange={(event) => setScore(pairing, "two", event.target.value)} />}</td>
+                        <td>{penalty ? <Badge tone="danger">ล็อก</Badge> : <ScoreInput className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 1 คู่ ${pairing.tableNumber}`} value={draft.one} disabled={committing} onChange={(event) => setScore(pairing, "one", event.target.value)} />}</td>
+                        <td>{penalty ? <Button size="sm" variant="secondary" disabled={committing} onClick={() => onRevokePenalty(pairing)}>ถอนดาบ</Button> : <ScoreInput className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 2 คู่ ${pairing.tableNumber}`} value={draft.two} disabled={committing} onChange={(event) => setScore(pairing, "two", event.target.value)} />}</td>
                       </tr>
                     );
                   })}

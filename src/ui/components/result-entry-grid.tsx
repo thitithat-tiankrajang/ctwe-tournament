@@ -5,6 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { matchesPlayerCode, normalizePlayerCode } from "@/domain/tournament/player-code";
 import { isVoidPairing } from "@/domain/tournament/pairing-slot";
+import { ScoreInput } from "@/ui/components/score-input";
 import { isUnusualScore, scoreWarnings } from "@/domain/tournament/score-warnings";
 import { appDialog } from "@/application/ui/dialog";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
@@ -315,7 +316,7 @@ const ResultEntryRow = memo(function ResultEntryRow({
       </>
     );
     const scoreInput = (
-      <td className="egrid-td"><input className="egrid-score" type="number" inputMode="numeric" min={1} aria-label={`คะแนน ${present?.id}`} placeholder="คะแนน" value={value} disabled={disabled}
+      <td className="egrid-td"><ScoreInput className="egrid-score" type="number" inputMode="numeric" min={1} aria-label={`คะแนน ${present?.id}`} placeholder="คะแนน" value={value} disabled={disabled}
         onChange={(event) => onDraft(pairing.id, side, event.target.value, base)} onFocus={(event) => event.target.select()}
         onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); await onSaveBye(pairing); }} /></td>
     );
@@ -378,8 +379,8 @@ const ResultEntryRow = memo(function ResultEntryRow({
     <td className="egrid-td cell-id">{p2?.id}</td>
     <td className={`egrid-td cell-person-name${pairing.playerTwoGibsonized ? " cell-gibsonized" : ""}`} title={`${p2?.firstName ?? ""} ${p2?.lastName ?? ""}`}><PlayerNameWithGibsonMark player={p2} fallback="—" gibsonized={pairing.playerTwoGibsonized} /></td>
     <td className="egrid-td cell-person-school" title={p2?.school}>{p2?.school}</td>
-    <td className="egrid-td"><input className="egrid-score" type="number" inputMode="text" aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => onDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onFocusNext(event.currentTarget, "other"); } }} /></td>
-    <td className="egrid-td"><input className="egrid-score" type="number" inputMode="text" aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => onDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await onSaveRow(pairing)) onFocusNext(origin, "next"); }} /></td>
+    <td className="egrid-td"><ScoreInput className="egrid-score" type="number" inputMode="text" aria-label={`คะแนน ${p1?.id}`} placeholder={p1?.id} value={one} disabled={disabled} onChange={(event) => onDraft(pairing.id, "one", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onFocusNext(event.currentTarget, "other"); } }} /></td>
+    <td className="egrid-td"><ScoreInput className="egrid-score" type="number" inputMode="text" aria-label={`คะแนน ${p2?.id}`} placeholder={p2?.id} value={two} disabled={disabled} onChange={(event) => onDraft(pairing.id, "two", event.target.value, base)} onFocus={(event) => event.target.select()} onKeyDown={async (event) => { if (event.key !== "Enter") return; event.preventDefault(); const origin = event.currentTarget; if (await onSaveRow(pairing)) onFocusNext(origin, "next"); }} /></td>
     <td className={`egrid-td egrid-td--center cell-diff cell-diff--${outcome ? outcome.resultType.toLowerCase() : "pending"}`}>
       {outcome ? (outcome.resultType === "DRAW" ? "เสมอ · 0" : `${outcome.winnerId} · ${outcome.diff}`) : "—"}
       {unusual.length > 0 && <span className="cell-score-warning" title={unusual.map((code) => `คะแนน ${code} ผิดปกติ`).join(" · ")} aria-label={`คะแนนผิดปกติ: ${unusual.join(", ")}`}>!</span>}
@@ -803,14 +804,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
         <input ref={idARef} className="entry-keyin__id" inputMode="numeric" placeholder="รหัส A เช่น 16" value={qIdA} aria-label="รหัสฝ่าย A"
           onChange={(event) => { clearFlash(); setQIdA(event.target.value.toUpperCase()); }}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreARef.current?.focus(); scoreARef.current?.select(); } }} />
-        <input ref={scoreARef} type="number" inputMode="text" className="entry-keyin__score" placeholder="คะแนน A" value={qScoreA} aria-label="คะแนนฝ่าย A"
+        <ScoreInput ref={scoreARef} type="number" inputMode="text" className="entry-keyin__score" placeholder="คะแนน A" value={qScoreA} aria-label="คะแนนฝ่าย A"
           onChange={(event) => { clearFlash(); setQScoreA(event.target.value); }} onFocus={(event) => event.target.select()}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); idBRef.current?.focus(); idBRef.current?.select(); } }} />
         <span className="entry-keyin__vs">พบ</span>
         <input ref={idBRef} className="entry-keyin__id" inputMode="numeric" placeholder="รหัส B เช่น 16" value={qIdB} aria-label="รหัสฝ่าย B"
           onChange={(event) => { clearFlash(); setQIdB(event.target.value.toUpperCase()); }}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); scoreBRef.current?.focus(); scoreBRef.current?.select(); } }} />
-        <input ref={scoreBRef} type="number" inputMode="text" className="entry-keyin__score" placeholder="คะแนน B" value={qScoreB} aria-label="คะแนนฝ่าย B"
+        <ScoreInput ref={scoreBRef} type="number" inputMode="text" className="entry-keyin__score" placeholder="คะแนน B" value={qScoreB} aria-label="คะแนนฝ่าย B"
           onChange={(event) => { clearFlash(); setQScoreB(event.target.value); }} onFocus={(event) => event.target.select()}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void quickSave(); } }} />
         <Button className="entry-keyin__save" size="sm" variant="success" disabled={quickSaving} onClick={() => void quickSave()}>{quickSaving ? <LoaderCircle className="loading-spinner" size={14} /> : <Save size={14} />}บันทึกคะแนน</Button>
@@ -862,10 +863,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
       )}
 
       <div className="entry-grid-scroll entry-grid-scroll--result-entry" ref={scrollRef}>
-        {/* `entry-grid--entry` is the discriminator for this table's dissent from the shared mirror
-            styling: `entry-grid--match` is worn by four grids (both result grids, plus the overview's
-            pairing and result tables), and those DO want the muted mirror ink. */}
-        <table className="entry-grid entry-grid--match entry-grid--entry" style={{ width: totalWidth }} aria-label="กรอกผลการแข่งขัน">
+        <table className="entry-grid entry-grid--match" style={{ width: totalWidth }} aria-label="กรอกผลการแข่งขัน">
           <GridHead columns={columns} colWidths={colWidths} startResize={startResize} excel={{
             sortable: (key) => filterKeys.includes(key),
             filterable: (key) => filterKeys.includes(key),
