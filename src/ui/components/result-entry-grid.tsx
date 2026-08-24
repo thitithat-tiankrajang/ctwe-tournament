@@ -4,6 +4,7 @@ import { AlertTriangle, Check, CheckCircle2, LoaderCircle, Megaphone, Pencil, Sa
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
 import { matchesPlayerCode, normalizePlayerCode } from "@/domain/tournament/player-code";
+import { isVoidPairing } from "@/domain/tournament/pairing-slot";
 import { isUnusualScore, scoreWarnings } from "@/domain/tournament/score-warnings";
 import { appDialog } from "@/application/ui/dialog";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
@@ -81,6 +82,12 @@ export interface EntrySlot {
   pairing?: Pairing;
   /** A finalized one-player pairing: the lone player must win. Distinct from a still-pending row. */
   isBye?: boolean;
+  /**
+   * This slot holds nobody and needs no result. Passed in rather than derived, because a PAIR_RESULT
+   * destination whose source pair was voided has NO row of its own to read the flag from — it is
+   * void by inheritance, and otherwise indistinguishable from a slot still waiting on its source.
+   */
+  isVoid?: boolean;
 }
 
 interface PairingEditConfig {
@@ -94,7 +101,12 @@ interface PairingEditConfig {
   publishTitle?: string;
 }
 
-type RowStatus = "pending" | "empty" | "dirty" | "saved";
+/**
+ * `void` is internal: it has no entry in `STATUS_OPTIONS`, so it shows under "ทุกสถานะ" and is
+ * filtered out of every named status. A slot holding nobody is not a state the operator manages —
+ * offering "ยังไม่ได้กรอก" for it would invite them to go looking for a match that does not exist.
+ */
+type RowStatus = "pending" | "empty" | "dirty" | "saved" | "void";
 
 /**
  * Widest rendered width of the จัดการ column, per role, in px.
@@ -238,6 +250,25 @@ const ResultEntryRow = memo(function ResultEntryRow({
   slot, pairing, players, maxDiff, one, two, saved, changed, isEditing, saving, failed, savingAll,
   highlight, onDraft, onSaveRow, onSaveBye, onStartEdit, onCancelEdit, onFocusNext, onPenalty, onRevokePenalty,
 }: ResultEntryRowProps) {
+  // A slot holding nobody: no players, no result to enter, and nothing to wait for. It keeps its
+  // row so pair numbers still line up with the printed table cards and the source game beside it,
+  // and says nothing else — a "รอ…" here would describe a match that does not exist, and a badge
+  // would make a non-event look like a state the operator has to clear.
+  if (slot.isVoid || isVoidPairing(pairing)) {
+    return <tr className="egrid-row">
+      <td className="egrid-td egrid-td--center cell-pair">{slot.tableNumber}</td>
+      <td className="egrid-td cell-id">—</td>
+      <td className="egrid-td cell-person-name">—</td>
+      <td className="egrid-td cell-person-school">—</td>
+      <td className="egrid-td cell-id">—</td>
+      <td className="egrid-td cell-person-name">—</td>
+      <td className="egrid-td cell-person-school">—</td>
+      <td className="egrid-td egrid-td--center cell-score">—</td>
+      <td className="egrid-td egrid-td--center cell-score">—</td>
+      <td className="egrid-td egrid-td--center cell-diff">—</td>
+      <td className="egrid-td cell-action" />
+    </tr>;
+  }
   if (pairing?.resultType === "PENALTY") {
     const p1 = pairing.playerOneId ? players.get(pairing.playerOneId) : undefined;
     const p2 = pairing.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
@@ -444,6 +475,9 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
 
   const rows = useMemo(() => slots.map((slot) => {
     const pairing = slot.pairing;
+    // Ahead of every other case: a void slot must not fall into `pending`, which is what made the
+    // review gate uncompletable — and it is neither empty (nothing to fill in) nor saved.
+    if (slot.isVoid || isVoidPairing(pairing)) return { slot, pairing, status: "void" as RowStatus };
     const side = slot.isBye ? byeSide(pairing) : null;
     if (side && pairing) {
       // A finalized bye: one editable score for the lone player (they must win).
@@ -984,7 +1018,9 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
               const draw = pairing.resultType === "DRAW";
               const penalty = pairing.resultType === "PENALTY";
               const diff = recordedDiff(pairing);
-              const absentText = recorded ? "-" : "ไม่มีคู่แข่ง";
+              // "ไม่มีคู่แข่ง" describes a bye — one player with nobody across the board. A void
+              // slot has no player at all, so it says nothing rather than describing half a match.
+              const absentText = isVoidPairing(pairing) ? "—" : recorded ? "-" : "ไม่มีคู่แข่ง";
               return <tr key={pairing.id} className={`egrid-row${pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
                 <td className="egrid-td egrid-td--center cell-pair">{pairing.tableNumber}</td>
                 <td className="egrid-td cell-id">{p1?.id ?? "—"}</td>

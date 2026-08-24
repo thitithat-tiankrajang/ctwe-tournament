@@ -9,6 +9,7 @@ import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, isOperator } from "@/domain/tournament/roles";
 import { allResultBlocks, isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
 import { rankingAfterGame } from "@/domain/tournament/history";
+import { blockCompletion, isRecordedPairing, isVoidPairing } from "@/domain/tournament/pairing-slot";
 import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import type { Pairing, Player, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
@@ -26,10 +27,6 @@ import { OverrideEditor } from "@/ui/components/override-editor";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
 import { SelectMenu } from "@/ui/components/select-menu";
 import { stageLabels } from "@/ui/components/stage-info";
-
-function isRecorded(pairing: Pairing) {
-  return pairing.scoreOne !== undefined && pairing.scoreTwo !== undefined && Boolean(pairing.resultType);
-}
 
 /** Non-active view: ranking per game (window-slide); click a player row to see their history. */
 function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
@@ -66,7 +63,7 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
         const target = editGame && games.includes(editGame) ? editGame : selected;
         const snap = publishedSnapshots.find((s) => s.gameNumbers.includes(target));
         const editPairings = snap?.pairings.filter((p) => (p.gameNumber ?? target) === target) ?? [];
-        const slots: EntrySlot[] = [...editPairings].sort((a, b) => a.tableNumber - b.tableNumber).map((p) => ({ tableNumber: p.tableNumber, pairing: p }));
+        const slots: EntrySlot[] = [...editPairings].sort((a, b) => a.tableNumber - b.tableNumber).map((p) => ({ tableNumber: p.tableNumber, pairing: p, isVoid: isVoidPairing(p) }));
         const maxDiff = card.games.find((g) => g.number === target)?.maxDiff ?? 350;
         return (
           <Panel
@@ -205,18 +202,14 @@ export default function GamesPage() {
   const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.includes(card.currentGame));
   const pairings = currentSnapshot?.pairings.filter((pairing) => activeGames.includes(pairing.gameNumber ?? card.currentGame)) ?? [];
   const resultCollection = card.runtimeStage === "RESULT_COLLECTION"; const reviewing = card.runtimeStage === "RESULT_REVIEW";
-  // PAIR_RESULT materialises exactly one destination row per source row, including byes.
-  // Deriving from the live source avoids terminated/restored players skewing the UI count.
-  const sourceCount = pairResultBlock
-    ? pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === activeGames[0]).length
-    : pairings.length;
-  const expectedCount = pairResultBlock ? sourceCount * activeGames.length : sourceCount;
-  const completedCount = pairings.filter(isRecorded).length;
-  const allComplete = pairings.length === expectedCount && completedCount === expectedCount;
+  // PAIR_RESULT materialises exactly one destination row per source row, including byes; voided
+  // slots leave both sides of the equation, or the gate could never open. See `blockCompletion`.
+  const allComplete = blockCompletion(pairings, activeGames, card.currentGame, pairResultBlock).complete;
   const pairingsForGame = (gameNumber: number) => pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === gameNumber);
-  const sourcePairings = pairResultBlock ? pairingsForGame(activeGames[0]) : [];
-  const sourceComplete = sourcePairings.length > 0 && sourcePairings.every(isRecorded);
-  const destinationPairings = pairResultBlock ? pairingsForGame(activeGames[1]) : [];
+  const live = (list: Pairing[]) => list.filter((pairing) => !isVoidPairing(pairing));
+  const sourcePairings = pairResultBlock ? live(pairingsForGame(activeGames[0])) : [];
+  const sourceComplete = sourcePairings.length > 0 && sourcePairings.every(isRecordedPairing);
+  const destinationPairings = pairResultBlock ? live(pairingsForGame(activeGames[1])) : [];
   const hasAnyPlayer = (pairing?: Pairing) => Boolean(pairing?.playerOneId || pairing?.playerTwoId);
   const destinationPairingComplete = pairResultBlock && sourceComplete
     && destinationPairings.length === sourcePairings.length
@@ -410,9 +403,11 @@ export default function GamesPage() {
           // A one-player game-1 row is a bye; a one-player destination row is a bye once the whole source game is recorded.
           const destinationSourceComplete = isDestination && sourceComplete;
           const slots: EntrySlot[] = isDestination
-            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => { const dest = gamePairings.find((d) => d.tableNumber === source.tableNumber); return { tableNumber: source.tableNumber, pairing: dest, isBye: oneOnly(dest) && destinationSourceComplete }; })
-            : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing, isBye: oneOnly(pairing) }));
-          const completed = gamePairings.filter(isRecorded).length;
+            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => { const dest = gamePairings.find((d) => d.tableNumber === source.tableNumber); return { tableNumber: source.tableNumber, pairing: dest, isBye: oneOnly(dest) && destinationSourceComplete, isVoid: isVoidPairing(source) }; })
+            : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing, isBye: oneOnly(pairing), isVoid: isVoidPairing(pairing) }));
+          // A voided slot counts on neither side of the badge: it is resolved, not outstanding.
+          const liveSlots = slots.filter((slot) => !slot.isVoid);
+          const completed = live(gamePairings).filter(isRecordedPairing).length;
           const destinationHasPlayers = isDestination && gamePairings.some(hasAnyPlayer);
           const publishTitle = !sourceComplete
             ? `ต้องกรอกผล เกม ${activeGames[0]} ให้ครบก่อน`
@@ -435,7 +430,7 @@ export default function GamesPage() {
                 : undefined
             : undefined;
           if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`เกม ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยัน pairing เกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
-          return <Panel key={gameNumber} title={`กรอกผล เกม ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === slots.length ? "success" : "warning"}>{completed}/{slots.length} คู่</Badge>}>
+          return <Panel key={gameNumber} title={`กรอกผล เกม ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === liveSlots.length ? "success" : "warning"}>{completed}/{liveSlots.length} คู่</Badge>}>
             <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} pairingEdit={pairingEdit} />
           </Panel>;
         })}

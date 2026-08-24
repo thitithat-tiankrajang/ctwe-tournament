@@ -246,3 +246,29 @@ test("only the entry grid dissents - the overview tables keep the muted mirror",
   assert.ok(!overview.includes("entry-grid--entry"), "the overview must not opt into the blue mirror");
 });
 
+test("a void slot renders as a plain row of em dashes - no waiting text, no badge", () => {
+  const source = readFileSync(COMPONENT, "utf8");
+  // The branch must come FIRST: every later branch describes a match that this slot does not have.
+  const voidBranch = source.indexOf("if (slot.isVoid || isVoidPairing(pairing)) {");
+  const penaltyBranch = source.indexOf('if (pairing?.resultType === "PENALTY") {');
+  const pendingBranch = source.indexOf("if (!isCompletePairing(pairing)) {");
+  assert.ok(voidBranch >= 0, "the void row branch is missing");
+  assert.ok(voidBranch < penaltyBranch && voidBranch < pendingBranch,
+    "a void slot must be answered before any branch that assumes players");
+  const branch = source.slice(voidBranch, penaltyBranch);
+  assert.ok(!branch.includes("Badge"), "a void row must not carry a status badge");
+  assert.ok(!branch.includes("รอ"), "a void row must not say it is waiting for anything");
+  assert.ok(!branch.includes("<input"), "a void row has no score to enter, not even a disabled one");
+  // The pending branch keeps its waiting text: a slot with no row yet IS waiting on its source game.
+  assert.match(source.slice(pendingBranch), /const waitingText = pairing \? "รอคู่แข่งจากอีก row"/);
+});
+
+test("void is internal - it never appears as a status the operator can pick", () => {
+  const source = readFileSync(COMPONENT, "utf8");
+  // Up to the closing `];`, not the first `;` — the type annotation contains one of its own.
+  const options = /const STATUS_OPTIONS[\s\S]*?\];/.exec(source);
+  assert.ok(options, "STATUS_OPTIONS not found");
+  assert.ok(!options[0].includes('"void"'), "void must not be selectable - it is not a state to clear");
+  assert.match(source, /type RowStatus = [^;]*"void"/, "void must still exist as a row status");
+});
+
