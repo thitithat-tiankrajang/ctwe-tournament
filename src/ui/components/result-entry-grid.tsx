@@ -11,7 +11,7 @@ import { useTournamentStore, type RemoteResultChange, type RemoteResultNotice } 
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
-import { applyColumnControls, GridHead, uniqueColumnValues, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
+import { applyColumnControls, fieldGroupsOf, GridHead, playerCodeKeysOf, uniqueColumnValues, useColumnControls, useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 
 /** Typed something into a row that has no saved result yet — that counts as actively editing. */
@@ -62,16 +62,17 @@ export function formatActor(actor: string | null, roles: string[]): string {
 }
 
 /**
- * Columns of the result-entry grid that get Excel sort + filter (player code / name / school / pair).
+ * Which columns carry an Excel sort + filter menu: those with a value to match on that are not a
+ * mirror of another column.
  *
- * `id2` is deliberately absent: the two code columns are ONE searchable field, and รหัส 1 owns its
- * affordance. รหัส 2 is a read-only mirror — no menu, no sort — but it stays a match target through
- * `ENTRY_CODE_GROUP`, so a player is still found from either seat.
+ * Derived, never listed. Side 2 of a pairing is a mirror — the whole field is filtered from side 1,
+ * which matches both seats — and a hand-kept list of keys beside the column definitions is a second
+ * statement of that fact, free to fall out of step with the `searchable: false` that removes the
+ * menu. When those two disagree the grid still renders, it just filters wrongly.
  */
-const ENTRY_FILTER_KEYS = ["pair", "id1", "name1", "school1", "name2", "school2"];
-
-/** The two code columns, matched as one field: filtering รหัส 1 also matches รหัส 2. */
-const ENTRY_CODE_GROUP = ["id1", "id2"];
+function menuKeys<T>(columns: readonly GridColumnBase[], accessors: Record<string, T>): string[] {
+  return columns.filter((column) => column.searchable !== false && accessors[column.key]).map((column) => column.key);
+}
 
 export interface EntrySlot {
   /** Table/couple number; stable even before the pairing exists (PAIR_RESULT destination). */
@@ -116,12 +117,12 @@ export const ACTION_WIDTH = { director: 180, staff: 117 } as const;
 
 const EDIT_COLUMNS_BASE: GridColumnBase[] = [
   { key: "pair", label: "คู่", min: 32, fitMin: 32, width: 42, align: "center" },
-  { key: "id1", label: "รหัส 1", min: 58, fitMin: 58, width: 72, filterKind: "playerCode" },
-  { key: "name1", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138 },
-  { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132 },
-  { key: "id2", label: "รหัส 2", min: 58, fitMin: 58, width: 72, filterKind: "playerCode", searchable: false },
-  { key: "name2", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138 },
-  { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132 },
+  { key: "id1", label: "รหัส 1", min: 58, fitMin: 58, width: 72, filterKind: "playerCode", field: "code" },
+  { key: "name1", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138, field: "name" },
+  { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132, field: "school" },
+  { key: "id2", label: "รหัส 2", min: 58, fitMin: 58, width: 72, filterKind: "playerCode", searchable: false, field: "code" },
+  { key: "name2", label: "ชื่อ-นามสกุล", min: 90, fitMin: 90, width: 138, searchable: false, field: "name" },
+  { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, fitMin: 90, width: 132, searchable: false, field: "school" },
   { key: "score1", label: "คะแนน 1", min: 48, fitMin: 48, width: 62, align: "center" },
   { key: "score2", label: "คะแนน 2", min: 48, fitMin: 48, width: 62, align: "center" },
   { key: "diff", label: "Diff", min: 52, fitMin: 52, width: 68, align: "center" },
@@ -135,18 +136,17 @@ export const editColumns = (canPenalty: boolean): GridColumnBase[] => {
 
 const VIEW_COLUMNS: GridColumnBase[] = [
   { key: "pair", label: "คู่", min: 32, width: 42, align: "center" },
-  { key: "id1", label: "รหัส 1", min: 58, width: 72, filterKind: "playerCode" },
-  { key: "name1", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
-  { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
-  { key: "id2", label: "รหัส 2", min: 58, width: 72, filterKind: "playerCode" },
-  { key: "name2", label: "ชื่อ-นามสกุล", min: 90, width: 138 },
-  { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, width: 132 },
+  { key: "id1", label: "รหัส 1", min: 58, width: 72, filterKind: "playerCode", field: "code" },
+  { key: "name1", label: "ชื่อ-นามสกุล", min: 90, width: 138, field: "name" },
+  { key: "school1", label: "โรงเรียน/สถาบัน", min: 90, width: 132, field: "school" },
+  { key: "id2", label: "รหัส 2", min: 58, width: 72, filterKind: "playerCode", searchable: false, field: "code" },
+  { key: "name2", label: "ชื่อ-นามสกุล", min: 90, width: 138, searchable: false, field: "name" },
+  { key: "school2", label: "โรงเรียน/สถาบัน", min: 90, width: 132, searchable: false, field: "school" },
   { key: "score1", label: "คะแนน 1", min: 64, width: 64, fitMin: 64, align: "center" },
   { key: "score2", label: "คะแนน 2", min: 64, width: 64, fitMin: 64, align: "center" },
   { key: "diff", label: "Diff", min: 50, width: 64, align: "center" },
   { key: "winner", label: "ผู้ชนะ", min: 58, width: 72, filterKind: "playerCode" },
 ];
-const VIEW_FILTER_KEYS = VIEW_COLUMNS.map((column) => column.key);
 
 const STATUS_OPTIONS: { value: "all" | RowStatus; label: string }[] = [
   { value: "all", label: "ทุกสถานะ" },
@@ -478,11 +478,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   // on the scores being typed, so derive them from slots — not `rows` — to avoid recomputing the
   // unique-value sets on every keystroke.
   const identityRows = useMemo(() => slots.map((slot) => ({ slot, pairing: slot.pairing })), [slots]);
-  const uniqueValues = useMemo(() => uniqueColumnValues(identityRows, accessors, ENTRY_FILTER_KEYS), [identityRows, accessors]);
+  const filterKeys = useMemo(() => menuKeys(columns, accessors), [columns, accessors]);
+  const uniqueValues = useMemo(() => uniqueColumnValues(identityRows, accessors, filterKeys), [identityRows, accessors, filterKeys]);
+  const codeKeys = useMemo(() => playerCodeKeysOf(columns), [columns]);
+  const fieldGroups = useMemo(() => fieldGroupsOf(columns), [columns]);
   const filtered = useMemo(() => {
-    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, ENTRY_CODE_GROUP, ENTRY_CODE_GROUP);
+    const byColumn = applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, codeKeys, fieldGroups);
     return status === "all" ? byColumn : byColumn.filter((row) => row.status === status);
-  }, [rows, accessors, controls.filters, controls.textFilters, controls.sort, status]);
+  }, [rows, accessors, controls.filters, controls.textFilters, controls.sort, status, codeKeys, fieldGroups]);
 
   const filtersActive = controls.active || status !== "all";
   const savedCount = rows.filter((row) => row.status === "saved").length;
@@ -830,8 +833,8 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
             pairing and result tables), and those DO want the muted mirror ink. */}
         <table className="entry-grid entry-grid--match entry-grid--entry" style={{ width: totalWidth }} aria-label="กรอกผลการแข่งขัน">
           <GridHead columns={columns} colWidths={colWidths} startResize={startResize} excel={{
-            sortable: (key) => ENTRY_FILTER_KEYS.includes(key),
-            filterable: (key) => ENTRY_FILTER_KEYS.includes(key),
+            sortable: (key) => filterKeys.includes(key),
+            filterable: (key) => filterKeys.includes(key),
             sort: controls.sort,
             filters: controls.filters,
             textFilters: controls.textFilters,
@@ -937,21 +940,24 @@ export function ResultViewGrid({ pairings, players, storageKey, onFilterActiveCh
     winner: (pairing) => pairing.resultWithdrawn ? "ถอนผล"
       : pairing.resultType === "DRAW" ? "เสมอ" : pairing.winnerId ?? "—",
   }), [players]);
+  const filterKeys = useMemo(() => menuKeys(viewColumns, accessors), [viewColumns, accessors]);
   const uniqueValues = useMemo(
-    () => uniqueColumnValues(pairings, accessors, VIEW_FILTER_KEYS),
-    [pairings, accessors],
+    () => uniqueColumnValues(pairings, accessors, filterKeys),
+    [pairings, accessors, filterKeys],
   );
+  const codeKeys = useMemo(() => playerCodeKeysOf(viewColumns), [viewColumns]);
+  const fieldGroups = useMemo(() => fieldGroupsOf(viewColumns), [viewColumns]);
   const filtered = useMemo(
-    () => applyColumnControls(pairings, accessors, controls.filters, controls.sort, controls.textFilters, ["id1", "id2", "winner"]),
-    [pairings, accessors, controls.filters, controls.sort, controls.textFilters],
+    () => applyColumnControls(pairings, accessors, controls.filters, controls.sort, controls.textFilters, codeKeys, fieldGroups),
+    [pairings, accessors, controls.filters, controls.sort, controls.textFilters, codeKeys, fieldGroups],
   );
 
   return (
     <div className="entry-grid-scroll" ref={scrollRef}>
       <table className="entry-grid entry-grid--match" style={{ width: totalWidth }} aria-label="ผลการแข่งขัน">
         <GridHead columns={viewColumns} colWidths={colWidths} startResize={startResize} excel={{
-            sortable: (key) => VIEW_FILTER_KEYS.includes(key),
-            filterable: (key) => VIEW_FILTER_KEYS.includes(key),
+            sortable: (key) => filterKeys.includes(key),
+            filterable: (key) => filterKeys.includes(key),
             sort: controls.sort,
             filters: controls.filters,
             textFilters: controls.textFilters,

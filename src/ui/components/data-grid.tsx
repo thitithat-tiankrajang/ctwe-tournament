@@ -37,6 +37,16 @@ export interface GridColumnBase {
    * search affordance; the second is a read-only mirror of the same logical field.
    */
   searchable?: false;
+  /**
+   * Names the LOGICAL field this column belongs to. Columns sharing a `field` are matched as one:
+   * a filter typed into any member is tested against all of them.
+   *
+   * A pairing row carries two players, so one field — code, name, school — is split across two
+   * cells, and seat parity decides which cell holds a given player. The operator cannot know that
+   * parity before searching, so a per-column filter misses about half the board and reports it as
+   * empty. The member marked `searchable: false` is the mirror: no menu, no sort, still a target.
+   */
+  field?: string;
 }
 
 export interface DataColumn<T> extends GridColumnBase {
@@ -427,22 +437,74 @@ export function useColumnControls() {
   };
 }
 
-/** Apply column filters + sort to rows using per-column string/number accessors. */
 /**
- * Which column keys a text filter typed into `key` is matched against.
+ * The logical fields a column list declares, keyed by EVERY member of each.
  *
- * Normally just that column. A key inside `codeFilterGroup` matches the WHOLE group, because the
- * group's columns hold one logical field split across two cells: a pairing row carries two players,
- * and which of them a given code belongs to is decided by seat parity — something the operator
- * cannot see before searching. Without this, searching รหัส 1 for `045` misses every row where 045
- * happens to sit on side two, which is about half of them, and reports it as an empty board.
- *
- * Only the searchable column of a group carries a menu (`searchable: false` marks the mirror), so
- * one filter box covers the pair.
+ * Derived from the columns rather than kept beside them. "These columns are one field" and "this
+ * one is the mirror" would otherwise be declared twice per grid and could drift apart silently —
+ * and drift shows up as a filter that quietly stops matching half the board, which nobody reads as
+ * a bug in the filter. A field with one column is no group and is dropped.
  */
-export function filterTargets(key: string, codeFilterGroup: readonly string[] = []): readonly string[] {
-  return codeFilterGroup.includes(key) ? codeFilterGroup : [key];
+export function fieldGroupsOf(columns: readonly GridColumnBase[]): Record<string, readonly string[]> {
+  const byField = new Map<string, string[]>();
+  for (const column of columns) {
+    if (!column.field) continue;
+    const members = byField.get(column.field) ?? [];
+    members.push(column.key);
+    byField.set(column.field, members);
+  }
+  const groups: Record<string, readonly string[]> = {};
+  for (const members of byField.values()) {
+    if (members.length < 2) continue;
+    for (const key of members) groups[key] = members;
+  }
+  return groups;
 }
+
+/** Keys of the player-code columns: exact-digit matching, and the board search's code set. */
+export function playerCodeKeysOf(columns: readonly GridColumnBase[]): string[] {
+  return columns.filter((column) => column.filterKind === "playerCode").map((column) => column.key);
+}
+
+/** Which column keys a text filter typed into `key` covers: its whole field, or just itself. */
+export function filterTargets(key: string, fieldGroups: Record<string, readonly string[]> = {}): readonly string[] {
+  return fieldGroups[key] ?? [key];
+}
+
+/**
+ * Does `row` pass the text filter typed into column `key`?
+ *
+ * Two axes. ACROSS the field, any member matching is enough. WITHIN a member, a player-code column
+ * matches by exact digits and accepts SEVERAL codes at once — "4 012 58" is a call-list of three,
+ * normalised to 004/012/058 — while every other column is one case-insensitive substring, because
+ * a person's name legitimately contains spaces and splitting it would be wrong.
+ *
+ * A code column falls back to single-term matching when the text is not entirely code-shaped, so a
+ * partial like "A" behaves exactly as it did before multi-code existed.
+ */
+function matchesFieldFilter<T>(
+  row: T,
+  key: string,
+  filter: string,
+  accessors: Record<string, (row: T) => string | number>,
+  playerCodeKeys: readonly string[],
+  fieldGroups: Record<string, readonly string[]>,
+): boolean {
+  const parsed = parseSearchQuery(filter);
+  const term = filter.trim().toLocaleLowerCase("th");
+  return filterTargets(key, fieldGroups).some((target) => {
+    const accessor = accessors[target];
+    if (!accessor) return false;
+    const value = accessor(row);
+    if (!playerCodeKeys.includes(target))
+      return String(value).toLocaleLowerCase("th").includes(term);
+    return parsed.kind === "codes"
+      ? parsed.tokens.some((token) => matchesPlayerCode(value, token))
+      : matchesPlayerCode(value, filter);
+  });
+}
+
+/** Apply column filters + sort to rows using per-column string/number accessors. */
 
 export function applyColumnControls<T>(
   rows: T[],
@@ -452,10 +514,10 @@ export function applyColumnControls<T>(
   textFilters: Record<string, string> = {},
   playerCodeKeys: readonly string[] = [],
   /**
-   * Code columns that form ONE searchable field: a text filter on any member matches all of them.
-   * Empty (the default) keeps every column filtering only itself.
+   * Logical fields, from `fieldGroupsOf`: a text filter on any member matches all of them. Empty
+   * (the default) keeps every column filtering only itself.
    */
-  codeFilterGroup: readonly string[] = [],
+  fieldGroups: Record<string, readonly string[]> = {},
   /** Board-level search: ORs across a logical field, then ANDs with the per-column filters. */
   boardQuery = "",
   /** Text accessors for the board search; defaults to `accessors`. */
@@ -468,12 +530,7 @@ export function applyColumnControls<T>(
   let result = activeKeys.length === 0 && textKeys.length === 0 && !searching ? rows : rows.filter((row) =>
     (!searching || matchesBoardQuery(row, boardQuery, searchAccessors, playerCodeKeys, searchable))
     && activeKeys.every((key) => filters[key].includes(String(accessors[key](row))))
-    && textKeys.every((key) => playerCodeKeys.includes(key)
-      ? filterTargets(key, codeFilterGroup)
-        .some((target) => accessors[target] && matchesPlayerCode(accessors[target](row), textFilters[key]))
-      : String(accessors[key](row))
-        .toLocaleLowerCase("th")
-        .includes(textFilters[key].trim().toLocaleLowerCase("th"))));
+    && textKeys.every((key) => matchesFieldFilter(row, key, textFilters[key], accessors, playerCodeKeys, fieldGroups)));
   if (sort && accessors[sort.key]) {
     const accessor = accessors[sort.key];
     result = [...result].sort((a, b) => {
@@ -626,14 +683,14 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
     for (const column of columns) if (column.value) result[column.key] = column.value;
     return result;
   }, [columns]);
+  // A mirror carries no menu, so its checkbox list can never be opened: building one per mirror
+  // column on every data change is work for a popup that cannot exist.
   const filterableKeys = useMemo(
-    () => columns.filter((column) => column.value && (column.filterable ?? true)).map((column) => column.key),
+    () => columns.filter((column) => column.searchable !== false && column.value && (column.filterable ?? true)).map((column) => column.key),
     [columns],
   );
-  const playerCodeKeys = useMemo(
-    () => columns.filter((column) => column.filterKind === "playerCode").map((column) => column.key),
-    [columns],
-  );
+  const playerCodeKeys = useMemo(() => playerCodeKeysOf(columns), [columns]);
+  const fieldGroups = useMemo(() => fieldGroupsOf(columns), [columns]);
   // Unique values per filterable column (Excel checkbox list); memoised, so large datasets stay cheap.
   const uniqueValues = useMemo(() => uniqueColumnValues(rows, accessors, filterableKeys), [rows, accessors, filterableKeys]);
   const searchAccessors = useMemo(() => {
@@ -642,10 +699,8 @@ export function DataGrid<T>({ columns, rows, getRowKey, getRowElementId, storage
     return result;
   }, [columns, accessors]);
   const visibleRows = useMemo(
-    // No code group: DataGrid's own board search already ORs across the code columns, so its
-    // per-column filters stay per-column exactly as before.
-    () => applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, [], controls.query, searchAccessors),
-    [rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, controls.query, searchAccessors],
+    () => applyColumnControls(rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, fieldGroups, controls.query, searchAccessors),
+    [rows, accessors, controls.filters, controls.sort, controls.textFilters, playerCodeKeys, fieldGroups, controls.query, searchAccessors],
   );
   // Codes the operator asked for that are nowhere on this board. Naming them back is the difference
   // between "045 is not in this game" and an unexplained empty table.
