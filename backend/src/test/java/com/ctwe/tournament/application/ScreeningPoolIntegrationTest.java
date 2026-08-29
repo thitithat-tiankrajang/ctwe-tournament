@@ -294,6 +294,17 @@ class ScreeningPoolIntegrationTest {
             "SELECT winner FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
             Integer.class, cardId, bye[0]);
         assertThat(winner).as("the lone player still wins").isEqualTo(bye[1]);
+
+        // The empty seat is forced to 0, not left holding whatever was typed opposite. This is what
+        // the `presentScore > 0` guard is measured against once negative scores are allowed for real
+        // matches — without it, a bye "won" with a negative score would sit under its absent opponent.
+        int[] stored = jdbc.queryForObject("""
+            SELECT score_one, score_two, COALESCE(player_one, -1) FROM matches
+            WHERE card_id = ? AND game_number = 1 AND table_number = ?
+            """, (rs, row) -> new int[] { rs.getInt(1), rs.getInt(2), rs.getInt(3) }, cardId, bye[0]);
+        boolean onePresent = stored[2] != -1;
+        assertThat(onePresent ? stored[1] : stored[0]).as("the empty seat scores 0").isZero();
+        assertThat(onePresent ? stored[0] : stored[1]).as("the present player keeps their score").isEqualTo(300);
     }
 
     /**
@@ -334,6 +345,109 @@ class ScreeningPoolIntegrationTest {
             "SELECT calculated_diff FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
             Integer.class, cardId, real[0]);
         assertThat(diff).as("the bye exemption must not leak into ordinary matches").isEqualTo(100);
+    }
+
+    // ---- overrideResult: the remediation path for a pre-deploy bye ---------
+    //
+    // recalculateStandings rebuilds from the STORED calculated_diff, so a bye recorded under the old
+    // rule keeps its margin forever — no recalculation reconciles it, because the stored value is the
+    // input. overrideResult is the only way back, and until now nothing covered its bye branch at all.
+
+    /** The lone player's seat, their code, and the table — for a card whose game 1 has one bye. */
+    private int[] byeSeat(UUID cardId) {
+        return jdbc.queryForObject("""
+            SELECT table_number, COALESCE(player_one, player_two), (player_one IS NOT NULL)::int
+            FROM matches
+            WHERE card_id = ? AND game_number = 1 AND (player_one IS NULL) <> (player_two IS NULL)
+            LIMIT 1
+            """, (rs, row) -> new int[] { rs.getInt(1), rs.getInt(2), rs.getInt(3) }, cardId);
+    }
+
+    /** Write the bye exactly as the pre-deploy rule stored it: typed margin, real capped diff. */
+    private void seedLegacyBye(UUID cardId, int table, boolean onePresent, int code, int margin) {
+        jdbc.update("""
+            UPDATE matches SET winner = ?, score_one = ?, score_two = ?, result_type = 'W',
+                               calculated_diff = ?, submitted_by = ?, submitted_at = now()
+            WHERE card_id = ? AND game_number = 1 AND table_number = ?
+            """, code, onePresent ? margin : 0, onePresent ? 0 : margin, margin, ACTOR, cardId, table);
+        service.recalculateStandings(cardId);
+    }
+
+    private Integer standingDiff(UUID cardId, int code) {
+        return jdbc.queryForObject(
+            "SELECT diff FROM standings WHERE card_id = ? AND player_code = ?", Integer.class, cardId, code);
+    }
+
+    @Test
+    void overridingALegacyByeStoresZeroDiffAndRebuildsStandings() {
+        UUID cardId = cardInResultCollection(7);
+        int[] bye = byeSeat(cardId);
+        int table = bye[0], code = bye[1];
+        boolean onePresent = bye[2] == 1;
+
+        seedLegacyBye(cardId, table, onePresent, code, 300);
+        assertThat(standingDiff(cardId, code))
+            .as("the old rule gifted the bye's typed margin to the standings").isEqualTo(300);
+
+        service.overrideResult(cardId, "g1t" + table, new CardDtos.ResultRequest(
+            onePresent ? 250 : 0, onePresent ? 0 : 250, true), ACTOR);
+
+        int[] stored = jdbc.queryForObject("""
+            SELECT score_one, score_two, calculated_diff, winner FROM matches
+            WHERE card_id = ? AND game_number = 1 AND table_number = ?
+            """, (rs, row) -> new int[] { rs.getInt(1), rs.getInt(2), rs.getInt(3), rs.getInt(4) }, cardId, table);
+
+        assertThat(onePresent ? stored[1] : stored[0]).as("the empty seat is forced to 0").isZero();
+        assertThat(onePresent ? stored[0] : stored[1]).as("the present player keeps their score").isEqualTo(250);
+        assertThat(stored[2]).as("a game nobody played must not move a tie-break").isZero();
+        assertThat(stored[3]).as("the lone player still wins").isEqualTo(code);
+
+        assertThat(standingDiff(cardId, code))
+            .as("standings are rebuilt from the corrected value, not patched incrementally").isZero();
+        assertThat(jdbc.queryForObject(
+            "SELECT wins FROM standings WHERE card_id = ? AND player_code = ?", Integer.class, cardId, code))
+            .as("correcting the margin must not cost the player the win").isEqualTo(1);
+    }
+
+    @Test
+    void overrideRejectsAByeWonWithANonPositiveScore() {
+        UUID cardId = cardInResultCollection(7);
+        int[] bye = byeSeat(cardId);
+        int table = bye[0];
+        boolean onePresent = bye[2] == 1;
+        seedLegacyBye(cardId, table, onePresent, bye[1], 300);
+
+        // Beats the empty seat as typed (1 > 0) but scores zero, which the forced-0 seat makes
+        // meaningless. Same rule as submitResult — the two branches must not drift apart.
+        assertThatThrownBy(() -> service.overrideResult(cardId, "g1t" + table, new CardDtos.ResultRequest(
+            onePresent ? 0 : 1, onePresent ? 1 : 0, true), ACTOR))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("บาย");
+
+        assertThat(jdbc.queryForObject(
+            "SELECT calculated_diff FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
+            Integer.class, cardId, table))
+            .as("a refused override must leave the row exactly as it was").isEqualTo(300);
+    }
+
+    @Test
+    void overridingARealMatchStillTakesItsMargin() {
+        // The bye exemption lives in the same branch on both paths; this is the guard that it does
+        // not leak into overrideResult's ordinary case the way it must not leak into submitResult's.
+        UUID cardId = cardInResultCollection(8);
+        Integer table = jdbc.queryForObject("""
+            SELECT table_number FROM matches
+            WHERE card_id = ? AND game_number = 1 AND player_one IS NOT NULL AND player_two IS NOT NULL
+            ORDER BY table_number LIMIT 1
+            """, Integer.class, cardId);
+
+        service.submitResult(cardId, "g1t" + table, new CardDtos.ResultRequest(300, 200, false), ACTOR);
+        service.overrideResult(cardId, "g1t" + table, new CardDtos.ResultRequest(420, 300, true), ACTOR);
+
+        assertThat(jdbc.queryForObject(
+            "SELECT calculated_diff FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
+            Integer.class, cardId, table))
+            .as("a played match keeps its margin under override").isEqualTo(120);
     }
 
     // ---- seat conservation (I11) -------------------------------------------

@@ -19,6 +19,16 @@ export function isVoidPairing(pairing: Pairing | undefined): boolean {
 }
 
 /**
+ * What a slot with no score is called, when "no score" is not the whole story.
+ *
+ * These live here, beside `isVoidPairing`, because the audience meets them on two surfaces — the
+ * public result table and the PDF export — and a Thai label written out twice is two statements of
+ * one fact, free to drift apart.
+ */
+export const WITHDRAWN_TEXT = "ถอนผล";
+export const VOIDED_TEXT = "ยกเลิกคู่";
+
+/**
  * Has this slot's result been entered?
  *
  * `!= null` on purpose: the API omits absent scores, so they arrive as `undefined` — but a null

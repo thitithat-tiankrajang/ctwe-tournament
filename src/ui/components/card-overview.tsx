@@ -8,6 +8,7 @@ import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, hasStaffAccess, isAdmin } from "@/domain/tournament/roles";
 import { finalStandings, rankingAfterGame, type HistoryScope, type RankedPlayer } from "@/domain/tournament/history";
 import { comparePlayerCodes } from "@/domain/tournament/player-code";
+import { isVoidPairing, VOIDED_TEXT, WITHDRAWN_TEXT } from "@/domain/tournament/pairing-slot";
 import type { FinalSlot, Pairing, PairingSnapshot, Player, RuntimeStage, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
@@ -51,6 +52,40 @@ function AthleteCell({ player, gibsonized = false }: { player?: Player; gibsoniz
 
 function isRecorded(pairing: Pairing) {
   return pairing.scoreOne != null && pairing.scoreTwo != null && Boolean(pairing.resultType);
+}
+
+/**
+ * What the audience reads in the คะแนน column.
+ *
+ * Order is the whole point. A withdrawn or voided row has NULL scores, so `isRecorded` is false for
+ * both and every one of them used to fall through to "—" — indistinguishable from a game that has
+ * simply not been played yet. That is the one reading the audience must never be given: a score they
+ * watched go up is gone, and "—" says nothing happened.
+ *
+ * Void is answered before withdrawn because the two can legitimately coexist — a force commit
+ * destroys the result first and voids the emptied slot afterwards, in that order, inside one
+ * transaction. Such a row has no players left to attribute a withdrawn score to, so naming the
+ * abandoned pairing explains the whole row where "ถอนผล" would explain none of it.
+ */
+export function resultScoreText(pairing: Pairing): string {
+  if (isVoidPairing(pairing)) return VOIDED_TEXT;
+  if (pairing.resultWithdrawn === true) return WITHDRAWN_TEXT;
+  if (pairing.resultType === "PENALTY") return "ลงดาบ";
+  return isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
+}
+
+/** The sortable margin, or null for anything that has no result to have a margin. */
+export function resultDiffOf(pairing: Pairing): number | null {
+  if (isVoidPairing(pairing) || pairing.resultWithdrawn === true) return null;
+  if (!isRecorded(pairing)) return null;
+  return pairing.resultType === "DRAW" ? 0 : pairing.calculatedDiff ?? 0;
+}
+
+export function resultDiffText(pairing: Pairing): string {
+  const diff = resultDiffOf(pairing);
+  if (diff === null) return "—";
+  if (pairing.resultType === "PENALTY") return `−${pairing.calculatedDiff ?? 0}`;
+  return `${diff}`;
 }
 
 /**
@@ -130,15 +165,7 @@ function PairingGrid({ pairings, players, resizableColumns, emptyText }: { pairi
 
 function ResultTable({ pairings, players, storageKey, resizableColumns, emptyText }: { pairings: Pairing[]; players: Map<string, Player>; storageKey: string; resizableColumns: boolean; emptyText: string }) {
   const playerOf = (playerId: string | null) => playerId ? players.get(playerId) : undefined;
-  const scoreText = (pairing: Pairing) => pairing.resultType === "PENALTY" ? "ลงดาบ" : isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
-  const longestScore = pairings.reduce((longest, pairing) => Math.max(longest, scoreText(pairing).length), "คะแนน".length);
-  const diffOf = (pairing: Pairing) => !isRecorded(pairing) ? null : pairing.resultType === "DRAW" ? 0 : pairing.calculatedDiff ?? 0;
-  const diffText = (pairing: Pairing) => {
-    if (!isRecorded(pairing)) return "—";
-    if (pairing.resultType === "PENALTY") return `−${pairing.calculatedDiff ?? 0}`;
-    const diff = diffOf(pairing);
-    return diff === 0 ? "0" : `${diff}`;
-  };
+  const longestScore = pairings.reduce((longest, pairing) => Math.max(longest, resultScoreText(pairing).length), "คะแนน".length);
   const columns: DataColumn<Pairing>[] = [
     { key: "seat1", label: "ที่นั่ง", min: 36, width: 48, align: "center", priority: "identity", cellClassName: "cell-seat", value: (pairing) => seatOf(pairing.tableNumber, 1), filterable: false, render: (pairing) => seatOf(pairing.tableNumber, 1) },
     { key: "id1", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", field: "code", priority: "identity", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerOneId)?.id ?? "—" },
@@ -147,8 +174,14 @@ function ResultTable({ pairings, players, storageKey, resizableColumns, emptyTex
     { key: "seat2", label: "ที่นั่ง", min: 36, width: 48, align: "center", cellClassName: "cell-seat", value: (pairing) => seatOf(pairing.tableNumber, 2), filterable: false, render: (pairing) => seatOf(pairing.tableNumber, 2) },
     { key: "id2", label: "รหัส", min: 52, width: 68, align: "center", filterKind: "playerCode", searchable: false, field: "code", cellClassName: "cell-id", value: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—", render: (pairing) => playerOf(pairing.playerTwoId)?.id ?? "—" },
     { key: "name2", label: "นักกีฬา", min: 140, width: 300, searchable: false, field: "name", priority: "primary", value: (pairing) => athleteName(playerOf(pairing.playerTwoId)), searchText: (pairing) => `${athleteName(playerOf(pairing.playerTwoId))} ${playerOf(pairing.playerTwoId)?.school ?? ""}`, render: (pairing) => <AthleteCell player={playerOf(pairing.playerTwoId)} gibsonized={pairing.playerTwoGibsonized} /> },
-    { key: "score", label: "คะแนน", min: 36, width: 68, fitContent: true, align: "center", cellClassName: "cell-score", value: (pairing) => scoreText(pairing), filterable: false, render: (pairing) => scoreText(pairing) },
-    { key: "diff", label: "ผลต่าง", min: 56, width: 68, align: "center", cellClassName: (pairing) => `cell-diff cell-diff--${pairing.resultType === "PENALTY" ? "penalty" : "win"}`, value: (pairing) => diffOf(pairing) ?? -1, filterable: false, render: (pairing) => diffText(pairing) },
+    { key: "score", label: "คะแนน", min: 36, width: 68, fitContent: true, align: "center", cellClassName: "cell-score", value: (pairing) => resultScoreText(pairing), filterable: false, render: (pairing) => {
+      const text = resultScoreText(pairing);
+      // Withdrawn is the one state the audience must not skim past: it means a score they already
+      // saw was taken back. It carries the same badge the staff grid uses, so both surfaces read
+      // alike. Void needs no badge — it is a table nobody played at, not a change to react to.
+      return text === WITHDRAWN_TEXT ? <span className="result-withdrawn">{text}</span> : text;
+    } },
+    { key: "diff", label: "ผลต่าง", min: 56, width: 68, align: "center", cellClassName: (pairing) => `cell-diff cell-diff--${pairing.resultType === "PENALTY" ? "penalty" : "win"}`, value: (pairing) => resultDiffOf(pairing) ?? -1, filterable: false, render: (pairing) => resultDiffText(pairing) },
   ];
   return <DataGrid ariaLabel="ตารางผลการแข่งขัน" columns={columns} rows={pairings} getRowKey={(pairing) => pairing.id} storageKey={`${storageKey}:layout-v4:score-content-${longestScore}`} tableClassName="entry-grid--match" emptyText={emptyText} resizableColumns={resizableColumns} rowClassName={(pairing) => pairing.playerOneGibsonized || pairing.playerTwoGibsonized ? "egrid-row--gibson" : undefined} />;
 }
