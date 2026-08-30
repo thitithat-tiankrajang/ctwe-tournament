@@ -503,8 +503,10 @@ class PairingSessionIntegrationTest {
         String two = id(cardId, slot[3]);
         cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
 
+        // The slot is named explicitly. Force alone is not enough to destroy a result that only
+        // SCREENING would have emptied — see screeningAloneCannotDestroyAResultEvenWithForce.
         var forced = new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
-            List.of(slot(1, slot[1], one, two)), List.of(),
+            List.of(slot(1, slot[1], one, two)), List.of(slot(1, slot[1], null, two)),
             List.of(new CardDtos.ScreenEntry(one, "NO_SHOW", null)), List.of(), List.of());
         session.commit(cardId, forced, "director01");
 
@@ -535,7 +537,8 @@ class PairingSessionIntegrationTest {
         long publicBefore = publicVersion(cardId);
 
         session.commit(cardId, new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
-            List.of(slot(1, slot[1], one, id(cardId, slot[3]))), List.of(),
+            List.of(slot(1, slot[1], one, id(cardId, slot[3]))),
+            List.of(slot(1, slot[1], null, id(cardId, slot[3]))),
             List.of(new CardDtos.ScreenEntry(one, "NO_SHOW", null)), List.of(), List.of()), "director01");
 
         Boolean withdrawn = jdbc.queryForObject(
@@ -557,7 +560,8 @@ class PairingSessionIntegrationTest {
         jdbc.update("UPDATE matches SET pairing_published_at = now() WHERE card_id = ? AND game_number = 1",
             cardId);
         session.commit(cardId, new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
-            List.of(slot(1, slot[1], one, id(cardId, slot[3]))), List.of(),
+            List.of(slot(1, slot[1], one, id(cardId, slot[3]))),
+            List.of(slot(1, slot[1], null, id(cardId, slot[3]))),
             List.of(new CardDtos.ScreenEntry(one, "NO_SHOW", null)), List.of(), List.of()), "director01");
 
         // The slot is now a bye for the remaining player; staff score it normally.
@@ -599,6 +603,165 @@ class PairingSessionIntegrationTest {
             """, ACTOR, cardId, slot[1]);
 
         assertThat(cards.unwindBlocker(cardId, 1, slot[1])).contains("ถอนดาบ");
+    }
+
+    // ---- P2: screening can never destroy a result --------------------------
+    //
+    // Enforced from the server's own causation record, not from the shape of the request. The
+    // screening pass locates each held player's seat itself and records where it was; a slot that
+    // lost its occupant that way, and which the change set never names, has nobody taking
+    // responsibility for the result in it. Force cannot manufacture that consent.
+
+    /**
+     * The screen-only change set: hold the player in seat one and name no slot at all, so the seat is
+     * emptied purely by the screening pass. Whether that is allowed depends on the slot, which is the
+     * whole point — these tests pass a scored slot and an unplayed one through the same shape.
+     */
+    private CardDtos.PairingCommitRequest screenOutOf(UUID cardId, int[] slot, boolean force) {
+        return new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", force,
+            List.of(slot(1, slot[1], id(cardId, slot[2]), id(cardId, slot[3]))), List.of(),
+            List.of(new CardDtos.ScreenEntry(id(cardId, slot[2]), "NO_SHOW", null)), List.of(), List.of());
+    }
+
+    @Test
+    void screeningAloneCannotDestroyARecordedResult() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+
+        var verdict = session.validate(cardId, screenOutOf(cardId, slot, false));
+        assertThat(verdict.blocks()).extracting(CardDtos.PairingBlock::code)
+            .contains("SCREENING_CANNOT_DESTROY_RESULT");
+        assertThat(verdict.ok()).isFalse();
+        // The operator must not be pointed at force, because force will not help here.
+        assertThat(verdict.forceAvailable()).isFalse();
+        assertThat(verdict.resultsToRemove())
+            .as("nothing is going to be removed, so nothing may be listed as about to be")
+            .isEmpty();
+
+        assertThatThrownBy(() -> session.commit(cardId, screenOutOf(cardId, slot, false), "director01"))
+            .isInstanceOf(PairingSessionService.PairingRejectedException.class);
+    }
+
+    @Test
+    void screeningAloneCannotDestroyAResultEvenWithForce() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+
+        var verdict = session.validate(cardId, screenOutOf(cardId, slot, true));
+        assertThat(verdict.blocks()).extracting(CardDtos.PairingBlock::code)
+            .as("force is not a way around this one")
+            .contains("SCREENING_CANNOT_DESTROY_RESULT");
+        assertThat(verdict.forceAvailable()).isFalse();
+
+        // Read the row BEFORE the rejected commit: a RuntimeException escaping a @Transactional
+        // method marks this test's transaction rollback-only, and queries after that point are not
+        // a trustworthy way to prove anything.
+        var row = jdbc.queryForMap("SELECT result_type, score_one, player_one FROM matches"
+            + " WHERE card_id = ? AND game_number = 1 AND table_number = ?", cardId, slot[1]);
+        assertThat(row.get("result_type")).as("the result is there to be destroyed").isNotNull();
+        assertThat(row.get("score_one")).isEqualTo(300);
+        assertThat(row.get("player_one")).as("and so is the seat").isNotNull();
+        assertThat(pool.isEmpty(cardId)).isTrue();
+
+        assertThatThrownBy(() -> session.commit(cardId, screenOutOf(cardId, slot, true), "director01"))
+            .as("and the commit refuses, so none of that changes")
+            .isInstanceOf(PairingSessionService.PairingRejectedException.class);
+    }
+
+    @Test
+    void screeningAnUnplayedSlotIsUntouchedByTheRule() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        // No result on this slot: screening is exactly what it claims to be, and must still work.
+        session.commit(cardId, screenOutOf(cardId, slot, false), "director01");
+
+        assertThat(jdbc.queryForObject("SELECT player_one FROM matches"
+            + " WHERE card_id = ? AND game_number = 1 AND table_number = ?", Integer.class, cardId, slot[1]))
+            .as("the ordinary screening path is not collateral damage").isNull();
+        assertThat(pool.isScreened(cardId, slot[2])).isTrue();
+    }
+
+    @Test
+    void namingTheSlotIsHowAnOperatorTakesResponsibilityForIt() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        String one = id(cardId, slot[2]), two = id(cardId, slot[3]);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+
+        // Same end state, same screening — but the change set states the occupancy it wants for a
+        // slot it can see is scored. That is the route place mode uses, and it stays open.
+        session.commit(cardId, new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
+            List.of(slot(1, slot[1], one, two)), List.of(slot(1, slot[1], null, two)),
+            List.of(new CardDtos.ScreenEntry(one, "NO_SHOW", null)), List.of(), List.of()), "director01");
+
+        var row = jdbc.queryForMap("SELECT result_type, player_one FROM matches"
+            + " WHERE card_id = ? AND game_number = 1 AND table_number = ?", cardId, slot[1]);
+        assertThat(row.get("result_type")).as("force still destroys what it was told to").isNull();
+        assertThat(row.get("player_one")).isNull();
+        assertThat(pool.isScreened(cardId, slot[2])).isTrue();
+    }
+
+    @Test
+    void aForceCommitWithNoScreeningAtAllIsUnaffected() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        String one = id(cardId, slot[2]), two = id(cardId, slot[3]);
+        cards.submitResult(cardId, "g1t" + slot[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+
+        // Pure Multi Switching: no screen entries, so the rule has no slot to fire on. Seat two is
+        // vacated rather than swapped with seat one — a swap would leave the pair intact and trip
+        // the REMATCH warning gate, which would reject the commit for a reason unrelated to P2.
+        session.commit(cardId, new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
+            List.of(slot(1, slot[1], one, two)), List.of(slot(1, slot[1], one, null)),
+            List.of(), List.of(), List.of()), "director01");
+
+        assertThat(jdbc.queryForObject("SELECT result_type FROM matches"
+            + " WHERE card_id = ? AND game_number = 1 AND table_number = ?", String.class, cardId, slot[1]))
+            .as("an ordinary force commit is untouched by the screening rule").isNull();
+    }
+
+    @Test
+    void oneNamedSlotDoesNotLicenseTheOtherScreenedOne() {
+        UUID cardId = cardWithPairing(8);
+        List<int[]> slots = jdbc.query("""
+            SELECT game_number, table_number, player_one, player_two FROM matches
+            WHERE card_id = ? AND game_number = 1 AND player_one IS NOT NULL AND player_two IS NOT NULL
+            ORDER BY table_number LIMIT 2
+            """, (rs, row) -> new int[] { rs.getInt(1), rs.getInt(2), rs.getInt(3), rs.getInt(4) }, cardId);
+        int[] named = slots.get(0), unnamed = slots.get(1);
+        cards.submitResult(cardId, "g1t" + named[1], new CardDtos.ResultRequest(300, 200, false), ACTOR);
+        cards.submitResult(cardId, "g1t" + unnamed[1], new CardDtos.ResultRequest(310, 210, false), ACTOR);
+
+        // Two screened players in two scored slots; only the first slot is named. The rule is
+        // per-slot, so consent given for one must not carry to the other.
+        var request = new CardDtos.PairingCommitRequest(UUID.randomUUID(), "x", true,
+            List.of(slot(1, named[1], id(cardId, named[2]), id(cardId, named[3])),
+                    slot(1, unnamed[1], id(cardId, unnamed[2]), id(cardId, unnamed[3]))),
+            List.of(slot(1, named[1], null, id(cardId, named[3]))),
+            List.of(new CardDtos.ScreenEntry(id(cardId, named[2]), "NO_SHOW", null),
+                    new CardDtos.ScreenEntry(id(cardId, unnamed[2]), "NO_SHOW", null)),
+            List.of(), List.of());
+
+        var verdict = session.validate(cardId, request);
+        assertThat(verdict.blocks())
+            .as("exactly one slot is unconsented, and it is the unnamed one")
+            .singleElement()
+            .satisfies(block -> {
+                assertThat(block.code()).isEqualTo("SCREENING_CANNOT_DESTROY_RESULT");
+                assertThat(block.table()).isEqualTo(unnamed[1]);
+            });
+
+        // The consented slot is a genuine removal candidate, so it is still listed — the operator
+        // sees what force WOULD have reached, alongside the reason the commit cannot proceed.
+        assertThat(verdict.resultsToRemove()).extracting(CardDtos.DestroyedResult::table)
+            .containsExactly(named[1]);
+        assertThat(verdict.forceAvailable()).isFalse();
+
+        assertThatThrownBy(() -> session.commit(cardId, request, "director01"))
+            .as("and the whole change set fails, not just the offending slot")
+            .isInstanceOf(PairingSessionService.PairingRejectedException.class);
     }
 
     // ---- I9: the audience never learns of a hold ---------------------------
