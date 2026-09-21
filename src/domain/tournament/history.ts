@@ -83,9 +83,15 @@ export function playerHistory(card: TournamentCard, playerId: string, scope: His
     const opponentScore = (isOne ? pairing.scoreTwo : pairing.scoreOne) ?? 0;
     const result: "W" | "T" | "L" = pairing.resultType === "DRAW" ? "T" : pairing.winnerId === playerId ? "W" : "L";
     cumulativeWinPoints += result === "W" ? 2 : result === "T" ? 1 : 0;
+    // The CAPPED margin the server stored, signed from this player's side — never the raw score
+    // gap. A game whose margin exceeds the card's maximum contributes the cap to the standings,
+    // so using the raw gap here made this page's "ผลต่างสะสม" disagree with the official ranking
+    // shown one screen away (a no-opponent slot entered at 350 against a maximum of 250 showed
+    // +350 here and +250 there). Only the differential is capped; the scores stay as played.
+    const margin = pairing.calculatedDiff ?? Math.abs(ownScore - opponentScore);
     const diff = pairing.resultType === "PENALTY"
       ? -(pairing.calculatedDiff ?? 0)
-      : ownScore - opponentScore;
+      : result === "T" ? 0 : result === "W" ? margin : -margin;
     cumulativeDiff += diff;
     return { key: `q-${game}`, game, table: pairing.tableNumber, result, cumulativeWinPoints, ownScore, opponentScore, diff, cumulativeDiff, opponentId: (isOne ? pairing.playerTwoId : pairing.playerOneId) ?? "" };
   });

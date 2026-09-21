@@ -201,3 +201,28 @@ test("a non-finalist gets nothing extra even when the final is requested", () =>
   assert.equal(history.qualifying.length, 0);
   assert.equal(history.final.length, 0);
 });
+
+/**
+ * Release-validation regression: the two public surfaces must report the same differential.
+ *
+ * The card's maximum is 100, so the game-1 rout and the no-opponent slot both contribute the CAP,
+ * exactly as the standings do. Reading the raw score gap here instead showed a spectator +740
+ * on the player page while the ranking table one screen away said +200 for the same player.
+ */
+test("the player history's differential is the capped margin, matching the ranking", () => {
+  const card = cardWith([
+    { id: "g1", gameNumber: 1, tableNumber: 1, playerOneId: "A001", playerTwoId: "A002", winnerId: "A001", scoreOne: 500, scoreTwo: 100, resultType: "WIN", calculatedDiff: 100 },
+    { id: "g2", gameNumber: 2, tableNumber: 1, playerOneId: "A001", playerTwoId: null, winnerId: "A001", scoreOne: 350, scoreTwo: 0, resultType: "WIN", calculatedDiff: 100 },
+    { id: "g3", gameNumber: 3, tableNumber: 1, playerOneId: "A001", playerTwoId: "A002", winnerId: "A002", scoreOne: 100, scoreTwo: 400, resultType: "WIN", calculatedDiff: 100 },
+  ]);
+
+  const { qualifying, qualifyingTotals } = playerHistory(card, "A001", { throughGame: 3, includeFinal: false });
+  assert.deepEqual(qualifying.map((row) => row.diff), [100, 100, -100], "each game contributes the cap, not the score gap");
+  assert.deepEqual(qualifying.map((row) => [row.ownScore, row.opponentScore]), [[500, 100], [350, 0], [100, 400]],
+    "the scores themselves are still what was played");
+  assert.equal(qualifyingTotals.diff, 100);
+
+  const standing = rankingAfterGame(card, 3).find((entry) => entry.id === "A001")!;
+  assert.equal(qualifyingTotals.diff, standing.diff, "the player page and the ranking agree");
+  assert.equal(qualifyingTotals.winPoints, standing.winPoints);
+});

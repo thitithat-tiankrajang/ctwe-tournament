@@ -4,9 +4,13 @@
     "src/domain/tournament/ranking.test.ts and the JUnit tests in RankingEngineVectorTest - so the",
     "TypeScript and Java implementations cannot drift apart without a test failing.",
     "",
-    "Order is WinPoint -> Diff -> Average Score, then head-to-head as a corrective pass inside a",
-    "group already tied on WinPoint AND Diff. Average Score = scoreFor / games; a bye counts on both",
-    "sides of that division, a penalty on neither.",
+    "The dimensions are WinPoint -> Diff -> Head-to-head -> Average Score. Head-to-head is sparse,",
+    "so Average Score builds a complete BASELINE ordering first and head-to-head is then applied as",
+    "a corrective pass inside each group tied on WinPoint AND Diff. That is implementation order,",
+    "not priority: inside such a group an available head-to-head result overrides Average Score,",
+    "and Average Score decides a pair only where head-to-head says nothing. Equal averages are NOT",
+    "an exemption. Average Score = scoreFor / games; a no-opponent game counts on both sides of",
+    "that division, a penalty on neither.",
     "",
     "A meeting with winner:null is a draw. A meeting with penalty:true is not a game and must be",
     "ignored entirely. 'aggregations' is the number of FULL head-to-head aggregations the engine is",
@@ -174,8 +178,8 @@
       "aggregations": 0
     },
     {
-      "name": "H2H example 1 - the top player has no candidate above them",
-      "$note": "A is already first, so nothing can be overtaken and A is never evaluated.",
+      "name": "H2H example 1 - the players A beat are already below A",
+      "$note": "A is first and both meetings are wins over players already beneath it, so no constraint is violated and nothing moves. Both meetings are still aggregated: the rule asks whether anyone below beat A, and only the aggregate answers that.",
       "players": [
         {
           "id": "A",
@@ -230,7 +234,7 @@
         "C",
         "D"
       ],
-      "aggregations": 0
+      "aggregations": 2
     },
     {
       "name": "H2H example 2a - A beat C and stops, because A did not beat B",
@@ -341,8 +345,8 @@
       "aggregations": 2
     },
     {
-      "name": "H2H example 2c - A beat B but not C, so C blocks the rise",
-      "$note": "The invariant: a win over someone higher is useless while an unbeaten player sits between.",
+      "name": "H2H example 2c - an uninvolved player between them cannot block the correction",
+      "$note": "OWNER-CONFIRMED (release validation): A beat B, so B must end below A even though C sits between them with no head-to-head relationship to either. C keeps the baseline order against everyone it has not played; it is simply carried up as B falls. The earlier expectation [B, C, A, D] encoded an adjacency-only walk, in which a win over a player two places above could never count at all.",
       "players": [
         {
           "id": "B",
@@ -384,16 +388,16 @@
         }
       ],
       "expectedOrder": [
-        "B",
         "C",
         "A",
+        "B",
         "D"
       ],
-      "aggregations": 0
+      "aggregations": 1
     },
     {
       "name": "H2H example 2d - a win over a lower player never lifts anyone",
-      "$note": "D is below A, so it is not a candidate. The A-D meeting exists in the data and is never aggregated - only the A-C pair ever becomes adjacent, so exactly one aggregation happens.",
+      "$note": "A beat C and D, both already below it, so the order is unchanged. Both meetings are aggregated because the rule is about every relationship inside the group, not only the pair that happens to be adjacent.",
       "players": [
         {
           "id": "B",
@@ -448,10 +452,10 @@
         "C",
         "D"
       ],
-      "aggregations": 1
+      "aggregations": 2
     },
     {
-      "name": "A player above with an EQUAL Average is not a candidate",
+      "name": "An EQUAL Average does not exempt a pair from head-to-head",
       "players": [
         {
           "id": "C",
@@ -482,8 +486,12 @@
         "A",
         "C"
       ],
-      "$orderNote": "A sorts first on the player-code fallback, not because H2H promoted it.",
-      "aggregations": 0
+      "$orderNote": "A and C are level on every figure, so the baseline cannot separate them — but A beat C, and head-to-head outranks Average Score, so A is placed above and the two no longer share a rank.",
+      "aggregations": 1,
+      "expectedDisplayRanks": {
+        "A": 1,
+        "C": 2
+      }
     },
     {
       "name": "Multiple meetings 2-2 on wins - aggregate Diff decides",
@@ -774,7 +782,7 @@
     },
     {
       "name": "A cycle terminates and is deterministic",
-      "$note": "1 beat 2, 2 beat 3, 3 beat 1. The rule is positional, so the base order decides.",
+      "$note": "1 beat 2, 2 beat 3, 3 beat 1: no ordering satisfies all three. The baseline decides, so the group's baseline leader 3 is placed first and the constraint pointing at it is abandoned; the two constraints that survive still hold (1 above 2). Deterministic, and led by the ordering the rules did establish.",
       "players": [
         {
           "id": "3",
@@ -825,9 +833,9 @@
         }
       ],
       "expectedOrder": [
-        "2",
         "3",
-        "1"
+        "1",
+        "2"
       ]
     },
     {
@@ -1334,6 +1342,257 @@
         "2": 24,
         "12": 25
       }
+    },
+    {
+      "name": "H2H example 3 - the loser falls below EVERY player who beat them",
+      "$note": "The owner's worked example, confirmed during release validation. Baseline order is A, D, C, B on Average Score. C beat A and B beat A; no other pair in the group has met. A therefore ends below both C and B, while every pair head-to-head cannot resolve keeps its baseline order: D stays above C, C stays above B.",
+      "players": [
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 100,
+          "scoreFor": 400,
+          "games": 1
+        },
+        {
+          "id": "D",
+          "winPoints": 4,
+          "diff": 100,
+          "scoreFor": 390,
+          "games": 1
+        },
+        {
+          "id": "C",
+          "winPoints": 4,
+          "diff": 100,
+          "scoreFor": 380,
+          "games": 1
+        },
+        {
+          "id": "B",
+          "winPoints": 4,
+          "diff": 100,
+          "scoreFor": 370,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "C",
+          "b": "A",
+          "winner": "C",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        },
+        {
+          "a": "B",
+          "b": "A",
+          "winner": "B",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "D",
+        "C",
+        "B",
+        "A"
+      ],
+      "expectedDisplayRanks": {
+        "A": 4,
+        "B": 3,
+        "C": 2,
+        "D": 1
+      },
+      "aggregations": 2
+    },
+    {
+      "name": "Priority 1 - head-to-head overrides a higher Average Score",
+      "$note": "Owner case 1. B's average is 500 to A's 200, and A still ranks first because A beat B.",
+      "players": [
+        {
+          "id": "A",
+          "winPoints": 6,
+          "diff": 100,
+          "scoreFor": 200,
+          "games": 1
+        },
+        {
+          "id": "B",
+          "winPoints": 6,
+          "diff": 100,
+          "scoreFor": 500,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "B",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "A",
+        "B"
+      ],
+      "expectedDisplayRanks": {
+        "A": 1,
+        "B": 2
+      },
+      "aggregations": 1
+    },
+    {
+      "name": "Priority 2 - an equal Average Score still consults head-to-head",
+      "$note": "Owner case 2. Identical figures, so only head-to-head can separate them, and it does.",
+      "players": [
+        {
+          "id": "A",
+          "winPoints": 6,
+          "diff": 100,
+          "scoreFor": 300,
+          "games": 1
+        },
+        {
+          "id": "B",
+          "winPoints": 6,
+          "diff": 100,
+          "scoreFor": 300,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "B",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "A",
+        "B"
+      ],
+      "expectedDisplayRanks": {
+        "A": 1,
+        "B": 2
+      },
+      "aggregations": 1
+    },
+    {
+      "name": "Priority 3 - with no head-to-head, Average Score decides",
+      "$note": "Owner case 3. They never met, so the baseline stands and the higher average leads.",
+      "players": [
+        {
+          "id": "A",
+          "winPoints": 6,
+          "diff": 100,
+          "scoreFor": 200,
+          "games": 1
+        },
+        {
+          "id": "B",
+          "winPoints": 6,
+          "diff": 100,
+          "scoreFor": 500,
+          "games": 1
+        }
+      ],
+      "meetings": [],
+      "expectedOrder": [
+        "B",
+        "A"
+      ],
+      "expectedDisplayRanks": {
+        "A": 2,
+        "B": 1
+      },
+      "aggregations": 0
+    },
+    {
+      "name": "Priority 4 - a different Diff is never overridden by head-to-head",
+      "$note": "Owner case 4. A beat B, but they are not in the same group: Diff is a higher dimension than head-to-head, so B's +100 beats A's +90 and no pass runs.",
+      "players": [
+        {
+          "id": "A",
+          "winPoints": 6,
+          "diff": 90,
+          "scoreFor": 500,
+          "games": 1
+        },
+        {
+          "id": "B",
+          "winPoints": 6,
+          "diff": 100,
+          "scoreFor": 200,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "B",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "B",
+        "A"
+      ],
+      "expectedDisplayRanks": {
+        "A": 2,
+        "B": 1
+      },
+      "aggregations": 0
+    },
+    {
+      "name": "Priority 5 - a different WinPoint is never overridden by head-to-head",
+      "$note": "Owner case 5. A beat B and has a far better Diff and Average, and still ranks second: WinPoint is the highest dimension and they never share a group.",
+      "players": [
+        {
+          "id": "A",
+          "winPoints": 4,
+          "diff": 500,
+          "scoreFor": 500,
+          "games": 1
+        },
+        {
+          "id": "B",
+          "winPoints": 6,
+          "diff": -100,
+          "scoreFor": 100,
+          "games": 1
+        }
+      ],
+      "meetings": [
+        {
+          "a": "A",
+          "b": "B",
+          "winner": "A",
+          "diff": 100,
+          "pointsA": 500,
+          "pointsB": 400
+        }
+      ],
+      "expectedOrder": [
+        "B",
+        "A"
+      ],
+      "expectedDisplayRanks": {
+        "A": 2,
+        "B": 1
+      },
+      "aggregations": 0
     }
   ]
 }
