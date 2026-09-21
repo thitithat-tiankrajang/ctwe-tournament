@@ -19,6 +19,37 @@ export function isVoidPairing(pairing: Pairing | undefined): boolean {
 }
 
 /**
+ * What a slot with no score is called, when "no score" is not the whole story.
+ *
+ * These live here, beside `isVoidPairing`, because the audience meets them on two surfaces — the
+ * public result table and the PDF export — and a Thai label written out twice is two statements of
+ * one fact, free to drift apart.
+ */
+export const WITHDRAWN_TEXT = "ถอนผล";
+export const VOIDED_TEXT = "ยกเลิกคู่";
+
+/**
+ * The word that replaces a score when "no score" is not the whole story — or null when the slot is
+ * an ordinary one and the caller should say what it always said.
+ *
+ * A withdrawn result and a voided slot both carry NULL scores, so any reading that asks
+ * "is it recorded?" first sends both down the same branch as a game nobody has played: the public
+ * table says รอผล and the PDF prints an em dash. A score the audience watched go up would silently
+ * become "not played yet", which is exactly what the force-commit confirmation promises the
+ * director will not happen. Every surface therefore asks THIS first.
+ *
+ * Void wins over withdrawn, and the two are reachable together in one force commit: results are
+ * destroyed before the emptied slot is voided, and voiding does not clear result_withdrawn_at.
+ * Such a row has nobody left to attribute a withdrawn score to, so naming the void explains the
+ * whole row where ถอนผล explains none of it.
+ */
+export function withheldResultText(pairing: Pairing): string | null {
+  if (isVoidPairing(pairing)) return VOIDED_TEXT;
+  if (pairing.resultWithdrawn === true) return WITHDRAWN_TEXT;
+  return null;
+}
+
+/**
  * Has this slot's result been entered?
  *
  * `!= null` on purpose: the API omits absent scores, so they arrive as `undefined` — but a null

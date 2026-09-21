@@ -261,6 +261,20 @@ public class PairingSessionService {
                 current.get(key).oneGibsonized(), current.get(key).twoGibsonized()));
         }
 
+        // Which slots did SCREENING empty, as opposed to the client rewriting them? The server
+        // answered that itself in the pass above — it located each held player's seat rather than
+        // trusting the request to say where they sat — so `origins` is causation, not a guess about
+        // which entry point the change set came from. UNSEATED holds a null game/table and names no
+        // slot. This is deliberately NOT derived from `slots` being empty or `screen` being
+        // non-empty: those correlate with the two UI modes today by accident of how the client
+        // builds a change set, and nothing in the contract keeps them correlated tomorrow.
+        Set<SlotKey> vacatedByScreening = new LinkedHashSet<>();
+        for (var origin : origins.values())
+            if (origin.game() != null && origin.table() != null)
+                vacatedByScreening.add(new SlotKey(origin.game(), origin.table()));
+        Set<SlotKey> namedByClient = new LinkedHashSet<>();
+        for (var wanted : request.slots()) namedByClient.add(new SlotKey(wanted.game(), wanted.table()));
+
         // ---- hard blocks ----
         for (var entry : current.entrySet()) {
             SlotKey key = entry.getKey();
@@ -277,6 +291,26 @@ public class PairingSessionService {
             // A recorded result stops an ordinary commit outright. Force can clear it — but only
             // when it is genuinely unwindable, which is the pre-check below, not a promise.
             if (before.resultType() != null) {
+                // Screening is never a route to destroying a result — not even with force. Holding a
+                // player is an operational judgement that they are absent; it must not double as an
+                // instruction to erase a game that was played. If this slot lost its occupant to the
+                // screening pass and the change set never names it, nobody has taken responsibility
+                // for the result sitting in it, so there is no consent to destroy — and force cannot
+                // manufacture consent that was never given.
+                //
+                // Naming the slot in `slots` is what taking responsibility looks like: the operator
+                // states the occupancy they want for a slot they can see is scored. That route stays
+                // open, and is the one place mode already uses.
+                if (vacatedByScreening.contains(key) && !namedByClient.contains(key)) {
+                    blocks.add(block("SCREENING_CANNOT_DESTROY_RESULT", key.game(), key.table(),
+                        "คู่ที่ " + key.table() + " เกม " + key.game()
+                            + " กรอกผลแล้ว — การพักผู้เล่นลบผลไม่ได้ ต้องแก้คู่นี้โดยตรงจึงจะลบผลได้"));
+                    // The force button must not be offered for a change set force cannot rescue, and
+                    // the result is NOT a removal candidate: listing it would tell the operator a
+                    // result is about to be erased when this commit cannot erase anything.
+                    forceAvailable = false;
+                    continue;
+                }
                 String reason = cards.unwindBlocker(cardId, key.game(), key.table());
                 if (!request.force())
                     blocks.add(block("HAS_RESULT", key.game(), key.table(),

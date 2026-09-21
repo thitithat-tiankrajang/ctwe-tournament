@@ -2,6 +2,7 @@ import { jsPDF } from "jspdf";
 import type { Pairing, Player, TournamentCard } from "@/domain/tournament/types";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import { pairingRowsForGame, resultRowsForGame } from "@/domain/tournament/documents";
+import { isVoidPairing, VOIDED_TEXT, withheldResultText } from "@/domain/tournament/pairing-slot";
 import { SARABUN_REGULAR_BASE64, SARABUN_SEMIBOLD_BASE64 } from "./sarabun-font";
 import {
   needsThaiClusterLayout,
@@ -335,15 +336,26 @@ function seatBadge(doc: Doc, x: number, top: number, seat: number | null) {
   text(doc, String(seat), x + 10, top + 27, { size: 10.5, bold: true, color: ACCENT, align: "center" });
 }
 
-function resultLabel(pairing: Pairing): string {
+export function resultLabel(pairing: Pairing): string {
+  // A void slot has no players on EITHER side, so the bye fallback would print "บาย พบ บาย" —
+  // a document claiming two byes met at one table. It is one abandoned pairing, and says so.
+  if (isVoidPairing(pairing)) return VOIDED_TEXT;
   return `${pairing.playerOneId ?? "บาย"} พบ ${pairing.playerTwoId ?? "บาย"}`;
 }
 
-function scoreText(pairing: Pairing): string {
+/**
+ * Same precedence as the on-screen result table, and through the same shared rule: a withdrawn or
+ * voided row has NULL scores, so an `isRecorded`-first reading printed "—" — a PDF handed to
+ * officials claiming the game had simply not been played.
+ */
+export function scoreText(pairing: Pairing): string {
+  const withheld = withheldResultText(pairing);
+  if (withheld) return withheld;
   return pairing.resultType === "PENALTY" ? "ลงดาบ" : isRecorded(pairing) ? `${pairing.scoreOne} - ${pairing.scoreTwo}` : "—";
 }
 
-function diffText(pairing: Pairing): string {
+export function diffText(pairing: Pairing): string {
+  if (withheldResultText(pairing)) return "";
   if (!isRecorded(pairing)) return "";
   if (pairing.resultType === "PENALTY") return `−${pairing.calculatedDiff ?? 0}`;
   if (pairing.resultType === "DRAW") return "เสมอ 0";

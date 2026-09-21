@@ -1,6 +1,7 @@
 "use client";
 
 import type { PlayerHistoryRow } from "@/domain/tournament/history";
+import { isVoidPairing, withheldResultText } from "@/domain/tournament/pairing-slot";
 import type { Pairing, Player, SlotLabel } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { ReportTable } from "@/ui/components/report-table";
@@ -119,10 +120,16 @@ export function SpectatorPairList({ pairings, players, mode, slotLabel, onOpenPl
             const recorded = isRecorded(pairing);
             const penalty = pairing.resultType === "PENALTY";
             const draw = pairing.resultType === "DRAW";
-            const pairDiff = !recorded ? null : penalty ? -(pairing.calculatedDiff ?? 0) : draw ? 0 : pairing.calculatedDiff ?? 0;
+            // Asked BEFORE `recorded`, because a withdrawn or voided slot also has NULL scores and
+            // would otherwise be reported as a game nobody has played. See withheldResultText.
+            const withheld = withheldResultText(pairing);
+            const voided = isVoidPairing(pairing);
+            const pairDiff = withheld || !recorded
+              ? null
+              : penalty ? -(pairing.calculatedDiff ?? 0) : draw ? 0 : pairing.calculatedDiff ?? 0;
             // A drawn pair already says so with a difference of 0; the word under it is the same
             // fact told twice.
-            const status = !recorded ? "รอผล" : penalty ? "ลงดาบ" : null;
+            const status = withheld ?? (!recorded ? "รอผล" : penalty ? "ลงดาบ" : null);
             // Banded by PAIR, not by row: shading the two competitors of one pair differently would
             // present them as two records rather than one contest.
             const band = index % 2 === 1 ? " is-alt" : "";
@@ -148,11 +155,13 @@ export function SpectatorPairList({ pairings, players, mode, slotLabel, onOpenPl
             />
                   </td>
                   <td className={won ? "spectator-cell--num spectator-cell--score is-won" : "spectator-cell--num spectator-cell--score"}>
-                    {playerId && recorded && !penalty ? score : "—"}
+                    {playerId && recorded && !withheld && !penalty ? score : "—"}
                   </td>
                   <td className="spectator-cell--num spectator-cell--diff">
                     {!playerId || pairDiff === null ? "—" : signed(penalty ? -(pairing.calculatedDiff ?? 0) : side === 1 ? pairDiff : -pairDiff)}
-                    {status && side === 1 && playerId && <span className="spectator-cell__status">{status}</span>}
+                    {/* A voided slot holds nobody on either side, so gating the status on playerId
+                        would hide the very word that explains why the row is empty. */}
+                    {status && side === 1 && (playerId || voided) && <span className="spectator-cell__status">{status}</span>}
                   </td>
                 </tr>
               );
