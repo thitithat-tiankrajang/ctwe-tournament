@@ -83,3 +83,19 @@ test("the public result table asks what is withheld before it asks what is recor
   assert.ok(statusAt > -1, "the result table still needs its waiting label");
   assert.ok(withheldAt < statusAt, "withheld must be decided before the waiting label is chosen");
 });
+
+test("the public result table signs the differential by the result, not by the seat", () => {
+  // calculatedDiff is a MAGNITUDE. Keying the sign off `side` credits seat 1 with a positive
+  // differential even when seat 2 won — every other pair — and contradicts both the standings and
+  // the player record, which sign by result (see playerHistory: W ? margin : -margin).
+  //
+  // Read from source for the same reason as the ordering check above: the bug is in which value
+  // the component chooses, and no pure helper sits between it and the cell.
+  const source = readFileSync(join(process.cwd(), "src/ui/components/spectator-report-lists.tsx"), "utf8");
+  const diffCell = source.slice(source.indexOf("spectator-cell--diff"), source.indexOf("spectator-cell__status"));
+
+  assert.match(diffCell, /won \? magnitude : -magnitude/,
+    "the winner takes the positive differential");
+  assert.doesNotMatch(diffCell, /side === 1 \? \w*[Dd]iff/,
+    "the sign must never be chosen by seat");
+});

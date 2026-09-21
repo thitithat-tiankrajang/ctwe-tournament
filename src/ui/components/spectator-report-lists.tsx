@@ -124,9 +124,7 @@ export function SpectatorPairList({ pairings, players, mode, slotLabel, onOpenPl
             // would otherwise be reported as a game nobody has played. See withheldResultText.
             const withheld = withheldResultText(pairing);
             const voided = isVoidPairing(pairing);
-            const pairDiff = withheld || !recorded
-              ? null
-              : penalty ? -(pairing.calculatedDiff ?? 0) : draw ? 0 : pairing.calculatedDiff ?? 0;
+            const magnitude = withheld || !recorded ? null : pairing.calculatedDiff ?? 0;
             // A drawn pair already says so with a difference of 0; the word under it is the same
             // fact told twice.
             const status = withheld ?? (!recorded ? "รอผล" : penalty ? "ลงดาบ" : null);
@@ -158,7 +156,13 @@ export function SpectatorPairList({ pairings, players, mode, slotLabel, onOpenPl
                     {playerId && recorded && !withheld && !penalty ? score : "—"}
                   </td>
                   <td className="spectator-cell--num spectator-cell--diff">
-                    {!playerId || pairDiff === null ? "—" : signed(penalty ? -(pairing.calculatedDiff ?? 0) : side === 1 ? pairDiff : -pairDiff)}
+                    {/* Signed by the RESULT, never by the seat. calculatedDiff is a magnitude, so
+                        keying the sign off `side` credited seat 1 with a positive differential even
+                        when seat 2 won — which is every other pair, and it contradicted both the
+                        standings and the player record one screen away. A penalty takes points off
+                        both players; a draw is 0 for both. */}
+                    {!playerId || magnitude === null ? "—"
+                      : signed(penalty ? -magnitude : draw ? 0 : won ? magnitude : -magnitude)}
                     {/* A voided slot holds nobody on either side, so gating the status on playerId
                         would hide the very word that explains why the row is empty. */}
                     {status && side === 1 && (playerId || voided) && <span className="spectator-cell__status">{status}</span>}
