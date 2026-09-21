@@ -122,7 +122,7 @@ public class TournamentCardService {
         try {
             card = jdbc.queryForObject("""
                 SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version,
-                       final_type, final_games, gibson_enabled, code_prefix, initial_pairing_rule
+                       final_type, final_games, gibson_enabled, code_prefix, slot_label, initial_pairing_rule
                 FROM tournament_cards WHERE id = ?
                 """, (rs, row) -> new CardRow(
                 rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
@@ -130,7 +130,8 @@ public class TournamentCardService {
                 RuntimeStage.valueOf(rs.getString("runtime_stage")), rs.getInt("current_game"),
                 rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
                 rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled"),
-                rs.getString("code_prefix"), initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
+                rs.getString("code_prefix"), rs.getString("slot_label"),
+                initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
@@ -165,7 +166,8 @@ public class TournamentCardService {
         var screeningPool = staffView ? loadScreeningPool(cardId, prefix) : List.<CardDtos.ScreeningHold>of();
         return new CardDtos.CardResponse(card.id(), tournamentId, card.name(), card.division(), card.status(), card.runtimeStage(),
             card.currentGame(), card.version(), games, card.initialPairingRule(), rules, players, tables, snapshots, audit,
-            card.finalType(), card.finalGames(), finalRound, card.gibsonEnabled(), card.createdAt(), prefix, screeningPool);
+            card.finalType(), card.finalGames(), finalRound, card.gibsonEnabled(), card.createdAt(), prefix,
+            card.slotLabel() == null ? "PAIR" : card.slotLabel(), screeningPool);
     }
 
     /** Open holds for the staff card payload, so the tool and the pre-generation warning ride SSE. */
@@ -261,12 +263,15 @@ public class TournamentCardService {
             : request.initialPairingRule();
         if (initialPairingRule == PairingRuleType.PAIR_RESULT)
             throw new IllegalArgumentException("PAIR_RESULT cannot be used for game 1");
+        // Absent means PAIR: every report in this system has been organised by pair since the first
+        // one, and a card that does not say otherwise keeps that.
+        String slotLabel = request.slotLabel() == null ? "PAIR" : request.slotLabel();
         UUID cardId = UUID.randomUUID();
         String codePrefix = nextCardPrefix(request.tournamentId());
         jdbc.update("""
-            INSERT INTO tournament_cards (id, tournament_id, name, division, number_of_games, status, runtime_stage, current_game, final_type, final_games, gibson_enabled, code_prefix, initial_pairing_rule)
-            VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PLAYER_REGISTRATION', 1, ?, ?, ?, ?, ?)
-            """, cardId, request.tournamentId(), request.name().trim(), request.division().trim(), request.numberOfGames(), finalType, finalGames, request.gibsonEnabled(), codePrefix, initialPairingRule.name());
+            INSERT INTO tournament_cards (id, tournament_id, name, division, number_of_games, status, runtime_stage, current_game, final_type, final_games, gibson_enabled, code_prefix, slot_label, initial_pairing_rule)
+            VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PLAYER_REGISTRATION', 1, ?, ?, ?, ?, ?, ?)
+            """, cardId, request.tournamentId(), request.name().trim(), request.division().trim(), request.numberOfGames(), finalType, finalGames, request.gibsonEnabled(), codePrefix, slotLabel, initialPairingRule.name());
         for (int game = 1; game <= request.numberOfGames(); game++) {
             jdbc.update("INSERT INTO games (card_id, game_number, status, max_diff) VALUES (?, ?, 'PENDING', ?)",
                 cardId, game, request.gameMaxDiffs().get(game - 1));
@@ -928,10 +933,10 @@ public class TournamentCardService {
         String resultType;
         int calculatedDiff = Math.min(Math.abs(scoreOne - scoreTwo), match.maxDiff());
         if (bye) {
-            // A bye is defined purely by shape — one player, one empty seat — with no record of WHY the
-            // seat is empty. It is a WIN for the lone player, but it contributes ZERO diff: nobody
-            // played, and this system's ranking leads with capped diff, so a hand-typed bye margin
-            // would reorder real standings on the strength of a game that never happened.
+            // A bye is defined purely by shape — one player, one empty seat — with no record of WHY
+            // the seat is empty. It is a WIN for the lone player, and it is scored like any other
+            // row: the ranking engine is given the submitted score and is told nothing about the
+            // empty seat, so no branch here may quietly rewrite what the director typed.
             boolean presentIsOne = match.oneId() != null;
             int presentScore = presentIsOne ? scoreOne : scoreTwo;
             int otherScore = presentIsOne ? scoreTwo : scoreOne;
@@ -944,10 +949,12 @@ public class TournamentCardService {
                 throw new IllegalArgumentException("คู่ที่ไม่มีคู่แข่ง (บาย) ต้องให้ผู้เล่นที่อยู่เป็นผู้ชนะด้วยแต้มมากกว่าศูนย์");
             winner = presentIsOne ? match.oneId() : match.twoId();
             resultType = "WIN";
-            // The empty seat always scores 0, and the margin never becomes an advantage.
+            // The empty seat always scores 0. The differential then follows the score that was
+            // actually entered, exactly as it does for a contested pair: the system does not invent
+            // the occupied player's score, so it must not overrule the margin that score produces.
             scoreOne = presentIsOne ? presentScore : 0;
             scoreTwo = presentIsOne ? 0 : presentScore;
-            calculatedDiff = 0;
+            calculatedDiff = Math.min(Math.abs(scoreOne - scoreTwo), match.maxDiff());
         } else {
             winner = draw ? null : scoreOne > scoreTwo ? match.oneId() : match.twoId();
             resultType = draw ? "DRAW" : "WIN";
@@ -1276,7 +1283,7 @@ public class TournamentCardService {
         String resultType;
         int calculatedDiff = Math.min(Math.abs(scoreOne - scoreTwo), match.maxDiff());
         if (bye) {
-            // Same rule as submitResult: a bye wins with zero diff regardless of the entered margin.
+            // Same rule as submitResult: the empty seat scores 0 and the entered margin stands.
             boolean presentIsOne = match.oneId() != null;
             int presentScore = presentIsOne ? scoreOne : scoreTwo;
             int otherScore = presentIsOne ? scoreTwo : scoreOne;
@@ -1286,7 +1293,7 @@ public class TournamentCardService {
             resultType = "WIN";
             scoreOne = presentIsOne ? presentScore : 0;
             scoreTwo = presentIsOne ? 0 : presentScore;
-            calculatedDiff = 0;
+            calculatedDiff = Math.min(Math.abs(scoreOne - scoreTwo), match.maxDiff());
         } else {
             winner = draw ? null : scoreOne > scoreTwo ? match.oneId() : match.twoId();
             resultType = draw ? "DRAW" : "WIN";
@@ -1296,10 +1303,14 @@ public class TournamentCardService {
         Object previous = existing ? previousResultAudit(match) : Map.of("matchId", matchId, "status", "UNRECORDED");
         saveResultColumns(cardId, key, winner, scoreOne, scoreTwo, resultType, calculatedDiff, actor);
         // Editing a published (snapshotted) result re-stamps that snapshot so viewers see a fresh
-        // "ผลเผยแพร่ล่าสุดเมื่อ ..." time for the corrected game.
-        if (match.snapshotNo() != null)
+        // "ผลเผยแพร่ล่าสุดเมื่อ ..." time for the corrected game. Snapshots are immutable by
+        // database trigger, and this is the one exception it recognises (V40) — what the snapshot
+        // COVERS still cannot be rewritten, only the moment it was last published.
+        if (match.snapshotNo() != null) {
+            jdbc.execute("SET LOCAL app.allow_snapshot_restamp = 'on'");
             jdbc.update("UPDATE pairing_snapshots SET confirmed_at = now() WHERE card_id = ? AND snapshot_no = ?",
                 cardId, match.snapshotNo());
+        }
         recalculateStandings(cardId);
         touch(cardId);
         publishPublic(cardId);
@@ -2170,13 +2181,14 @@ public class TournamentCardService {
         try {
             return jdbc.queryForObject("""
                 SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version,
-                       final_type, final_games, gibson_enabled, code_prefix, initial_pairing_rule
+                       final_type, final_games, gibson_enabled, code_prefix, slot_label, initial_pairing_rule
                 FROM tournament_cards WHERE id = ? FOR UPDATE
                 """, (rs, row) -> new CardRow(rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
                 rs.getInt("number_of_games"), CardStatus.valueOf(rs.getString("status")), RuntimeStage.valueOf(rs.getString("runtime_stage")),
                 rs.getInt("current_game"), rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
                 rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled"),
-                rs.getString("code_prefix"), initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
+                rs.getString("code_prefix"), rs.getString("slot_label"),
+                initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
@@ -2419,13 +2431,14 @@ public class TournamentCardService {
         try {
             card = jdbc.queryForObject("""
                 SELECT id, name, division, number_of_games, status, runtime_stage, current_game, created_at, version,
-                       final_type, final_games, gibson_enabled, code_prefix, initial_pairing_rule
+                       final_type, final_games, gibson_enabled, code_prefix, slot_label, initial_pairing_rule
                 FROM tournament_cards WHERE id = ?
                 """, (rs, row) -> new CardRow(rs.getObject("id", UUID.class), rs.getString("name"), rs.getString("division"),
                 rs.getInt("number_of_games"), CardStatus.valueOf(rs.getString("status")), RuntimeStage.valueOf(rs.getString("runtime_stage")),
                 rs.getInt("current_game"), rs.getTimestamp("created_at").toInstant(), rs.getLong("version"),
                 rs.getString("final_type"), rs.getInt("final_games"), rs.getBoolean("gibson_enabled"),
-                rs.getString("code_prefix"), initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
+                rs.getString("code_prefix"), rs.getString("slot_label"),
+                initialPairingRule(rs.getString("initial_pairing_rule"))), cardId);
         } catch (EmptyResultDataAccessException error) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tournament card not found");
         }
@@ -2637,7 +2650,7 @@ public class TournamentCardService {
         return false;
     }
 
-    private record CardRow(UUID id, String name, String division, int numberOfGames, CardStatus status, RuntimeStage runtimeStage, int currentGame, Instant createdAt, long version, String finalType, int finalGames, boolean gibsonEnabled, String codePrefix, PairingRuleType initialPairingRule) {}
+    private record CardRow(UUID id, String name, String division, int numberOfGames, CardStatus status, RuntimeStage runtimeStage, int currentGame, Instant createdAt, long version, String finalType, int finalGames, boolean gibsonEnabled, String codePrefix, String slotLabel, PairingRuleType initialPairingRule) {}
     private record PlayerAudit(int code, String firstName, String lastName, String school) {
         Map<String, String> asAuditValue() {
             return Map.of("id", pcode(code), "firstName", firstName, "lastName", lastName, "school", school);

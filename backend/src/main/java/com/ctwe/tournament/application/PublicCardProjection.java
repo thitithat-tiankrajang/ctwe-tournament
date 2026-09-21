@@ -62,6 +62,7 @@ public final class PublicCardProjection {
             source.currentGame(), publicVersion, source.games(), source.initialPairingRule(), List.of(), source.players(), List.of(),
             source.snapshots(), List.of(), source.finalType(), source.finalGames(),
             finalVisible ? source.finalRound() : null, source.gibsonEnabled(), source.createdAt(), source.codePrefix(),
+            source.slotLabel(),
             // screeningPool — dropped. A hold is an unconfirmed operational judgement about a named
             // minor; it has no public projection at all until it becomes a fact the audience can
             // legitimately see (a bye, a penalty, a termination).

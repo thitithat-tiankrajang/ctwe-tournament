@@ -27,7 +27,9 @@ public final class CardDtos {
         @Pattern(regexp = "NONE|CHAMPION|CHAMPION_AND_THIRD") String finalType,
         @Min(0) @Max(12) int finalGames,
         boolean gibsonEnabled,
-        PairingRuleType initialPairingRule
+        PairingRuleType initialPairingRule,
+        /** Which number the public reports name a slot by: PAIR or SEAT. Null means PAIR. */
+        @Pattern(regexp = "PAIR|SEAT") String slotLabel
     ) {}
 
     // Scores are stored as SMALLINT (V19); ±30000 leaves headroom under the ±32767 column limit.
@@ -265,6 +267,12 @@ public final class CardDtos {
         boolean gibsonEnabled,
         Instant createdAt,
         String codePrefix,
+        /**
+         * Which number the public reports name a slot by: {@code PAIR} or {@code SEAT}. Pair n holds
+         * seats 2n-1 and 2n, so the two are the same fact from opposite ends; the card picks the one
+         * its audience actually hears announced, and the viewer shows only that column.
+         */
+        String slotLabel,
         /**
          * Players currently held in the Screening Pool. Staff-only, and stripped by
          * {@code PublicCardProjection} exactly as {@code tables} and {@code audit} are — screening is
