@@ -142,7 +142,7 @@ class SnapshotLiveEquivalenceTest {
             new CardDtos.CardResponse(id, TOURNAMENT, "การ์ดใหม่", "รุ่นเดียว", CardStatus.DRAFT,
                 RuntimeStage.PLAYER_REGISTRATION, 1, 0L, List.of(), PairingRuleType.RANDOM,
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                "NONE", 0, null, false, Instant.parse("2026-08-01T03:00:00Z"), "P", List.of()))));
+                "NONE", 0, null, false, Instant.parse("2026-08-01T03:00:00Z"), "P", "PAIR", List.of()))));
 
         Equivalence result = assertEquivalent(database);
 

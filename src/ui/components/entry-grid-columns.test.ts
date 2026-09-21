@@ -126,7 +126,7 @@ test("a grouped TEXT field matches the other side without tokenising the term", 
 const TWO_SEAT_GRIDS = [
   { file: "result-entry-grid.tsx", fields: { code: ["id1", "id2"], name: ["name1", "name2"], school: ["school1", "school2"] } },
   { file: "standings-grids.tsx", fields: { code: ["id1", "id2"], name: ["name1", "name2"], school: ["school1", "school2"] } },
-  { file: "card-overview.tsx", fields: { code: ["id1", "id2"], name: ["name1", "name2"] } },
+  { file: "card-overview-view.tsx", fields: { code: ["id1", "id2"], name: ["name1", "name2"] } },
 ];
 
 /** Every column definition line declaring `key`. One column per line is the house style here. */
@@ -241,7 +241,7 @@ test("persisted grid widths are versioned past the 220px layout", () => {
 test("no grid carries a per-table mirror exception any more", () => {
   // `entry-grid--entry` existed only to except this one table from the mirror ink. One shared rule
   // replaced it, so the class and every selector naming it must be gone, not merely unused.
-  for (const file of ["result-entry-grid.tsx", "card-overview.tsx", "standings-grids.tsx"])
+  for (const file of ["result-entry-grid.tsx", "card-overview-view.tsx", "standings-grids.tsx"])
     assert.ok(!readFileSync(join(process.cwd(), "src", "ui", "components", file), "utf8").includes("entry-grid--entry"),
       `${file} still names the removed carve-out class`);
   assert.ok(!readFileSync(GLOBALS, "utf8").includes("entry-grid--entry"), "the carve-out rules are still in the CSS");

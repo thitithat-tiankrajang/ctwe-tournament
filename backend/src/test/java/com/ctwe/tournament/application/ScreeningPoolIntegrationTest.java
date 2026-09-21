@@ -58,7 +58,7 @@ class ScreeningPoolIntegrationTest {
         for (int i = 0; i < games; i++) maxDiffs.add(500);
         for (int i = 1; i < games; i++) edges.add(PairingRuleType.SWISS);
         var request = new CardDtos.CreateCardRequest(tournamentId(), "SP-" + UUID.randomUUID(), "DIV",
-            games, edges, maxDiffs, "NONE", 0, false, PairingRuleType.RANDOM);
+            games, edges, maxDiffs, "NONE", 0, false, PairingRuleType.RANDOM, null);
         return service.create(request, ACTOR).id();
     }
 
@@ -273,7 +273,7 @@ class ScreeningPoolIntegrationTest {
      * would reorder real standings on the strength of a game that never happened.
      */
     @Test
-    void aByeWinsWithZeroDiffWhateverMarginIsTyped() {
+    void aNoOpponentSlotWinsAndKeepsTheEnteredMargin() {
         UUID cardId = cardInResultCollection(7);   // odd field -> exactly one bye
 
         int[] bye = jdbc.queryForObject("""
@@ -285,10 +285,19 @@ class ScreeningPoolIntegrationTest {
 
         service.submitResult(cardId, "g1t" + bye[0], new CardDtos.ResultRequest(300, 0, false), ACTOR);
 
+        // OWNER-CONFIRMED RULE (release validation): a no-opponent slot is processed as the score
+        // that was actually entered — the empty seat is 0 and the differential is the ordinary
+        // margin, capped by the game maximum like any other pair. The system does not invent the
+        // occupied player's score, so it must not overrule the margin that score produces.
+        //
+        // This REVERSES the previous implementation rule ("a game nobody played must not move a
+        // tie-break", which forced the differential to 0). That earlier rule was deliberate, so the
+        // reversal is recorded here rather than silently dropped: the owner now decides the entered
+        // score, and the entered score decides the margin.
         Integer diff = jdbc.queryForObject(
             "SELECT calculated_diff FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",
             Integer.class, cardId, bye[0]);
-        assertThat(diff).as("a game nobody played must not move a tie-break").isZero();
+        assertThat(diff).as("the entered margin is kept (300 - 0, under the 500 game maximum)").isEqualTo(300);
 
         Integer winner = jdbc.queryForObject(
             "SELECT winner FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?",

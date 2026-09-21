@@ -355,7 +355,7 @@ class SnapshotLiveEquivalenceDatabaseTest {
         List<Integer> maxDiffs = new ArrayList<>();
         for (int i = 0; i < games; i++) maxDiffs.add(500);
         UUID id = service.create(new CardDtos.CreateCardRequest(tournamentId, "PhaseC-" + UUID.randomUUID(),
-            "DIV", games, edgeRules, maxDiffs, finalType, finalGames, false, initial), "ittest").id();
+            "DIV", games, edgeRules, maxDiffs, finalType, finalGames, false, initial, null), "ittest").id();
 
         // tournament_cards.created_at defaults to now(), which in PostgreSQL is the TRANSACTION's
         // start time — every card this test creates would otherwise share one timestamp. The live

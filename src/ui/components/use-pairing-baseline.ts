@@ -32,7 +32,44 @@ export interface Conflict {
   two: string | null;
 }
 
+/** Occupancy the operator wants for a slot, keyed game:table. Absent means "unchanged". */
+export type Staged = Map<string, { one: string | null; two: string | null }>;
+
 const key = (game: number, table: number) => `${game}:${table}`;
+
+/** A slot's occupants as a side-independent identity. An empty seat sorts as its own value. */
+const facing = (slot: { one: string | null; two: string | null }) =>
+  [slot.one ?? "", slot.two ?? ""].sort().join("\u0000");
+
+/**
+ * Which staged slots actually differ from the board the tool opened on.
+ *
+ * Staging records every seat the operator wrote, including the ones they wrote back. A table that has
+ * travelled A-vs-B → A-vs-C → A-vs-B is not a change, and calling it one costs the operator twice:
+ * once reading a diff padded with rows that do nothing, and once trusting the count above the list.
+ * So the question is never "was this slot touched" but "does it hold something different now".
+ *
+ * Sameness is the PAIRING, not the side: A-vs-B and B-vs-A are the same table to the operator, and
+ * the side a name landed on while they worked is an artefact of the gesture, not an intent. Comparing
+ * unordered means an accidental flip mid-repair costs nothing and commits nothing.
+ *
+ * A conflicted slot is excluded for the same reason it is excluded from the commit: its staged change
+ * is suspended until the operator re-bases it, so presenting it as an edit would be a lie.
+ */
+export function editedSlots(
+  baseline: SlotRow[],
+  staged: Staged,
+  conflicts: { has: (key: string) => boolean },
+): Set<string> {
+  const edited = new Set<string>();
+  for (const slot of baseline) {
+    const at = key(slot.game, slot.table);
+    const want = staged.get(at);
+    if (!want || conflicts.has(at)) continue;
+    if (facing(want) !== facing(slot)) edited.add(at);
+  }
+  return edited;
+}
 
 /** Slots of the live, unpublished pairing — the only rows this tool may touch. */
 export function liveSlots(card: TournamentCard): SlotRow[] {

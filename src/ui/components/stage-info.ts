@@ -13,6 +13,14 @@ export const stageLabels: Record<RuntimeStage, string> = {
   FINAL_PUBLISHED: "ประกาศผลแล้ว",
 };
 
+/** Staff-only wording for the operational header. Public surfaces keep stageLabels unchanged. */
+export const operatorStageLabels: Record<RuntimeStage, string> = {
+  ...stageLabels,
+  TABLE_PAIRING: "รอสร้างคู่แข่งขัน",
+  PAIRING_PREVIEW: "ตรวจและยืนยันคู่แข่งขัน",
+  RESULT_REVIEW: "ตรวจผลก่อนเผยแพร่",
+};
+
 export type StageTone = BadgeTone;
 
 /**

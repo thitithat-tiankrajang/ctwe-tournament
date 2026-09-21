@@ -8,7 +8,7 @@ import { useForm } from "react-hook-form";
 import { useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { createCardSchema, type CreateCardForm } from "@/domain/tournament/schemas";
-import type { FinalType, PairingRuleType, Tournament } from "@/domain/tournament/types";
+import type { FinalType, PairingRuleType, SlotLabel, Tournament } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 import { Panel } from "@/ui/components/page";
 
@@ -38,6 +38,7 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
   const [finalType, setFinalType] = useState<FinalType>("NONE");
   const [finalGames, setFinalGames] = useState<number>(1);
   const [gibsonEnabled, setGibsonEnabled] = useState(false);
+  const [slotLabel, setSlotLabel] = useState<SlotLabel>("PAIR");
   const [tournamentId, setTournamentId] = useState(fixedTournament?.id ?? "");
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<CreateCardForm>({
     resolver: zodResolver(createCardSchema),
@@ -69,7 +70,7 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
     const tour = resolveTournament();
     if (!tour) { await appDialog.alert("กรุณาเลือกรายการแข่งขัน (tournament) ก่อนสร้างการ์ด"); return; }
     try {
-      const id = await createCard({ tournamentId: tour.id, ...values, initialPairingRule, rules, gameMaxDiffs, finalType, finalGames: finalType === "NONE" ? 0 : finalGames, gibsonEnabled });
+      const id = await createCard({ tournamentId: tour.id, ...values, initialPairingRule, rules, gameMaxDiffs, finalType, finalGames: finalType === "NONE" ? 0 : finalGames, gibsonEnabled, slotLabel });
       onCreated(id, tour);
     } catch (error) {
       await appDialog.alert(error instanceof Error ? error.message : "ไม่สามารถสร้างการ์ดได้", "สร้างการ์ดไม่สำเร็จ", true);
@@ -143,6 +144,15 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
                 onChange={(event) => setFinalGames(Math.max(1, Math.min(12, Number(event.target.value) || 1)))} />
             </div>
           )}
+          <div className="form-field">
+            <label className="form-label" htmlFor="cf-slot-label">หมายเลขที่ประกาศให้ผู้ชม</label>
+            <select className="select" id="cf-slot-label" value={slotLabel}
+              onChange={(event) => setSlotLabel(event.target.value as SlotLabel)}>
+              <option value="PAIR">คู่ที่ — ผู้ชมเห็นเลขคู่</option>
+              <option value="SEAT">ที่นั่ง — ผู้ชมเห็นเลขที่นั่ง</option>
+            </select>
+            <small className="muted">คู่ที่ 1 คือที่นั่ง 1 กับ 2 — เป็นเลขเดียวกันคนละวิธีนับ เลือกแบบที่งานนี้ประกาศจริง แล้วหน้าผู้ชมจะแสดงคอลัมน์นั้นอย่างเดียว (เปลี่ยนทีหลังไม่ได้)</small>
+          </div>
           <div className="form-field" style={{ gridColumn: "1 / -1" }}>
             <label className="form-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
               <input type="checkbox" checked={gibsonEnabled} onChange={(event) => setGibsonEnabled(event.target.checked)} />

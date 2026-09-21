@@ -104,6 +104,7 @@
     "rules" : [ ],
     "runtimeStage" : "FINAL_PUBLISHED",
     "screeningPool" : [ ],
+    "slotLabel" : "PAIR",
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -266,6 +267,7 @@
     "rules" : [ ],
     "runtimeStage" : "RESULT_COLLECTION",
     "screeningPool" : [ ],
+    "slotLabel" : "PAIR",
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],
@@ -513,6 +515,7 @@
     "rules" : [ ],
     "runtimeStage" : "PLAYER_REGISTRATION",
     "screeningPool" : [ ],
+    "slotLabel" : "PAIR",
     "snapshots" : [ ],
     "status" : "DRAFT",
     "tables" : [ ],
@@ -622,6 +625,7 @@
     "rules" : [ ],
     "runtimeStage" : "FINAL_PUBLISHED",
     "screeningPool" : [ ],
+    "slotLabel" : "PAIR",
     "snapshots" : [ {
       "confirmedAt" : "2026-08-01T11:00:00Z",
       "gameNumbers" : [ 1, 2 ],

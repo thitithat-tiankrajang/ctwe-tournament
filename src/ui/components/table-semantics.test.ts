@@ -61,7 +61,11 @@ test("every <table> has an accessible name", () => {
         from = at + 6;
         const close = line.indexOf(">", at);
         const tag = close === -1 ? line.slice(at) : line.slice(at, close + 1);
-        const named = tag.includes("aria-label") || tag.includes("aria-labelledby") || tag.includes("<caption");
+        // A table hidden from assistive technology needs no name: it is not in the tree to be
+        // announced. ReportTable uses one to draw the header of a table whose real header row
+        // lives, unseen, with the data.
+        const named = tag.includes("aria-label") || tag.includes("aria-labelledby")
+          || tag.includes("<caption") || tag.includes('aria-hidden="true"');
         if (!named) unnamed.push(`${rel(path)}:${i + 1}`);
       }
     });

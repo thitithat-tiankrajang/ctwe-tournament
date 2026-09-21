@@ -91,7 +91,7 @@ class SseDeliveryProofDatabaseTest {
         for (int i = 0; i < 3; i++) maxDiffs.add(500);
         cardId = service.create(new CardDtos.CreateCardRequest(tournamentId, "P4-SSE-" + SUFFIX, "GATE",
             3, List.of(PairingRuleType.SWISS, PairingRuleType.SWISS), maxDiffs,
-            "NONE", 0, false, PairingRuleType.RANDOM), WRITER).id();
+            "NONE", 0, false, PairingRuleType.RANDOM, null), WRITER).id();
 
         List<CardDtos.BulkPlayerEntry> players = new ArrayList<>();
         for (int i = 0; i < PLAYERS; i++)

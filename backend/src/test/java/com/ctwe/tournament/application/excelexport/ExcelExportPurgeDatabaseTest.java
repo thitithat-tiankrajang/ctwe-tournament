@@ -68,7 +68,7 @@ class ExcelExportPurgeDatabaseTest {
             tournamentId, TOURNAMENT_NAME, "purge-" + tournamentId.toString().substring(0, 8));
         UUID cardId = cards.create(new CardDtos.CreateCardRequest(tournamentId, "การ์ดทดสอบ",
             "DIV", 3, List.of(PairingRuleType.SWISS, PairingRuleType.SWISS), new ArrayList<>(List.of(500, 500, 500)),
-            "NONE", 0, false, PairingRuleType.RANDOM), "ittest").id();
+            "NONE", 0, false, PairingRuleType.RANDOM, null), "ittest").id();
         List<CardDtos.BulkPlayerEntry> players = new ArrayList<>();
         for (int i = 0; i < 8; i++) players.add(new CardDtos.BulkPlayerEntry("ชื่อ" + i, "สกุล" + i, "โรงเรียน" + i));
         cards.addPlayersBulk(cardId, players, "ittest");

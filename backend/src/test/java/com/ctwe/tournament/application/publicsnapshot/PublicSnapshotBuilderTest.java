@@ -234,7 +234,7 @@ class PublicSnapshotBuilderTest {
                 RuntimeStage.PLAYER_REGISTRATION, 1, 0L, List.of(),
                 com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                "NONE", 0, null, false, java.time.Instant.parse("2026-08-01T03:00:00Z"), "P", List.of()))));
+                "NONE", 0, null, false, java.time.Instant.parse("2026-08-01T03:00:00Z"), "P", "PAIR", List.of()))));
 
         PublicSnapshotPayload payload = builder.build(tournamentId).payload();
 

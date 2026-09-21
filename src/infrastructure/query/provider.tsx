@@ -1,6 +1,8 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { usePathname } from "next/navigation";
+import { isSpectatorRoute } from "@/application/tournament/spectator-route";
 import { useEffect, useState, type ReactNode } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { useBackOfficeSessionGuard } from "@/application/tournament/use-session-guard";
@@ -22,8 +24,14 @@ export function AppProviders({ children }: { children: ReactNode }) {
       },
     },
   }));
+  const pathname = usePathname();
+  return <QueryClientProvider client={queryClient}>{isSpectatorRoute(pathname)
+    ? children : <OperationalBootstrap>{children}</OperationalBootstrap>}</QueryClientProvider>;
+}
+
+function OperationalBootstrap({ children }: { children: ReactNode }) {
   const load = useTournamentStore((state) => state.load);
   useBackOfficeSessionGuard();
   useEffect(() => { void load(); }, [load]);
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  return children;
 }

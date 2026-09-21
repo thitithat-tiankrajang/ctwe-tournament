@@ -1,5 +1,6 @@
 "use client";
 
+import { isSpectatorRoute } from "@/application/tournament/spectator-route";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import {
@@ -29,6 +30,7 @@ import { readActiveTournament, selectShellCards, shellCardsSignature, useTournam
 import { useCardSync } from "@/application/tournament/use-card-sync";
 import { useFullCard } from "@/application/tournament/use-full-card";
 import { usePublicSync } from "@/application/tournament/use-public-sync";
+import { useCardWakeReconciliation } from "@/application/tournament/use-card-wake-reconciliation";
 import { hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
 import { foldersAfterOpening } from "@/ui/layout/card-folders";
 import { NavLinkIcon } from "@/ui/layout/nav-pending";
@@ -38,6 +40,7 @@ import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { Toaster } from "@/ui/components/toaster";
 import { GlobalDialogHost } from "@/ui/components/global-dialog-host";
+import { CardWakeReconciliationNotice } from "@/ui/components/card-wake-reconciliation-notice";
 
 const OPENED_KEY = "ctwe.openedCards";
 /** Historical key name; the stored "1" now simply means "sidebar expanded". */
@@ -140,10 +143,21 @@ function CardSyncHost({ cardId, isStaff, loading }: { cardId?: string; isStaff: 
   usePublicSync(loading ? undefined : cardId, !isStaff);
   // P3-B: the authenticated list is summaries now, so an opened card must be fetched in full once.
   useFullCard(cardId, !loading && isStaff);
+  useCardWakeReconciliation(cardId, !loading && isStaff);
   return null;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  if (isSpectatorRoute(pathname)) return (
+    <div className="app-shell spectator-shell"><div className="app-main app-main--standalone-overview">
+      <main className="content">{children}</main>
+    </div><Toaster /><GlobalDialogHost /></div>
+  );
+  return <OperationalShell>{children}</OperationalShell>;
+}
+
+function OperationalShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams<{ id?: string }>();
@@ -422,6 +436,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
           </div>
         </div>
+        <CardWakeReconciliationNotice cardId={isStaff ? id : undefined} />
         <main className="content">{children}</main>
         {operator && (
           <nav className="mobile-nav" aria-label="เมนูมือถือ">

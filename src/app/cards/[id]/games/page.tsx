@@ -26,7 +26,22 @@ import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
 import { OverrideEditor } from "@/ui/components/override-editor";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
 import { SelectMenu } from "@/ui/components/select-menu";
-import { stageLabels } from "@/ui/components/stage-info";
+import { operatorStageLabels } from "@/ui/components/stage-info";
+
+function OperationsStatus({ reviewing, blockLabel, allComplete }: { reviewing: boolean; blockLabel: string; allComplete: boolean }) {
+  const state = reviewing
+    ? { tone: "warning" as const, label: "ตรวจผลก่อนเผยแพร่", detail: "ผลยังไม่ขึ้นหน้าภาพรวม" }
+    : allComplete
+      ? { tone: "success" as const, label: "กรอกผลครบแล้ว", detail: "พร้อมให้ผู้อำนวยการตรวจผล" }
+      : { tone: "info" as const, label: "กำลังรวบรวมผล", detail: "บันทึกผลได้ทีละคู่" };
+  return (
+    <div className="operator-state-strip" role="status" aria-label="สถานะการดำเนินงาน">
+      <Badge tone={state.tone}>{state.label}</Badge>
+      <strong>{blockLabel}</strong>
+      <span>{state.detail}</span>
+    </div>
+  );
+}
 
 /** Non-active view: ranking per game (window-slide); click a player row to see their history. */
 function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
@@ -56,7 +71,7 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
           <RankingGrid ranked={ranked} storageKey={`${card.id}:games:ranking`} resetKey={String(selected)} onRowClick={(player) => setSelectedId(player.id)} activeId={selectedId} />
         </Panel>
       ) : (
-        <Panel><EmptyState icon={<Gamepad2 size={25} />} title="ยังไม่มีอันดับที่เผยแพร่" description="อันดับและประวัติการเล่นจะปรากฏที่นี่หลังผู้อำนวยการ Publish ผลเกมแรก" /></Panel>
+        <Panel><EmptyState icon={<Gamepad2 size={25} />} title="ยังไม่มีอันดับที่เผยแพร่" description="อันดับและประวัติการเล่นจะปรากฏที่นี่หลังผู้อำนวยการเผยแพร่ผลเกมแรก" /></Panel>
       )}
 
       {canEdit && games.length > 0 && (() => {
@@ -68,7 +83,7 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
         return (
           <Panel
             title="แก้ไขผลเกมที่เผยแพร่แล้ว"
-            description="ผู้อำนวยการแก้ผลย้อนหลังได้ทุกเวลา · standing คำนวณใหม่อัตโนมัติ แต่ pairing เดิมไม่ถูกจับใหม่ (ถ้าต้องการจับคู่ใหม่ ใช้ Un-pairing ที่หน้าโต๊ะแข่งขัน)"
+            description="ผู้อำนวยการแก้ผลย้อนหลังได้ทุกเวลา · ระบบคำนวณอันดับใหม่ แต่ไม่จับคู่เดิมใหม่ (ถ้าต้องการจับคู่ใหม่ ให้ยกเลิกการจับคู่ที่หน้าโต๊ะแข่งขัน)"
             actions={<div className="overview-game-select"><label htmlFor="override-game">เลือกเกม</label><select id="override-game" className="select" value={target} onChange={(event) => setEditGame(Number(event.target.value))}>{games.map((g) => <option key={g} value={g}>เกม {g}</option>)}</select></div>}
           >
             <div className="notice notice--warning" style={{ margin: 18 }}><LockKeyhole size={18} /><p><strong>การแก้ผลที่เผยแพร่แล้วมีผลต่ออันดับทันที</strong><span>ระบบบันทึก audit log ทุกครั้ง · กรอกคะแนนแล้วกด Enter เพื่อบันทึก</span></p></div>
@@ -233,30 +248,30 @@ export default function GamesPage() {
   };
 
   const saveResult = (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => submitResult(id, pairing.id, scoreOne, scoreTwo, editExisting);
-  const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เปิดหน้า review ไม่สำเร็จ", "เปิด Review ไม่สำเร็จ", true); } finally { setBusy(false); } };
+  const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เปิดหน้าตรวจผลไม่สำเร็จ", "เปิดตรวจผลไม่สำเร็จ", true); } finally { setBusy(false); } };
   const publishDestinationPairing = async () => {
     if (destinationPairingPublished) return;
     if (!destinationPairingComplete) {
-      await appDialog.alert(`Pairing เกม ${activeGames[1]} ยังสร้างไม่ครบ ต้องกรอกผล เกม ${activeGames[0]} ให้ครบก่อน`, "ยัง Publish Pairing ไม่ได้", true);
+      await appDialog.alert(`คู่แข่งขันเกม ${activeGames[1]} ยังสร้างไม่ครบ ต้องกรอกผลเกม ${activeGames[0]} ให้ครบก่อน`, "ยังเผยแพร่คู่แข่งขันไม่ได้", true);
       return;
     }
-    if (!await appDialog.confirm(`Publish Pairing เกม ${activeGames[1]} ให้ Viewer เห็นตอนนี้?`, {
-      title: "เผยแพร่ Pairing",
-      confirmLabel: "Publish Pairing",
+    if (!await appDialog.confirm(`เผยแพร่คู่แข่งขันเกม ${activeGames[1]} ให้ผู้ชมเห็นตอนนี้?`, {
+      title: "เผยแพร่คู่แข่งขัน",
+      confirmLabel: "เผยแพร่คู่แข่งขัน",
     })) return;
     setBusy(true);
     try { await publishNextPairing(id); }
-    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "Publish Pairing ไม่สำเร็จ", "Publish Pairing ไม่สำเร็จ", true); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เผยแพร่คู่แข่งขันไม่สำเร็จ", "เผยแพร่คู่แข่งขันไม่สำเร็จ", true); }
     finally { setBusy(false); }
   };
   const publish = async () => {
-    if (!await appDialog.confirm(`ยืนยัน Publish ผล ${blockLabel}? ข้อมูลจะขึ้นหน้าภาพรวมและแก้ไขไม่ได้`, {
+    if (!await appDialog.confirm(`เผยแพร่ผล ${blockLabel}? ข้อมูลจะขึ้นหน้าภาพรวม และการแก้ไขภายหลังต้องใช้โหมดแก้ผลย้อนหลัง`, {
       title: "เผยแพร่ผลการแข่งขัน",
-      confirmLabel: "Finish & Publish",
+      confirmLabel: "เผยแพร่ผล",
     })) return;
     const finalGame = activeGames[activeGames.length - 1] === card.games.length; setBusy(true);
     try { await publishResults(id); navigate(finalGame ? `/cards/${id}` : `/cards/${id}/tables`); }
-    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "Publish ผลไม่สำเร็จ", "Publish ผลไม่สำเร็จ", true); } finally { setBusy(false); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เผยแพร่ผลไม่สำเร็จ", "เผยแพร่ผลไม่สำเร็จ", true); } finally { setBusy(false); }
   };
   // Director edit-pairing during result collection. The swap verifies the password itself, so a
   // wrong one returns 403 + BAD_PASSWORD from that request rather than from a pre-flight.
@@ -337,32 +352,33 @@ export default function GamesPage() {
       onPublish={() => publishFinal(id)} />;
   }
 
-  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${stageLabels[card.runtimeStage]}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} canEdit={isDirector} onOverride={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onRevokePenalty={withdrawPenalty} /></>;
+  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${operatorStageLabels[card.runtimeStage]}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} canEdit={isDirector} onOverride={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onRevokePenalty={withdrawPenalty} /></>;
 
   return (
     <>
       <PageHeader
         className="results-entry-header"
         eyebrow={`${card.name} · ${blockLabel}`}
-        title={reviewing ? "Review ผลการแข่งขัน" : "กรอกผลการแข่งขัน"}
-        description={reviewing ? "ตรวจคะแนน ผลชนะ/เสมอ และ diff ก่อน Publish" : pairResultBlock ? "กรอกเกมต้นทางก่อน ระบบจะสร้างคู่ผู้ชนะและคู่ผู้แพ้ในเกมถัดไปให้กรอกต่อในหน้าเดียวกัน" : "พิมพ์คะแนนในตารางแล้วกด Enter หรือปุ่มบันทึกในแถวนั้น"}
+        title={reviewing ? "ตรวจผลการแข่งขัน" : "กรอกผลการแข่งขัน"}
+        description={reviewing ? "ตรวจคะแนนก่อนเผยแพร่" : pairResultBlock ? "กรอกผลเกมต้นทาง แล้วตรวจคู่เกมถัดไปในหน้านี้" : "กรอกคะแนนแล้วกด Enter หรือเซฟในแถว"}
         actions={canManageTournament(auth) && (resultCollection
           ? <div className="page-actions">
               {pairResultBlock && !destinationPairingPublished && (
                 <Button variant="secondary" disabled={busy || !destinationPairingComplete} onClick={() => void publishDestinationPairing()}
                   title={destinationPairingComplete ? `เผยแพร่ Pairing เกม ${activeGames[1]} ไปยังหน้าภาพรวม` : `ต้องให้ Pairing เกม ${activeGames[1]} สร้างครบก่อน`}>
-                  <Megaphone size={16} />Publish Pairing เกม {activeGames[1]}
+                  <Megaphone size={16} />เผยแพร่คู่แข่งขัน เกม {activeGames[1]}
                 </Button>
               )}
-              <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />Review ผล <ArrowRight size={16} /></Button>
+              <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />ตรวจผล <ArrowRight size={16} /></Button>
             </div>
-          : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{navPending ? <LoaderCircle className="loading-spinner" size={16} /> : activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}Finish & Publish</Button></div>)}
+          : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{navPending ? <LoaderCircle className="loading-spinner" size={16} /> : activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}เผยแพร่ผล</Button></div>)}
       />
+      <OperationsStatus reviewing={reviewing} blockLabel={blockLabel} allComplete={allComplete} />
       {!isDirector && resultCollection && allComplete && (
-        <div className="notice notice--success"><CheckCircle2 size={18} /><p><strong>กรอกผล{blockLabel}ครบทุกคู่แล้ว</strong><span>รอผู้อำนวยการตรวจสอบ (Review) และเผยแพร่ผล — แก้ไขคะแนนได้จนกว่าจะ Publish</span></p></div>
+        <div className="notice notice--success"><CheckCircle2 size={18} /><p><strong>กรอกผล{blockLabel}ครบทุกคู่แล้ว</strong><span>รอผู้อำนวยการตรวจผลและเผยแพร่ — แก้ไขคะแนนได้ก่อนเผยแพร่</span></p></div>
       )}
       {!isDirector && reviewing && (
-        <div className="notice notice--info"><Eye size={18} /><p><strong>ผู้อำนวยการกำลัง Review ผล{blockLabel}</strong><span>ผลจะขึ้นหน้าภาพรวมทันทีที่ Publish</span></p></div>
+        <div className="notice notice--info"><Eye size={18} /><p><strong>ผู้อำนวยการกำลังตรวจผล{blockLabel}</strong><span>ผลจะขึ้นหน้าภาพรวมทันทีที่เผยแพร่</span></p></div>
       )}
       {isDirector && resultCollection && selectableBlocks.length > 1 && (
         <div className="entry-toolbar director-game-toolbar">
@@ -412,38 +428,38 @@ export default function GamesPage() {
           const publishTitle = !sourceComplete
             ? `ต้องกรอกผล เกม ${activeGames[0]} ให้ครบก่อน`
             : !destinationPairingComplete
-              ? `Pairing เกม ${gameNumber} ยังสร้างไม่ครบ`
-              : `เผยแพร่ Pairing เกม ${gameNumber} ไปยังหน้าภาพรวม`;
+              ? `คู่แข่งขันเกม ${gameNumber} ยังสร้างไม่ครบ`
+              : `เผยแพร่คู่แข่งขันเกม ${gameNumber} ไปยังหน้าภาพรวม`;
           const pairingEdit = isDirector
             ? isDestination
               ? {
                   onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password),
                   swapDisabled: !destinationHasPlayers,
-                  swapTitle: destinationHasPlayers ? "สลับผู้เล่นใน Pairing เกมปลายทางที่ยังไม่กรอกผล" : "ยังไม่มีผู้เล่นใน Pairing เกมปลายทางให้สลับ",
+                  swapTitle: destinationHasPlayers ? "สลับผู้เล่นในคู่แข่งขันเกมปลายทางที่ยังไม่กรอกผล" : "ยังไม่มีผู้เล่นในคู่แข่งขันเกมปลายทางให้สลับ",
                   onPublish: destinationPairingPublished ? undefined : publishDestinationPairing,
                   publishDisabled: busy || !destinationPairingComplete,
-                  publishLabel: `Publish Pairing เกม ${gameNumber}`,
+                  publishLabel: `เผยแพร่คู่แข่งขันเกม ${gameNumber}`,
                   publishTitle,
                 }
               : gameNumber === card.currentGame
                 ? { onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password), onUnpair: onUnpairing }
                 : undefined
             : undefined;
-          if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`เกม ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยัน pairing เกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
-          return <Panel key={gameNumber} title={`กรอกผล เกม ${gameNumber}`} description={`โครงสร้างแบบ Excel · กรอกแล้วกด Enter หรือปุ่มเซฟ · Win +2 / Draw +1 / Loss +0 · Max diff ${maxDiff}`} actions={<Badge tone={completed === liveSlots.length ? "success" : "warning"}>{completed}/{liveSlots.length} คู่</Badge>}>
+          if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`เกม ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยันคู่แข่งขันเกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
+          return <Panel key={gameNumber} title={`กรอกผล เกม ${gameNumber}`} description={`บันทึกแล้ว ${completed}/${liveSlots.length} คู่ · Max diff ${maxDiff}`} actions={<Badge tone={completed === liveSlots.length ? "success" : "warning"}>{completed}/{liveSlots.length} คู่</Badge>}>
             <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} pairingEdit={pairingEdit} />
           </Panel>;
         })}
       </> : (
         <>{activeGames.map((gameNumber) => {
           const gamePairings = pairingsForGame(gameNumber); const maxDiff = maxDiffForGame(gameNumber);
-          return <Panel key={gameNumber} title={`Review เกม ${gameNumber}`} description={`${gamePairings.length} คู่ · Maximum Difference ${maxDiff}`}>
+          return <Panel key={gameNumber} title={`ตรวจผล เกม ${gameNumber}`} description={`${gamePairings.length} คู่ · ผลต่างสูงสุด ${maxDiff}`}>
             <ResultViewGrid pairings={gamePairings} players={playerMap} storageKey={`${id}:review:${gameNumber}`} />
           </Panel>;
         })}</>
       )}
       {viewingCurrent && latestActivePairings.length > 0 && (
-        <Panel title={`Pairing เกม ${latestActiveGame}`} description="คู่แข่งขันของเกมที่กำลังกรอกผล">
+        <Panel title={`คู่แข่งขันเกม ${latestActiveGame}`} description="คู่แข่งขันของเกมที่กำลังกรอกผล">
           <PairingGrid pairings={latestActivePairings} players={playerMap} storageKey={`${id}:games:current-pairing`} />
         </Panel>
       )}

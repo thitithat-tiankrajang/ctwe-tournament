@@ -42,9 +42,13 @@ class PublicSnapshotGoldenTest {
      * <p>The fixture now feeds a NON-EMPTY pool and the golden records an empty one, so this file
      * pins the stripping itself. A published snapshot is permanent — a hold that leaked into one
      * could never be withdrawn from the record.
+     *
+     * <p>Repinned again for V39: the card gained {@code slotLabel}, saying whether its public reports
+     * name a slot by pair or by seat. The regenerated golden was audited line by line — four added
+     * {@code "slotLabel" : "PAIR"} lines and nothing else; no line removed, no existing value changed.
      */
     private static final String EXPECTED_CHECKSUM =
-        "sha256-fe1d0681d074480fe6b2b90d7dbf2f7c08d0356699605aff4ec9b1a5f0097572";
+        "sha256-465fe3e923a3371644db16d43286618c40f4ec90cc4fd3126a64770b1cc574f9";
 
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final TournamentCardService cards = mock(TournamentCardService.class);

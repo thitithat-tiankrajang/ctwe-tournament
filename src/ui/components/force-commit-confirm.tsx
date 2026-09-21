@@ -68,7 +68,7 @@ export function ForceCommitConfirm({ results, players, busy, onCancel, onConfirm
         <ul className="force-confirm__list">
           {results.map((doomed) => (
             <li key={`${doomed.game}-${doomed.table}`}>
-              <span className="force-confirm__slot">เกม {doomed.game} · โต๊ะ {doomed.table}</span>
+              <span className="force-confirm__slot">เกม {doomed.game} · คู่ที่ {doomed.table}</span>
               <span className="force-confirm__players">
                 {name(doomed.playerOne)} {doomed.scoreOne ?? "—"} : {doomed.scoreTwo ?? "—"} {name(doomed.playerTwo)}
               </span>

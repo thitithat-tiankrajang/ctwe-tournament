@@ -561,7 +561,7 @@ class SnapshotRetractionDatabaseTest {
         List<Integer> maxDiffs = new ArrayList<>(List.of(500, 500, 500));
         return service.create(new CardDtos.CreateCardRequest(tournamentId, "PhaseF-" + UUID.randomUUID(),
             "DIV", 3, List.of(PairingRuleType.SWISS, PairingRuleType.SWISS), maxDiffs,
-            "NONE", 0, false, PairingRuleType.RANDOM), "ittest").id();
+            "NONE", 0, false, PairingRuleType.RANDOM, null), "ittest").id();
     }
 
     private UUID finishedCard() {

@@ -314,6 +314,20 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .results-entry-header > div:first-child { flex: 1 1 auto; min-width: 0; }
 .results-entry-header .page-description { max-width: none; width: 100%; }
 .results-entry-header > .page-actions { flex: 0 1 auto; }
+.operator-state-strip {
+  align-items: center;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: -6px 0 14px;
+  padding: 7px 10px;
+}
+.operator-state-strip strong { color: var(--ink); font-size: 13px; }
+.operator-state-strip > span { font-size: 12px; }
 .cards-page-header, .overview-page-header {
   background: linear-gradient(100deg, var(--blue-soft) 0%, rgba(234, 241, 253, .35) 48%, var(--surface) 100%);
   border: 1px solid #c8d5e8;
@@ -1088,6 +1102,7 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 /* P4 concurrent-draft warning: the "from X to Y" line inside the acknowledgement dialog. */
 .entry-conflict-scores { font-size: 14px; margin: 0; }
 .entry-conflict-scores strong { white-space: nowrap; }
+.entry-conflict-explanation { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 10px 0 0; }
 .workflow-notice { align-items: center; }
 .workflow-notice > a { margin-left: auto; }
 /* D15/UX-F3: a publish announces itself here instead of switching the viewer's screen for them. */
@@ -1485,32 +1500,34 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 
 /* Both panels are .confirm-dialog underneath — the app's one modal shell — with a width override
    and a scrolling body. Only the size and the inner layout are new. */
-.pairing-tool { display: flex; flex-direction: column; max-height: 92vh; width: min(1180px, 96vw); }
-.pairing-tool--narrow { width: min(460px, 96vw); }
-.pairing-tool > header { grid-template-columns: 1fr auto; }
+.pairing-tool { display: flex; flex-direction: column; height: 92vh; width: min(1180px, 96vw); }
+.pairing-tool--narrow { height: auto; width: min(460px, 96vw); }
+.pairing-tool > header { flex: 0 0 auto; grid-template-columns: 1fr auto; }
 .pairing-tool__eyebrow { color: var(--yellow-dark); font-size: var(--text-xs); font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
 .pairing-tool > header h2 { font-size: 18px; margin: 1px 0 0; }
 
-.pairing-tool__cols { display: grid; gap: 16px; grid-template-columns: 1.45fr 1fr; min-height: 0; overflow-y: auto; padding: 15px 16px; }
-.pairing-tool__col { min-width: 0; }
+.pairing-tool__cols { display: grid; flex: 1 1 auto; gap: 16px; grid-template-columns: 1.45fr 1fr; min-height: 0; overflow: hidden; padding: 15px 16px; }
+.pairing-tool__col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.pairing-tool__col--scroll { overflow-y: auto; }
+.pairing-tool__col--split { overflow: hidden; }
 .pairing-tool__h { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .06em; margin: 0 0 8px; text-transform: uppercase; }
 .pairing-tool__h + .pairing-tool__h { margin-top: 16px; }
 
-.pairing-tool__slots { display: flex; flex-direction: column; gap: 4px; list-style: none; margin: 0; max-height: 52vh; overflow-y: auto; padding: 0; }
+.pairing-tool__slots { display: flex; flex: 1 1 auto; flex-direction: column; gap: 4px; list-style: none; margin: 0; min-height: 0; overflow-y: auto; padding: 0; }
 .pairing-tool__slot { align-items: center; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--border-strong); display: flex; gap: 10px; padding: 6px 9px; }
 /* State is carried by form as well as colour: a stripe plus a text tag, so it survives a colour-blind
    operator and a washed-out projector alike. */
 .pairing-tool__slot.is-empty { background: var(--yellow-soft); border-left-color: var(--yellow-dark); }
 .pairing-tool__slot.is-locked { background: var(--green-soft); border-left-color: var(--green); }
 .pairing-tool__slot.is-void { background: var(--surface-sunken); border-left-color: var(--muted); color: var(--muted); }
-.pairing-tool__no { color: var(--muted); flex: 0 0 60px; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.pairing-tool__no { color: var(--muted); flex: 0 0 72px; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .pairing-tool__pair { align-items: center; display: flex; flex: 1 1 auto; gap: 8px; min-width: 0; }
 .pairing-tool__vs { color: var(--muted); flex: 0 0 auto; font-size: var(--text-sm); }
 .pairing-tool__tag { color: var(--muted); flex: 0 0 auto; font-size: var(--text-sm); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 
 /* Presence, filters and place mode (P3). */
 .pairing-tool__presence { align-items: center; background: var(--blue-soft); border-bottom: 1px solid var(--border); color: var(--blue-dark); display: flex; font-size: var(--text-sm); gap: 8px; margin: 0; padding: 8px 16px; }
-.pairing-tool__filters { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
+.pairing-tool__filters { align-items: baseline; display: flex; flex: 0 0 auto; gap: 12px; justify-content: space-between; }
 .pairing-tool__toggle { display: flex; flex: 0 0 auto; }
 .pairing-tool__toggle button { background: var(--surface); border: 1px solid var(--border-control); color: var(--muted); cursor: pointer; font-size: var(--text-sm); font-weight: 700; padding: 3px 10px; }
 .pairing-tool__toggle button + button { border-left: 0; }
@@ -1521,30 +1538,67 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .pairing-tool__conflict { align-items: center; color: var(--red-dark); display: flex; flex: 0 0 auto; font-size: var(--text-sm); gap: 8px; }
 .pairing-tool__conflict button { background: var(--surface); border: 1px solid var(--red-border); color: var(--red-dark); cursor: pointer; font-size: var(--text-sm); padding: 2px 8px; }
 
-.pairing-tool__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.pairing-tool__chip { background: var(--surface); border: 1px dashed var(--border-control); cursor: pointer; font-size: 13px; padding: 5px 10px; }
-.pairing-tool__chip.is-held, .pairing-tool__hold--btn.is-held { border-style: solid; box-shadow: 0 0 0 2px var(--blue); }
-.pairing-tool__hold--btn { cursor: pointer; display: block; text-align: left; width: 100%; }
 .pairing-tool__seat--btn { background: none; font: inherit; text-align: left; }
 /* A valid destination while someone is in hand — outlined, not merely coloured, so it reads at a
    glance on a projector and to an operator who cannot rely on hue. */
 .pairing-tool__seat--btn.is-target { border-color: var(--blue); border-style: dashed; }
+.pairing-tool__seat--btn.is-held { background: var(--blue-soft); border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
 .pairing-tool__seat--btn:disabled { cursor: not-allowed; opacity: .6; }
 
 .pairing-tool__seat { align-items: center; border: 1px solid transparent; cursor: pointer; display: flex; flex: 1 1 0; gap: 6px; min-width: 0; padding: 3px 6px; }
 .pairing-tool__seat.is-selected { background: var(--yellow-soft); border-color: var(--yellow-dark); }
 .pairing-tool__seat.is-locked { cursor: not-allowed; opacity: .6; }
 .pairing-tool__code { font-variant-numeric: tabular-nums; font-weight: 700; }
-.pairing-tool__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pairing-tool__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The school earns its place on a repair screen: two competitors with the same given name are
+   told apart by where they came from, not by their code. */
+.pairing-tool__school { color: var(--muted); flex: 1 1 0; font-size: var(--text-sm); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pairing-tool__empty { color: var(--muted); flex: 1 1 0; font-size: var(--text-sm); }
 
 .pairing-tool__hold { background: var(--yellow-soft); border: 1px solid var(--yellow-border); margin-bottom: 6px; padding: 7px 9px; }
+.pairing-tool__hold.is-held { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
+/* A pool player put into a pair reads as resolved, not waiting — and their row offers the one way
+   back out. */
+.pairing-tool__hold.is-seated { background: var(--green-soft); border-color: var(--green); }
+.pairing-tool__hold-action { align-items: center; background: var(--surface); border: 1px solid var(--border-control); cursor: pointer; display: inline-flex; font: inherit; font-size: var(--text-sm); font-weight: 700; gap: 5px; margin-top: 7px; padding: 4px 10px; }
+.pairing-tool__hold-action:hover { background: var(--surface-hover); }
+.pairing-tool__hold-action[aria-pressed="true"] { background: var(--blue-soft); border-color: var(--blue); color: var(--blue-dark); }
+.pairing-tool__hold-action.is-recall { border-color: var(--green); color: var(--green-dark); }
 .pairing-tool__hold-top { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px; }
 .pairing-tool__hold-ctx { color: var(--muted); font-size: var(--text-sm); margin: 3px 0 0; }
 .pairing-tool__reason-tag { color: var(--yellow-dark); font-size: var(--text-sm); font-weight: 800; letter-spacing: .06em; margin-left: auto; text-transform: uppercase; }
 .pairing-tool__reasons { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
 .pairing-tool__reason { align-items: center; cursor: pointer; display: inline-flex; font-size: 13px; gap: 5px; }
 .pairing-tool__hint { color: var(--muted); flex: 1 1 auto; font-size: var(--text-sm); }
+
+/* The pick list: every competitor on the board, one per row, worst problems first. A grid rather
+   than free-flowing text so the eye can run straight down the seat column. */
+.pairing-tool__roster { display: flex; flex-direction: column; gap: 3px; list-style: none; margin: 0; padding: 0; }
+.pairing-tool__row { align-items: center; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--border-strong); cursor: pointer; display: grid; font: inherit; gap: 8px; grid-template-columns: 34px 62px minmax(0, 1fr) minmax(0, 1.1fr) auto; padding: 5px 8px; text-align: left; width: 100%; }
+.pairing-tool__row:hover { background: var(--surface-hover); }
+.pairing-tool__row.is-lonely { background: var(--yellow-soft); border-left-color: var(--yellow-dark); }
+.pairing-tool__row.is-unseated { background: var(--red-soft); border-left-color: var(--red); }
+.pairing-tool__row.is-held { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
+.pairing-tool__row:disabled { cursor: not-allowed; opacity: .55; }
+.pairing-tool__row-seat { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 800; text-align: right; }
+.pairing-tool__pool { display: flex; flex-direction: column; }
+
+/* Two panels sharing one column: drag the bar to re-split it, or collapse either to its header. */
+.split-stack { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.split-stack.is-dragging { cursor: row-resize; user-select: none; }
+.split-stack__pane { display: flex; flex-direction: column; min-height: 0; }
+.split-stack__head { align-items: center; background: var(--surface-sunken); border: 1px solid var(--border); cursor: pointer; display: flex; flex: 0 0 auto; gap: 6px; padding: 6px 9px; text-align: left; width: 100%; }
+.split-stack__head:hover { background: var(--surface-hover); }
+.split-stack__head .pairing-tool__h { margin: 0; }
+.split-stack__chevron { color: var(--muted); flex: 0 0 auto; transition: transform .12s ease; }
+.split-stack__pane.is-collapsed .split-stack__chevron { transform: rotate(-90deg); }
+.split-stack__body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 0 0; }
+.split-stack__bar { align-items: center; cursor: row-resize; display: flex; flex: 0 0 auto; height: 14px; justify-content: center; touch-action: none; }
+.split-stack__bar[aria-disabled="true"] { cursor: default; }
+.split-stack__bar:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.split-stack__grip { background: var(--border-strong); height: 3px; width: 46px; }
+.split-stack__bar:hover .split-stack__grip, .split-stack.is-dragging .split-stack__grip { background: var(--blue); }
+.split-stack__bar[aria-disabled="true"] .split-stack__grip { background: var(--border); }
 
 /* Shown before generating a pairing while anyone is held: re-seating them afterwards needs a
    regenerate, which stops being possible once any result is entered. */
@@ -1585,3 +1639,1106 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .force-confirm__meta { color: var(--muted); font-size: var(--text-sm); }
 .force-confirm > .form-label { display: block; margin: 0; padding: 12px 16px 4px; }
 .force-confirm > .input, .force-confirm > .fresh-secret-input { margin: 0 16px; width: calc(100% - 32px); }
+
+/* ================================================================================================
+   PUBLIC SPECTATOR VISUAL SYSTEM
+   ------------------------------------------------------------------------------------------------
+   One product, one scale. Everything below is scoped to `.spectator-shell`, so the operational
+   workspaces (director, staff, admin) keep their own denser table-first chrome untouched.
+
+   The scale is a TOKEN SCALE, not per-component font sizes: the Player Participation page is the
+   reference, and every other public screen reads the same steps. Changing the density of the whole
+   spectator experience is therefore an edit to this one block, not a hunt through the stylesheet.
+
+   Sizes are named for their JOB, and the type tokens are spelled `--text-sp-*` on purpose — the
+   stylesheet guard in globals.test.ts resolves any `--text-*` token, so the 11px reading floor
+   stays enforceable across everything here.
+
+   Corners: the product's square geometry is set globally by `* { border-radius: 0 !important }`
+   near the top of this file. Nothing here tries to opt out of it.
+   ============================================================================================== */
+.spectator-shell {
+  /* Type. One step per job; no component invents its own size. */
+  --text-sp-micro: 12px;    /* figure labels, cut-off pills */
+  --text-sp-meta: 13px;     /* secondary metadata, status pills, captions */
+  --text-sp-body: 14px;     /* body copy, list rows */
+  --text-sp-lead: 15px;     /* emphasised body: scores, primary row text */
+  --text-sp-title: 16px;    /* section titles */
+  --text-sp-strong: 17px;   /* opponent name, result score */
+  --text-sp-name: 19px;     /* the player this page is about */
+  --text-sp-display: 26px;  /* current game, seat, rank — the three numbers people walk on */
+
+  /* Space. Four steps plus one surface rhythm. */
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 10px;
+  --sp-4: 14px;
+  --sp-5: 18px;
+  --sp-pad-x: 14px;
+  --sp-pad-y: 12px;
+  --sp-stack: 10px;         /* gap between two stacked surfaces */
+
+  /* Surfaces. Navy identifies, white informs, warm grey holds them apart. */
+  --sp-navy: #1d2938;
+  --sp-navy-soft: #26354a;
+  --sp-navy-line: rgba(222, 235, 255, .16);
+  --sp-navy-chip: #31435c;
+  --sp-on-navy: #f4f8ff;
+  --sp-on-navy-meta: #d5e1f2;
+  --sp-on-navy-muted: #b7c7dc;
+  --sp-on-navy-accent: #9fc5ff;
+  --sp-code: #315db3;
+  --sp-canvas: #f6f8fc;
+  --sp-tint: #f2f6fd;
+  --sp-line: #dce4ee;
+  --sp-shadow: 0 5px 16px rgba(31, 55, 85, .07);
+  --sp-pos: #7de0b1;
+  --sp-neg: #ffaaa7;
+
+  /* Reading width. Public content is centred, never stretched to the monitor. */
+  --sp-width: 720px;
+  --sp-width-wide: 1060px;
+  /* The page gutter, owned here so the full-bleed navy chrome can cancel it EXACTLY. When the two
+     disagree by even a pixel the phone gets a horizontal scrollbar. */
+  --sp-gutter: clamp(12px, 2vw, 24px);
+
+  background: var(--sp-canvas);
+}
+.spectator-shell > .app-main { margin-left: 0; }
+.spectator-shell .content {
+  background: var(--sp-canvas);
+  max-width: var(--sp-width-wide);
+  padding: 16px var(--sp-gutter) 28px;
+}
+/* Reading surfaces (find, search results, one player) stay narrow; the tabular reports get the
+   wider cap because a pairing table is genuinely wide information. */
+.spectator-shell .content:has(.spectator-find),
+.spectator-shell .content:has(.spectator-identity),
+.spectator-shell .content:has(.spectator-complete) { max-width: var(--sp-width); }
+
+.spectator-freshness {
+  align-items: center;
+  background: var(--yellow-soft);
+  border-left: 3px solid var(--yellow);
+  color: var(--yellow-on-soft);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-sp-meta);
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-stack);
+  padding: 6px 9px;
+}
+.spectator-freshness button { background: none; border: 0; color: inherit; cursor: pointer; font-size: inherit; font-weight: 800; padding: 0; text-decoration: underline; }
+
+/* ---- Back navigation ------------------------------------------------------------------------
+   On a player page the back action IS the header: a full-bleed navy bar that the identity block
+   continues, so the top of the screen reads as one piece of chrome rather than two. */
+/* fit-content by default, so the long "all divisions of <tournament>" label must be allowed to
+   ellipsize rather than push the page sideways on a 320px phone. */
+.spectator-shell .tour-card-back { display: inline-flex; font-size: var(--text-sp-body); margin-bottom: var(--sp-3); max-width: 100%; }
+/* Every public page that has a back action wears the same navy bar, so a spectator moving between
+   a player and a division report stays inside one piece of chrome. */
+.spectator-shell .content:has(> .tour-card-back) { padding-top: 0; }
+.spectator-shell .content > .tour-card-back {
+  align-items: center;
+  background: var(--sp-navy);
+  color: #dbe8fb;
+  display: flex;
+  font-weight: 700;
+  gap: var(--sp-2);
+  margin: 0 calc(-1 * var(--sp-gutter)) var(--sp-4);
+  max-width: none;
+  padding: 11px var(--sp-gutter) 9px;
+  width: calc(100% + 2 * var(--sp-gutter));
+}
+.spectator-shell .content > .tour-card-back:hover { background: var(--sp-navy-soft); text-decoration: none; }
+.spectator-shell .content > .tour-card-back svg { color: var(--sp-on-navy-accent); }
+
+@media (min-width: 769px) {
+  /* A full-bleed navy bar is chrome on a phone and a second page header on a desktop, where it
+     welded the report to the top of the window. Above the phone breakpoint it goes back to being
+     what it is: a back link, with room to breathe under it. */
+  .spectator-shell .content:has(> .tour-card-back) { padding-top: var(--sp-4); }
+  .spectator-shell .content > .tour-card-back {
+    background: none;
+    color: var(--blue);
+    margin: 0 0 var(--sp-4);
+    padding: 0;
+    width: fit-content;
+  }
+  .spectator-shell .content > .tour-card-back:hover { background: none; text-decoration: underline; }
+  .spectator-shell .content > .tour-card-back svg { color: var(--blue); }
+}
+
+/* ---- Player identity ------------------------------------------------------------------------- */
+.spectator-identity {
+  background: var(--sp-navy);
+  color: var(--sp-on-navy);
+  margin-bottom: var(--sp-stack);
+  padding: var(--sp-pad-y) var(--sp-pad-x) var(--sp-4);
+}
+.spectator-shell .content:has(.spectator-identity) > .spectator-identity {
+  box-shadow: 0 6px 14px rgba(20, 31, 45, .12);
+  margin: 0 calc(-1 * var(--sp-gutter)) var(--sp-4);
+  padding: var(--sp-3) var(--sp-gutter) var(--sp-4);
+  width: calc(100% + 2 * var(--sp-gutter));
+}
+.spectator-identity__primary { align-items: center; display: grid; gap: var(--sp-3); grid-template-columns: minmax(72px, 84px) minmax(0, 1fr); }
+.spectator-identity__code {
+  align-items: center;
+  background: var(--sp-code);
+  color: #fff;
+  display: flex;
+  font-size: var(--text-sp-strong);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  justify-content: center;
+  letter-spacing: .02em;
+  min-height: 50px;
+  padding: var(--sp-2) var(--sp-2);
+}
+.spectator-identity__details { display: grid; gap: 3px; min-width: 0; }
+.spectator-identity__name { color: #f6f9ff; font-size: var(--text-sp-name); font-weight: 700; line-height: 1.25; margin: 0; min-width: 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-identity__meta-line { align-items: baseline; display: flex; flex-wrap: wrap; gap: 2px var(--sp-2); min-width: 0; }
+.spectator-identity__meta { color: var(--sp-on-navy-meta); font-size: var(--text-sp-body); line-height: 1.35; margin: 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-identity__separator { color: #8fa6c3; font-size: var(--text-sp-meta); }
+.spectator-identity__division { color: var(--sp-on-navy-muted); font-size: var(--text-sp-meta); line-height: 1.35; margin: 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-identity__flag { align-items: center; color: var(--sp-on-navy-muted); display: flex; font-size: var(--text-sp-meta); gap: var(--sp-2); margin: var(--sp-3) 0 0; }
+
+/* ---- Completed player record -----------------------------------------------------------------
+   One authoritative summary replaces the live-action stack only after the projection proves the
+   record final. The same element is reused in capture mode; capture changes chrome, never facts. */
+.spectator-player--complete > .tour-card-back {
+  align-items: center;
+  background: var(--sp-navy);
+  color: #dbe8fb;
+  display: flex;
+  font-size: var(--text-sp-body);
+  font-weight: 700;
+  gap: var(--sp-2);
+  margin: -16px calc(-1 * var(--sp-gutter)) var(--sp-4);
+  max-width: none;
+  padding: 11px var(--sp-gutter) 9px;
+  width: calc(100% + 2 * var(--sp-gutter));
+}
+.spectator-player--complete > .tour-card-back svg { color: var(--sp-on-navy-accent); }
+.spectator-complete {
+  background: var(--sp-navy);
+  border-top: 3px solid var(--blue);
+  box-shadow: var(--sp-shadow);
+  color: var(--sp-on-navy);
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-4) var(--sp-pad-x);
+}
+.spectator-complete__event { align-items: start; display: flex; gap: var(--sp-3); justify-content: space-between; }
+.spectator-complete__event p { margin: 0; }
+.spectator-complete__event-name { color: #fff; font-size: var(--text-sp-title); font-weight: 800; line-height: 1.3; overflow-wrap: break-word; word-break: normal; }
+.spectator-complete__division { color: var(--sp-on-navy-muted); font-size: var(--text-sp-meta); line-height: 1.35; margin-top: 2px !important; }
+.spectator-complete__official { background: var(--sp-navy-chip); color: #dbe7f8; flex: 0 0 auto; font-size: var(--text-sp-micro); font-weight: 700; padding: 5px 8px; }
+.spectator-complete__identity { align-items: center; border-top: 1px solid var(--sp-navy-line); display: grid; gap: var(--sp-3); grid-template-columns: 64px minmax(0, 1fr); margin-top: var(--sp-3); padding-top: var(--sp-3); }
+.spectator-complete__code { align-items: center; background: var(--sp-code); color: #fff; display: flex; font-size: var(--text-sp-title); font-variant-numeric: tabular-nums; font-weight: 800; justify-content: center; min-height: 46px; padding: var(--sp-2); }
+.spectator-complete__identity h1 { color: #fff; font-size: var(--text-sp-name); font-weight: 800; line-height: 1.25; margin: 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-complete__identity p { color: var(--sp-on-navy-meta); font-size: var(--text-sp-body); line-height: 1.35; margin: 2px 0 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-complete__achievement { border-top: 1px solid var(--sp-navy-line); display: grid; gap: var(--sp-4); grid-template-columns: minmax(88px, auto) minmax(0, 1fr); margin-top: var(--sp-3); padding-top: var(--sp-3); }
+.spectator-complete__placing { border-right: 1px solid var(--sp-navy-line); display: grid; padding-right: var(--sp-4); }
+.spectator-complete__placing span { color: var(--sp-on-navy-muted); font-size: var(--text-sp-meta); font-weight: 700; }
+.spectator-complete__placing strong { color: #fff; font-size: 42px; font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: -.03em; line-height: 1; margin-top: 3px; }
+.spectator-complete__record { min-width: 0; }
+.spectator-complete__record > p { color: var(--sp-on-navy-meta); font-size: var(--text-sp-meta); font-weight: 700; margin: 0 0 var(--sp-2); overflow-wrap: break-word; word-break: normal; }
+.spectator-complete__record dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.spectator-complete__record dl > div { min-width: 0; padding: 0 var(--sp-2); text-align: center; }
+.spectator-complete__record dl > div:first-child { padding-left: 0; }
+.spectator-complete__record dl > div + div { border-left: 1px solid var(--sp-navy-line); }
+.spectator-complete__record dt { color: var(--sp-on-navy-muted); font-size: var(--text-sp-micro); line-height: 1.25; }
+.spectator-complete__record dd { color: #fff; font-size: var(--text-sp-strong); font-variant-numeric: tabular-nums; font-weight: 800; margin: 2px 0 0; }
+.spectator-complete__record dd.is-positive { color: var(--sp-pos); }
+.spectator-complete__record dd.is-negative { color: var(--sp-neg); }
+.spectator-capture-toggle {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--sp-line);
+  color: var(--blue-dark);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--text-sp-body);
+  font-weight: 700;
+  gap: var(--sp-2);
+  justify-content: center;
+  margin: 0 0 var(--sp-stack);
+  min-height: 44px;
+  padding: 8px 12px;
+}
+.spectator-player--capture {
+  background: #111c2a;
+  inset: 0;
+  min-height: 100svh;
+  overflow: hidden;
+  padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  position: fixed;
+  width: 100vw;
+  z-index: 1000;
+}
+.spectator-player--capture-record {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+.spectator-player--capture-rotate { display: grid; place-items: center; }
+.spectator-player--capture:fullscreen { background: #111c2a; }
+body:has(.spectator-player--capture) { overflow: hidden; }
+body:has(.spectator-player--capture) .spectator-freshness { display: none; }
+
+/* ---- Player Memory Moment --------------------------------------------------------------------
+   One landscape athlete record, composed as a single object. Competition and identity lead;
+   placing is the emotional figure; performance runs as one score strip rather than stat cards. */
+.spectator-memory-stage {
+  aspect-ratio: 2.1 / 1;
+  max-height: calc(100svh - 20px);
+  max-width: 1100px;
+  width: min(100%, calc((100svh - 20px) * 2.1), 1100px);
+}
+.spectator-memory {
+  background: var(--sp-navy);
+  border: 1px solid #4c6078;
+  color: var(--sp-navy);
+  display: grid;
+  grid-area: 1 / 1;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+.spectator-memory::before {
+  background: linear-gradient(90deg, var(--blue) 0 74%, #f2c75c 74% 100%);
+  content: "";
+  height: 5px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 2;
+}
+.spectator-memory__masthead {
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #cfd9e6;
+  display: grid;
+  grid-template-columns: clamp(88px, 13vw, 132px) minmax(0, 1fr) auto;
+  min-height: clamp(56px, 8vw, 78px);
+  padding-top: 5px;
+}
+.spectator-memory__brand {
+  align-content: center;
+  background: var(--sp-navy);
+  color: #fff;
+  display: grid;
+  padding: 8px clamp(10px, 1.5vw, 18px);
+}
+.spectator-memory__brand { align-self: stretch; }
+.spectator-memory__brand strong { font-size: clamp(20px, 2.4vw, 30px); line-height: 1.1; }
+.spectator-memory__brand span { color: var(--sp-on-navy-accent); font-size: var(--text-sp-micro); font-weight: 800; line-height: 1.2; margin-top: 4px; }
+.spectator-memory__competition {
+  align-content: center;
+  display: grid;
+  min-width: 0;
+  padding: 7px clamp(12px, 2vw, 24px);
+}
+.spectator-memory__competition strong { color: var(--ink-strong); font-size: clamp(15px, 2vw, 23px); line-height: 1.2; overflow-wrap: break-word; word-break: normal; }
+.spectator-memory__competition span { color: var(--blue-dark); font-size: clamp(var(--text-sp-micro), 1.45vw, 16px); font-weight: 800; line-height: 1.25; margin-top: 2px; }
+.spectator-memory__official {
+  border: 1px solid var(--green-border);
+  border-left: 3px solid var(--green);
+  color: var(--green-on-soft);
+  font-size: clamp(var(--text-sp-micro), 1.1vw, 12px);
+  font-weight: 800;
+  line-height: 1.25;
+  margin-right: clamp(10px, 1.8vw, 20px);
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+.spectator-memory__subject {
+  background:
+    linear-gradient(115deg, transparent 0 65%, rgba(76, 132, 224, .12) 65% 100%),
+    var(--sp-navy);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(178px, 25vw, 278px);
+  min-height: 0;
+}
+.spectator-memory__identity {
+  align-content: center;
+  display: grid;
+  min-width: 0;
+  padding: clamp(13px, 2.2vw, 25px) clamp(18px, 3.5vw, 42px);
+}
+.spectator-memory__code { align-items: baseline; color: var(--sp-on-navy-muted); display: flex; font-size: clamp(var(--text-sp-micro), 1.15vw, 13px); gap: 8px; margin: 0 0 6px; }
+.spectator-memory__code strong { color: var(--sp-on-navy-accent); font-size: clamp(15px, 1.75vw, 20px); font-variant-numeric: tabular-nums; }
+.spectator-memory__identity h1 { color: #fff; font-size: clamp(25px, 3.45vw, 42px); font-weight: 800; line-height: 1.16; margin: 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-memory__school { color: var(--sp-on-navy-meta); font-size: clamp(var(--text-sp-micro), 1.5vw, 17px); line-height: 1.32; margin: 5px 0 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-memory__tournament { color: var(--sp-on-navy-muted); font-size: clamp(var(--text-sp-micro), 1.1vw, 12px); line-height: 1.3; margin: clamp(8px, 1.5vw, 14px) 0 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-memory__tournament span { color: var(--sp-on-navy-accent); font-weight: 700; margin-right: 6px; }
+.spectator-memory__placing {
+  align-content: center;
+  background: rgba(27, 68, 127, .52);
+  border-left: 1px solid var(--sp-navy-line);
+  color: #fff;
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+  padding: 10px;
+  text-align: center;
+}
+.spectator-memory__placing > span { color: #dbe8fb; font-size: clamp(var(--text-sp-micro), 1.45vw, 16px); font-weight: 800; }
+.spectator-memory__placing > strong { color: #fff; font-size: clamp(76px, 10.8vw, 126px); font-variant-numeric: tabular-nums; letter-spacing: -.06em; line-height: 1.1; margin: -3px 0 -6px; }
+.spectator-memory__placing > strong small { color: #f2c75c; font-size: .34em; margin-right: 3px; vertical-align: top; }
+.spectator-memory__placing p { color: var(--sp-on-navy-muted); font-size: clamp(var(--text-sp-micro), 1.1vw, 12px); margin: 0; }
+.spectator-memory__performance {
+  background: #fff;
+  border-top: 4px solid var(--blue);
+  display: grid;
+  grid-template-columns: 1.05fr .9fr 1.2fr 1fr;
+  margin: 0;
+  min-height: clamp(78px, 10.5vw, 112px);
+}
+.spectator-memory__metric { align-content: center; display: grid; min-width: 0; padding: 6px clamp(10px, 1.7vw, 20px); }
+.spectator-memory__metric + .spectator-memory__metric { border-left: 1px solid #cfd9e6; }
+.spectator-memory__metric dt { color: var(--muted); font-size: clamp(var(--text-sp-micro), 1.2vw, 13px); font-weight: 700; line-height: 1.2; }
+.spectator-memory__metric dd { color: var(--ink-strong); font-size: clamp(27px, 3.8vw, 44px); font-variant-numeric: tabular-nums; font-weight: 850; line-height: 1.08; margin: 2px 0 1px; white-space: nowrap; }
+.spectator-memory__metric > small { color: var(--muted); font-size: var(--text-sp-micro); line-height: 1.15; }
+.spectator-memory__metric--rate dd small { color: var(--muted); font-size: .48em; margin-left: 2px; }
+.spectator-memory__metric--record dd { align-items: baseline; display: flex; gap: clamp(4px, .9vw, 10px); }
+.spectator-memory__metric--record dd i { color: #9cabbc; font-size: .55em; font-style: normal; font-weight: 500; }
+.spectator-memory__metric--diff dd.is-positive { color: var(--green-on-soft); }
+.spectator-memory__metric--diff dd.is-negative { color: var(--red-dark); }
+.spectator-memory-exit {
+  align-items: center;
+  align-self: start;
+  background: #25364a;
+  border: 1px solid #70839a;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 3px;
+  justify-content: center;
+  min-height: 44px;
+  padding: 7px;
+  z-index: 4;
+}
+.spectator-player--capture-record .spectator-memory-exit { grid-column: 2; grid-row: 1; justify-self: stretch; }
+.spectator-player--capture-rotate .spectator-memory-exit { position: absolute; right: max(10px, env(safe-area-inset-right)); top: max(10px, env(safe-area-inset-top)); }
+.spectator-memory-fallback {
+  align-items: center;
+  border-top: 4px solid var(--blue);
+  color: #fff;
+  display: grid;
+  justify-items: center;
+  max-width: 360px;
+  padding: 28px 24px 24px;
+  text-align: center;
+  width: 100%;
+}
+.spectator-memory-fallback__brand { display: grid; margin-bottom: 28px; }
+.spectator-memory-fallback__brand strong { font-size: 28px; line-height: 1; }
+.spectator-memory-fallback__brand span { color: var(--sp-on-navy-accent); font-size: 11px; font-weight: 800; margin-top: 4px; }
+.spectator-memory-fallback > svg { color: #f2c75c; margin-bottom: 14px; }
+.spectator-memory-fallback__eyebrow { color: var(--sp-on-navy-accent); font-size: 12px; font-weight: 800; margin: 0 0 5px; }
+.spectator-memory-fallback h2 { color: #fff; font-size: 24px; line-height: 1.25; margin: 0; }
+.spectator-memory-fallback > p:last-child { color: var(--sp-on-navy-meta); font-size: 14px; line-height: 1.5; margin: 8px 0 0; max-width: 30ch; }
+
+@media (max-width: 520px) {
+  .spectator-memory-exit span { display: none; }
+  .spectator-memory-fallback { padding-inline: 18px; }
+}
+
+/* A phone cannot give the placing column and four labelled figures the same row: at 390px the
+   record strip fell to 236px and broke ผลต่างสะสม across two lines, at 320px across three. The
+   keepsake stacks instead, so the placing keeps its scale and every figure label stays on one
+   line. The divider follows the stack. */
+@media (max-width: 480px) {
+  .spectator-complete__achievement { gap: var(--sp-3); grid-template-columns: minmax(0, 1fr); }
+  .spectator-complete__placing {
+    align-items: baseline;
+    border-bottom: 1px solid var(--sp-navy-line);
+    border-right: 0;
+    display: flex;
+    gap: var(--sp-3);
+    padding: 0 0 var(--sp-3);
+  }
+  .spectator-complete__placing strong { margin-top: 0; }
+}
+
+@media (min-width: 769px) {
+  .spectator-player--complete > .tour-card-back {
+    background: none;
+    color: var(--blue);
+    margin: 0 0 var(--sp-4);
+    padding: 0;
+    width: fit-content;
+  }
+  .spectator-player--complete > .tour-card-back svg { color: var(--blue); }
+}
+
+/* ---- Current game: the one surface a spectator reads while standing up ------------------------ */
+.spectator-now {
+  background: var(--surface);
+  border: 1px solid var(--sp-line);
+  border-top: 3px solid var(--blue);
+  box-shadow: var(--sp-shadow);
+  margin: 0 0 var(--sp-stack);
+  padding: var(--sp-pad-y) var(--sp-pad-x) var(--sp-4);
+}
+.spectator-now--pending { border-top-color: var(--border-strong); }
+.spectator-now__head { align-items: start; display: grid; gap: var(--sp-3); grid-template-columns: minmax(0, 1fr) auto; margin-bottom: var(--sp-4); }
+.spectator-now__title { align-items: baseline; display: flex; flex-wrap: wrap; gap: 2px var(--sp-2); min-width: 0; }
+.spectator-now__eyebrow { color: var(--ink-soft); font-size: var(--text-sp-meta); font-weight: 700; }
+.spectator-now__head h2 { color: var(--blue-dark); font-size: var(--text-sp-display); font-weight: 800; letter-spacing: -.02em; line-height: 1.05; margin: 2px 0 0; }
+.spectator-now__status { align-self: start; }
+.spectator-now__pending { align-items: center; color: var(--ink-strong); display: flex; font-size: var(--text-sp-lead); font-weight: 700; gap: var(--sp-2); margin: 0; }
+.spectator-now__note { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: var(--text-sp-meta); gap: var(--sp-1); margin: var(--sp-3) 0 0; overflow-wrap: break-word; word-break: normal; }
+
+.spectator-seat { align-items: stretch; display: grid; gap: var(--sp-4); grid-template-columns: auto minmax(0, 1fr); }
+.spectator-seat__figure { align-items: start; border-right: 1px solid var(--sp-line); display: grid; gap: 1px; min-width: 88px; padding: 0 var(--sp-4) 0 0; }
+.spectator-seat__label { color: var(--ink-soft); font-size: var(--text-sp-meta); font-weight: 700; }
+.spectator-seat__value { color: var(--ink-strong); font-size: var(--text-sp-display); font-variant-numeric: tabular-nums; font-weight: 800; line-height: 1.05; }
+.spectator-seat__pair { align-content: center; color: var(--ink-soft); display: grid; font-size: var(--text-sp-body); gap: 2px; line-height: 1.3; min-width: 0; }
+
+.spectator-versus { display: grid; background: var(--sp-tint); gap: 2px var(--sp-3); grid-template-columns: minmax(52px, 64px) minmax(0, 1fr); margin-top: var(--sp-4); padding: var(--sp-3) var(--sp-4); }
+.spectator-versus__label { color: var(--ink-soft); font-size: var(--text-sp-meta); grid-column: 1 / -1; }
+.spectator-versus__code { color: var(--ink-strong); font-size: var(--text-sp-title); font-variant-numeric: tabular-nums; font-weight: 800; line-height: 1.3; }
+.spectator-versus__identity { display: grid; gap: 1px; min-width: 0; }
+.spectator-versus__name { color: var(--ink-strong); font-size: var(--text-sp-strong); font-weight: 700; line-height: 1.3; overflow-wrap: break-word; word-break: normal; }
+.spectator-versus__school { color: var(--muted); font-size: var(--text-sp-meta); line-height: 1.35; overflow-wrap: break-word; word-break: normal; }
+.spectator-versus__link {
+  align-items: start;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 2px var(--sp-3);
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(52px, 64px) minmax(0, 1fr);
+  min-height: 44px;
+  padding: 4px 0;
+  text-align: left;
+  width: 100%;
+}
+/* Persistent cue for identity targets. It remains visible on touch, where hover never fires, while
+   pair/seat/score cells stay plain information. */
+.spectator-versus__link,
+.spectator-final__opponent-link,
+.spectator-history__opponent-link,
+.spectator-side-link,
+.spectator-athlete-link,
+.spectator-player-identity-link,
+button.spectator-who {
+  text-decoration: underline;
+  text-decoration-color: var(--blue);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.spectator-versus__link:hover,
+.spectator-final__opponent-link:hover,
+.spectator-history__opponent-link:hover,
+.spectator-side-link:hover,
+.spectator-athlete-link:hover { color: var(--blue-dark); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+/* ---- Championship round: identity only, never a location ------------------------------------- */
+.spectator-final {
+  background: var(--surface);
+  border: 1px solid var(--yellow-border);
+  border-top: 3px solid var(--yellow);
+  box-shadow: var(--sp-shadow);
+  margin-bottom: var(--sp-stack);
+  padding: var(--sp-pad-y) var(--sp-pad-x);
+}
+.spectator-final h2 { color: var(--yellow-on-soft); font-size: var(--text-sp-title); margin: 0 0 var(--sp-1); }
+.spectator-final__versus { font-size: var(--text-sp-body); font-weight: 700; margin: 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-final__note { color: var(--muted); font-size: var(--text-sp-meta); margin: var(--sp-1) 0 0; overflow-wrap: break-word; word-break: normal; }
+.spectator-final__opponent-link {
+  background: none;
+  border: 0;
+  color: var(--blue-dark);
+  cursor: pointer;
+  font: inherit;
+  min-height: 44px;
+  padding: 4px 0;
+  text-align: left;
+}
+
+/* ---- Official standing ------------------------------------------------------------------------
+   Navy again, because this is the other authoritative statement the page makes about a person. */
+.spectator-standing {
+  background: var(--sp-navy);
+  box-shadow: var(--sp-shadow);
+  color: var(--sp-on-navy);
+  margin: 0 0 var(--sp-stack);
+  padding: var(--sp-pad-y) var(--sp-pad-x) var(--sp-4);
+}
+.spectator-standing h2 { color: var(--sp-on-navy); font-size: var(--text-sp-title); font-weight: 800; margin: 0; }
+.spectator-standing__rank { align-items: center; border-top: 1px solid var(--sp-navy-line); display: flex; flex-wrap: wrap; gap: var(--sp-3); margin: var(--sp-3) 0 0; padding-top: var(--sp-3); }
+.spectator-standing__rank > strong { color: #fff; font-size: var(--text-sp-display); font-variant-numeric: tabular-nums; line-height: 1; }
+.spectator-standing__cutoff { background: var(--sp-navy-chip); color: #dbe7f8; font-size: var(--text-sp-micro); margin-left: auto; padding: 5px 8px; white-space: nowrap; }
+.spectator-standing__figures { border-top: 1px solid var(--sp-navy-line); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: var(--sp-3) 0 0; padding-top: var(--sp-3); }
+.spectator-standing__figures > div { min-width: 0; padding: 0 var(--sp-2); text-align: center; }
+.spectator-standing__figures > div + div { border-left: 1px solid var(--sp-navy-line); }
+.spectator-standing__figures dt { color: #b9c9de; font-size: var(--text-sp-micro); }
+.spectator-standing__figures dd { color: var(--sp-on-navy); font-size: var(--text-sp-strong); font-variant-numeric: tabular-nums; font-weight: 700; margin: 2px 0 0; }
+.spectator-standing__figures dd.is-positive { color: var(--sp-pos); }
+.spectator-standing__figures dd.is-negative { color: var(--sp-neg); }
+.spectator-standing__none { color: #c5d2e4; font-size: var(--text-sp-body); margin: var(--sp-2) 0 0; overflow-wrap: break-word; word-break: normal; }
+
+/* ---- Record. A list of rows with separators — never one card per game. ------------------------ */
+.spectator-record {
+  background: var(--surface);
+  border: 1px solid var(--sp-line);
+  box-shadow: var(--sp-shadow);
+  margin: 0 0 var(--sp-stack);
+  padding: var(--sp-pad-y) var(--sp-pad-x) var(--sp-4);
+}
+.spectator-record h2 { border-bottom: 1px solid var(--sp-line); color: var(--ink-strong); font-size: var(--text-sp-title); font-weight: 800; margin: 0; padding-bottom: var(--sp-3); }
+.spectator-record .spectator-standing__none { color: var(--muted); margin-top: var(--sp-3); }
+.spectator-history { list-style: none; margin: 0; padding: 0; }
+.spectator-history__row { align-items: center; border-top: 1px solid var(--sp-line); display: grid; gap: 2px var(--sp-3); grid-template-columns: auto auto minmax(0, 1fr) auto; padding: var(--sp-3) 0; }
+.spectator-history__row:first-child { border-top: 0; }
+.spectator-history__game { color: var(--ink-soft); font-size: var(--text-sp-body); font-weight: 700; }
+.spectator-history__score { color: var(--ink-strong); font-size: var(--text-sp-lead); font-variant-numeric: tabular-nums; }
+.spectator-history__diff { color: var(--muted); font-size: var(--text-sp-body); font-variant-numeric: tabular-nums; text-align: right; }
+.spectator-history__opponent { color: var(--muted); font-size: var(--text-sp-meta); grid-column: 1 / -1; line-height: 1.4; overflow-wrap: break-word; word-break: normal; }
+.spectator-history__opponent-link {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  min-height: 44px;
+  padding: 4px 0;
+  text-align: left;
+  width: 100%;
+}
+.spectator-history__state { grid-column: 1 / -1; }
+.spectator-history__state .badge { max-width: 100%; white-space: normal; }
+.spectator-record__totals { border-top: 1px solid var(--border-strong); color: var(--ink-soft); font-size: var(--text-sp-meta); font-weight: 700; margin: 0; padding-top: var(--sp-3); }
+.spectator-record__section { color: var(--ink-soft); font-size: var(--text-sp-body); font-weight: 700; margin: var(--sp-4) 0 var(--sp-1); }
+
+.spectator-browse-link {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--sp-line);
+  box-shadow: var(--sp-shadow);
+  color: var(--blue-dark);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--text-sp-body);
+  font-weight: 700;
+  gap: var(--sp-2);
+  justify-content: space-between;
+  margin-bottom: var(--sp-stack);
+  padding: var(--sp-3) var(--sp-pad-x);
+  text-align: left;
+  width: 100%;
+}
+.spectator-browse-link:hover { background: var(--blue-soft); box-shadow: inset 3px 0 0 var(--blue); }
+
+/* ---- Status treatment -------------------------------------------------------------------------
+   Public status reads as a sentence, not as a shouty uppercase tag: same tones as the rest of the
+   product, sentence case, and sized off the spectator scale. */
+.spectator-shell .badge { font-size: var(--text-sp-meta); font-weight: 700; letter-spacing: 0; padding: 5px 8px; text-transform: none; }
+.spectator-now__status .badge { padding: 6px 9px; }
+.spectator-now__status .badge--info { background: var(--yellow-soft); border-color: var(--yellow-border); color: var(--yellow-on-soft); }
+.spectator-history__row .badge { font-size: var(--text-sp-micro); padding: 4px 7px; }
+
+/* ---- Entrance: tournament header, Find, results, Browse -------------------------------------- */
+.spectator-shell .cards-page-header {
+  background: var(--surface);
+  border: 1px solid var(--sp-line);
+  border-bottom: 1px solid var(--sp-line);
+  border-left: 3px solid var(--blue);
+  box-shadow: var(--sp-shadow);
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-3) var(--sp-pad-x) var(--sp-4);
+}
+.spectator-shell .cards-page-header h1 { color: var(--ink-strong); font-size: clamp(19px, 4.4vw, 22px); line-height: 1.25; }
+.spectator-shell .cards-page-header .page-description { color: var(--muted); font-size: var(--text-sp-meta); max-width: 58ch; }
+
+.spectator-find { display: grid; gap: var(--sp-2); margin-bottom: var(--sp-4); }
+/* The icon and the clear action float OVER one real input, so the control keeps its own focus
+   ring instead of a wrapper imitating one. */
+.spectator-find__field { min-width: 0; position: relative; }
+.spectator-find__field > svg { color: var(--blue); left: 11px; pointer-events: none; position: absolute; top: 50%; transform: translateY(-50%); }
+.spectator-find__input.input {
+  border-color: #b7c8df;
+  box-shadow: 0 3px 10px rgba(31, 55, 85, .05);
+  font-size: var(--text-sp-lead);
+  min-height: 42px;
+  padding-left: 35px;
+  padding-right: 38px;
+}
+.spectator-find__input::-webkit-search-cancel-button { display: none; }
+.spectator-find__clear { align-items: center; background: none; border: 0; bottom: 1px; color: var(--muted); cursor: pointer; display: flex; padding: 0 11px; position: absolute; right: 1px; top: 1px; }
+.spectator-find__clear:hover { background: var(--surface-hover); color: var(--ink); }
+.spectator-find__filters { display: grid; gap: var(--sp-2); grid-template-columns: minmax(0, 1fr); }
+.spectator-find__filter { display: grid; gap: 2px; min-width: 0; }
+.spectator-find__filter > span { color: var(--ink-soft); font-size: var(--text-sp-micro); font-weight: 700; }
+.spectator-find__filter .select { font-size: var(--text-sp-body); max-width: 100%; min-height: 38px; padding: 6px 9px; }
+.spectator-find__hint { color: var(--muted); font-size: var(--text-sp-body); margin: 0 0 var(--sp-4); }
+
+.spectator-results { margin-bottom: var(--sp-4); }
+.spectator-results__count { color: var(--muted); font-size: var(--text-sp-meta); margin: 0 0 var(--sp-2); }
+.spectator-results__list { background: var(--surface); border: 1px solid var(--sp-line); box-shadow: var(--sp-shadow); list-style: none; margin: 0; overflow: hidden; padding: 0; }
+.spectator-results__list > li + li { border-top: 1px solid var(--sp-line); }
+.spectator-result { align-items: center; background: none; border: 0; cursor: pointer; display: grid; gap: var(--sp-3); grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto; padding: var(--sp-3) var(--sp-pad-x); text-align: left; width: 100%; }
+.spectator-result:hover { background: var(--blue-soft); box-shadow: inset 3px 0 0 var(--blue); }
+.spectator-result__code { background: var(--blue-soft); color: var(--blue-dark); font-size: var(--text-sp-meta); font-variant-numeric: tabular-nums; font-weight: 800; padding: 5px 7px; }
+.spectator-result__identity { display: grid; gap: 1px; min-width: 0; }
+.spectator-result__name { color: var(--ink-strong); font-size: var(--text-sp-body); font-weight: 700; overflow-wrap: break-word; word-break: normal; }
+.spectator-result__meta { color: var(--muted); font-size: var(--text-sp-meta); overflow-wrap: break-word; word-break: normal; }
+.spectator-result > svg { color: var(--blue); flex: 0 0 auto; }
+
+.spectator-browse { margin-bottom: var(--sp-4); }
+.spectator-browse__title { color: var(--ink-soft); font-size: var(--text-sp-micro); font-weight: 800; letter-spacing: .06em; margin: 0 0 var(--sp-2); text-transform: uppercase; }
+.spectator-shell .card-groups { gap: var(--sp-3); }
+.spectator-shell .card-group { border-top-width: 2px; box-shadow: var(--sp-shadow); overflow: hidden; }
+.spectator-shell .card-group__title { background: var(--surface-sunken); box-shadow: none; color: var(--ink-strong); font-size: var(--text-sp-body); padding: var(--sp-2) var(--sp-pad-x); }
+/* The stage badge sizes to its own text and the division name gives way instead: a truncated
+   "เกม 2/4 · กำลังแข่ง…" tells a spectator nothing, while a shortened division name still reads. */
+.spectator-shell .card-select-row__link { gap: var(--sp-3); grid-template-columns: minmax(0, 1fr) auto auto; padding: var(--sp-3) var(--sp-pad-x); }
+.spectator-shell .card-select-row__name { font-size: var(--text-sp-body); }
+.spectator-shell .card-select-row__stage .badge { max-width: 100%; }
+
+/* ---- Empty / not-found states ---------------------------------------------------------------- */
+.spectator-shell .empty-state { padding: var(--sp-5) var(--sp-pad-x); }
+.spectator-shell .empty-state h3 { font-size: var(--text-sp-title); }
+.spectator-shell .empty-state p { font-size: var(--text-sp-body); max-width: 46ch; }
+.spectator-shell .panel { border-color: var(--sp-line); box-shadow: var(--sp-shadow); margin-bottom: var(--sp-stack); }
+
+/* ---- Division reports ---------------------------------------------------------------------------
+   Same system, table-first density. Only the CHROME is restyled here — the grids keep their own
+   data, ordering and controls, which belong to the tournament rules rather than to a visual pass. */
+.spectator-shell .overview-page-header {
+  background: var(--surface);
+  border: 1px solid var(--sp-line);
+  border-bottom: 1px solid var(--sp-line);
+  border-left: 3px solid var(--blue);
+  box-shadow: var(--sp-shadow);
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-3) var(--sp-pad-x);
+}
+.spectator-shell .overview-page-header h1 { color: var(--ink-strong); font-size: clamp(17px, 3.6vw, 20px); line-height: 1.25; }
+.spectator-shell .page-title-inline-subtitle { font-size: var(--text-sp-meta); }
+.spectator-shell .overview-data-panel .panel__header { padding: var(--sp-3) var(--sp-pad-x); }
+.spectator-shell .overview-data-panel .panel__header h2 { font-size: var(--text-sp-title); letter-spacing: 0; }
+.spectator-shell .overview-data-panel .panel__header {
+  background: var(--sp-navy);
+  border-bottom: 0;
+  padding: var(--sp-3) var(--sp-pad-x);
+}
+.spectator-shell .overview-data-panel .panel__header h2 { color: var(--sp-on-navy); }
+.spectator-shell .overview-data-panel .panel__header p { color: var(--sp-on-navy-meta); font-size: var(--text-sp-meta); }
+@media (max-width: 640px) {
+  /* The report column header is the one persistent report chrome. Let the panel title scroll away
+     so it cannot create a second sticky layer that permanently consumes the phone viewport. */
+  .spectator-shell .overview-data-panel .panel__header { position: static; }
+}
+.spectator-shell .segment { font-size: var(--text-sp-body); min-height: 34px; padding: 5px 13px; }
+.spectator-shell .select-menu__trigger { font-size: var(--text-sp-body); min-height: 34px; }
+.spectator-shell .overview-record-filter__trigger { min-height: 34px; }
+.spectator-shell .overview-record-filter__trigger-label { font-size: var(--text-sp-meta); }
+.spectator-shell .overview-mobile-nav { background: var(--sp-navy); border-color: #101822; }
+.spectator-shell .overview-mobile-nav__button { color: #c4d2e4; font-size: var(--text-sp-meta); min-height: 42px; }
+.spectator-shell .notice { border-color: var(--sp-line); font-size: var(--text-sp-body); margin-bottom: var(--sp-stack); padding: var(--sp-3) var(--sp-pad-x); }
+.spectator-shell .notice--info { border-color: var(--blue-border); }
+.spectator-shell .history-table-dialog { border-color: var(--sp-line); box-shadow: var(--shadow-overlay); }
+.spectator-shell .history-table-dialog header h2 { font-size: var(--text-sp-title); }
+.spectator-shell .history-table-dialog__summary { font-size: var(--text-sp-meta); }
+/* The stacked record inside the dialog needs the dialog's own gutter — the grid it replaces
+   brought its own. */
+.spectator-shell .history-table-dialog .spectator-history,
+.spectator-shell .history-table-dialog .spectator-record__section,
+.spectator-shell .history-table-dialog .spectator-report-list__empty { padding-left: var(--sp-pad-x); padding-right: var(--sp-pad-x); }
+.spectator-shell .history-table-dialog .spectator-history { padding-bottom: var(--sp-3); }
+
+/* ---- Finals -----------------------------------------------------------------------------------
+   A championship board, not a second operational table. The series score is the visual centre;
+   individual games are supporting evidence. Every surface owns its width and stays inside the
+   Viewer gutter without painting an outer shadow beyond it. The staff `.final-*` editor above is
+   intentionally untouched. */
+.spectator-finals {
+  display: grid;
+  gap: var(--sp-stack);
+  margin: 0 auto var(--sp-stack);
+  max-width: 860px;
+  min-width: 0;
+  width: 100%;
+}
+.spectator-finals__header {
+  align-items: center;
+  background: var(--sp-navy);
+  border: 1px solid #101822;
+  border-left: 4px solid #f2c75c;
+  color: var(--sp-on-navy);
+  display: flex;
+  gap: var(--sp-3);
+  justify-content: space-between;
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-pad-x);
+}
+.spectator-finals__heading { align-items: center; display: flex; gap: var(--sp-3); min-width: 0; }
+.spectator-finals__heading > svg { color: #f2c75c; }
+.spectator-finals__heading > div { min-width: 0; }
+.spectator-finals__heading p { color: var(--sp-on-navy-muted); font-size: var(--text-sp-micro); margin: 0 0 1px; overflow-wrap: break-word; word-break: normal; }
+.spectator-finals__heading h2 { color: inherit; font-size: var(--text-sp-title); line-height: 1.3; margin: 0; }
+.spectator-finals__state {
+  border: 1px solid var(--sp-navy-line);
+  color: var(--sp-on-navy-meta);
+  flex: 0 1 auto;
+  font-size: var(--text-sp-meta);
+  font-weight: 700;
+  line-height: 1.25;
+  max-width: 50%;
+  padding: 5px 8px;
+  text-align: right;
+}
+.spectator-finals__state--entered { background: var(--yellow-soft); border-color: var(--yellow-border); color: var(--yellow-on-soft); }
+.spectator-finals__state--official { background: var(--green-soft); border-color: var(--green-border); color: var(--green-on-soft); }
+.spectator-finals__matches { display: grid; gap: var(--sp-stack); min-width: 0; }
+.spectator-finals__empty {
+  background: var(--surface);
+  border: 1px solid var(--sp-line);
+  border-left: 3px solid var(--blue);
+  display: grid;
+  gap: 2px;
+  padding: var(--sp-5) var(--sp-pad-x);
+  width: 100%;
+}
+.spectator-finals__empty strong { color: var(--ink-strong); font-size: var(--text-sp-title); }
+.spectator-finals__empty span { color: var(--muted); font-size: var(--text-sp-body); }
+
+.spectator-final-championship {
+  background: var(--surface);
+  border: 1px solid var(--sp-line);
+  border-top: 4px solid var(--blue);
+  min-width: 0;
+  overflow: hidden;
+  width: 100%;
+}
+.spectator-final-championship__header,
+.spectator-final-third__header {
+  align-items: center;
+  border-bottom: 1px solid var(--sp-line);
+  display: flex;
+  gap: var(--sp-3);
+  justify-content: space-between;
+  min-width: 0;
+  padding: 9px var(--sp-pad-x);
+}
+.spectator-final-championship__header { background: #edf3fd; }
+.spectator-final-championship__header > div,
+.spectator-final-third__header > div { min-width: 0; }
+.spectator-final-championship__header > div > span,
+.spectator-final-third__header > div > span { display: block; font-size: var(--text-sp-micro); font-weight: 800; }
+.spectator-final-championship__header > div > span { color: var(--blue-dark); }
+.spectator-final-third__header > div > span { color: var(--muted); }
+.spectator-final-championship__header h3,
+.spectator-final-third__header h3 { color: var(--ink-strong); font-size: var(--text-sp-title); line-height: 1.3; margin: 1px 0 0; }
+.spectator-final-championship__header > strong,
+.spectator-final-third__header > strong {
+  color: var(--muted);
+  flex: 0 1 auto;
+  font-size: var(--text-sp-meta);
+  font-weight: 700;
+  line-height: 1.25;
+  max-width: 48%;
+  text-align: right;
+}
+
+.spectator-final-championship__duel {
+  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 214px) minmax(0, 1fr);
+  min-width: 0;
+}
+.spectator-final-contender {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+  padding: 12px var(--sp-pad-x);
+}
+.spectator-final-contender--winner { background: linear-gradient(90deg, var(--green-soft), var(--surface) 70%); }
+.spectator-final-contender--two.spectator-final-contender--winner { background: linear-gradient(270deg, var(--green-soft), var(--surface) 70%); }
+.spectator-final-player {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 62px;
+  min-width: 0;
+  padding: 7px 0;
+  text-align: left;
+  width: 100%;
+}
+button.spectator-final-player { cursor: pointer; }
+button.spectator-final-player:hover { background: var(--blue-soft); }
+.spectator-final-player--winner { box-shadow: inset 3px 0 0 var(--green); padding-left: 9px; }
+.spectator-final-player__code {
+  background: var(--blue-soft);
+  color: var(--sp-code);
+  font-size: var(--text-sp-meta);
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  padding: 5px 7px;
+}
+.spectator-final-player__identity { display: grid; gap: 1px; min-width: 0; }
+.spectator-final-player__identity strong { color: var(--ink-strong); font-size: var(--text-sp-lead); line-height: 1.3; overflow-wrap: break-word; word-break: normal; }
+.spectator-final-player__identity small { color: var(--muted); font-size: var(--text-sp-meta); line-height: 1.3; overflow-wrap: break-word; word-break: normal; }
+.spectator-final-player__winner { color: var(--blue-dark); font-size: var(--text-sp-micro); font-weight: 800; margin-top: 2px; }
+.spectator-final-player__winner--official { color: var(--green-on-soft); }
+.spectator-final-player__series { display: grid; min-width: 42px; text-align: center; }
+.spectator-final-player__series strong { color: var(--ink-strong); font-size: 23px; font-variant-numeric: tabular-nums; line-height: 1; }
+.spectator-final-player__series small { color: var(--muted); font-size: var(--text-sp-micro); white-space: nowrap; }
+
+.spectator-final-contender--two .spectator-final-player {
+  grid-template-columns: minmax(0, 1fr) auto;
+  text-align: right;
+}
+.spectator-final-contender--two .spectator-final-player__identity { grid-column: 1; grid-row: 1; }
+.spectator-final-contender--two .spectator-final-player__code { grid-column: 2; grid-row: 1; }
+.spectator-final-contender--two .spectator-final-player--winner { box-shadow: inset -3px 0 0 var(--green); padding-left: 0; padding-right: 9px; }
+
+.spectator-final-series {
+  align-content: center;
+  align-items: center;
+  background: var(--sp-navy);
+  color: var(--sp-on-navy);
+  display: grid;
+  gap: 2px 7px;
+  grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr);
+  min-width: 0;
+  padding: 13px 10px 11px;
+  text-align: center;
+}
+.spectator-final-series__code { color: var(--sp-on-navy-accent); font-size: var(--text-sp-micro); font-variant-numeric: tabular-nums; font-weight: 900; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spectator-final-series__score { color: var(--sp-on-navy); font-size: 44px; font-variant-numeric: tabular-nums; line-height: .95; }
+.spectator-final-series__dash { color: var(--sp-on-navy-muted); font-size: 24px; }
+.spectator-final-series__caption { color: var(--sp-on-navy-meta); font-size: var(--text-sp-micro); grid-column: 1 / -1; line-height: 1.3; margin-top: 5px; }
+
+.spectator-final-games { background: var(--surface); border-top: 1px solid var(--sp-line); min-width: 0; }
+.spectator-final-games__head, .spectator-final-game {
+  align-items: center;
+  display: grid;
+  gap: var(--sp-2);
+  grid-template-columns: minmax(62px, 1fr) 52px 10px 52px;
+  min-width: 0;
+  padding: 6px var(--sp-pad-x);
+}
+.spectator-final-games__head { background: var(--surface-sunken); color: var(--muted); font-size: var(--text-sp-micro); }
+.spectator-final-games__head strong { color: var(--ink-soft); font-variant-numeric: tabular-nums; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.spectator-final-game { border-top: 1px solid var(--sp-line); color: var(--ink-soft); font-size: var(--text-sp-body); }
+.spectator-final-game:first-of-type { border-top: 0; }
+.spectator-final-game > strong { color: var(--ink-strong); font-size: var(--text-sp-lead); font-variant-numeric: tabular-nums; text-align: center; }
+.spectator-final-game > i { color: var(--muted); font-style: normal; text-align: center; }
+.spectator-final-game .spectator-final-game__winner { color: var(--green-on-soft); }
+
+.spectator-final-third {
+  background: var(--surface);
+  border-bottom: 1px solid var(--sp-line);
+  border-top: 2px solid var(--border-strong);
+  margin-inline: auto;
+  max-width: 760px;
+  min-width: 0;
+  width: 100%;
+}
+.spectator-final-third__header { background: var(--surface-sunken); padding-block: 7px; }
+.spectator-final-third__header h3 { font-size: var(--text-sp-lead); }
+.spectator-final-third__players { min-width: 0; padding: 2px var(--sp-pad-x); }
+.spectator-final-third .spectator-final-player { grid-template-columns: auto minmax(0, 1fr) auto; min-height: 56px; padding-block: 6px; }
+.spectator-final-third .spectator-final-player + .spectator-final-player { border-top: 1px solid var(--sp-line); }
+.spectator-final-third .spectator-final-games__head,
+.spectator-final-third .spectator-final-game { padding-block: 4px; }
+.spectator-final-games--compact .spectator-final-game > strong { font-size: var(--text-sp-body); }
+
+@media (max-width: 700px) {
+  .spectator-final-championship__duel { grid-template-columns: minmax(0, 1fr); }
+  .spectator-final-contender { padding-block: 4px; }
+  .spectator-final-contender--winner,
+  .spectator-final-contender--two.spectator-final-contender--winner { background: linear-gradient(90deg, var(--green-soft), var(--surface) 70%); }
+  .spectator-final-contender--two .spectator-final-player { grid-template-columns: auto minmax(0, 1fr); text-align: left; }
+  .spectator-final-contender--two .spectator-final-player__identity { grid-column: 2; grid-row: 1; }
+  .spectator-final-contender--two .spectator-final-player__code { grid-column: 1; grid-row: 1; }
+  .spectator-final-contender--two .spectator-final-player--winner { box-shadow: inset 3px 0 0 var(--green); padding-left: 9px; padding-right: 0; }
+  .spectator-final-series { grid-row: 2; min-height: 92px; }
+}
+
+@media (max-width: 420px) {
+  .spectator-finals__header, .spectator-final-championship__header, .spectator-final-third__header { align-items: flex-start; }
+  .spectator-finals__state, .spectator-final-championship__header > strong, .spectator-final-third__header > strong { max-width: 46%; }
+  .spectator-final-player { gap: var(--sp-2); }
+  .spectator-final-player__code { padding-inline: 5px; }
+  .spectator-final-series__score { font-size: 40px; }
+  .spectator-final-games__head, .spectator-final-game { grid-template-columns: minmax(54px, 1fr) 46px 8px 46px; }
+}
+@media (max-width: 768px) {
+  /* The 94px phone picker already has two icons. On the self-evident Finals screen, removing the
+     decorative gamepad keeps the full Thai label without taking width from the event title. */
+  .spectator-shell .overview-game-menu--final .select-menu__trigger > svg:first-child { display: none; }
+  .spectator-shell .overview-game-menu--final .select-menu__trigger { gap: 5px; }
+}
+
+/* ---- Report tables for portrait phones -----------------------------------------------------
+   Real tables with one compact sticky column header. The panel title identifies the view before a
+   scroll; after that, the column labels stay visible while the page's natural scroll moves through
+   the rows. Keeping one persistent group avoids spending the viewport on stacked chrome.
+
+   Only the athlete columns grow. Everything else is sized to its own content and never wraps: a
+   number cut in half, or folded onto a second line, is worse than a narrow name. */
+.spectator-report-list__empty { color: var(--muted); font-size: var(--text-sp-body); margin: 0; padding: var(--sp-4) var(--sp-pad-x); }
+
+/* SEPARATE borders, deliberately. Under border-collapse a sticky cell leaves its borders behind in
+   the table's own grid: the divider stayed with the content and sailed up into the header, and the
+   2px it vacated let the first row show through. Separated borders belong to the cell, so the
+   divider travels with the header and the content passes cleanly underneath it. */
+.spectator-table { border-collapse: separate; border-spacing: 0; table-layout: auto; width: 100%; }
+.spectator-table th, .spectator-table td { border-bottom: 1px solid var(--sp-line); border-right: 1px solid var(--sp-line); }
+.spectator-table th:last-child, .spectator-table td:last-child { border-right: 0; }
+.spectator-table th {
+  /* The tone the panel header used to wear, now that the panel header has taken the strong one.
+     Solid, never translucent: a header the rows pass under cannot afford alpha. */
+  background: var(--sp-tint);
+  /* The divider between the chrome and the rows. It belongs to the header, and the header is not
+     inside the scrolling box, so the rows pass cleanly under it. */
+  border-bottom: 2px solid var(--sp-code);
+  color: var(--sp-code);
+  font-size: var(--text-sp-micro);
+  font-weight: 800;
+  letter-spacing: 0;
+  padding: 6px var(--sp-2);
+  text-align: left;
+}
+.spectator-table--fixed { table-layout: fixed; }
+
+/* The header sits outside the data table so it can stick to the page while rows use the same
+   natural vertical scroll as the rest of the public route. */
+.spectator-report__head { background: var(--sp-tint); position: sticky; top: 0; z-index: var(--z-sticky); }
+.spectator-report__body { max-height: none; overflow: visible; overscroll-behavior: auto; }
+/* The body carries its own header row, for the column associations a screen reader needs, and shows
+   none of it: two visible header rows would be read twice, and none at all would leave every cell
+   with no column to belong to. */
+.spectator-report__head-sr th {
+  border: 0;
+  color: transparent;
+  font-size: 0;
+  height: 0;
+  line-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+.spectator-table th.spectator-table__fit { text-align: center; }
+.spectator-table td { background: var(--surface); padding: var(--sp-3) var(--sp-2); vertical-align: top; }
+/* A whisper of grey, alternating, so the eye can run along a row without losing the column it
+   started in. Set on the cell rather than the row so the selected and hovered states, which are
+   also cell backgrounds, can simply out-rank it. */
+.spectator-table tbody tr.is-alt td { background: var(--sp-canvas); }
+.spectator-table th:first-child, .spectator-table td:first-child { padding-left: var(--sp-pad-x); }
+.spectator-table th:last-child, .spectator-table td:last-child { padding-right: var(--sp-pad-x); }
+/* Widths are declared once, on the header table, and copied onto the body. width:1% + nowrap is
+   the shrink-to-content idiom: the column takes exactly its label. The athlete columns absorb
+   everything left over — one of them in the standings, two sharing it in a pairing. */
+.spectator-table__fit { white-space: nowrap; width: 1%; }
+.spectator-report__head th:not(.spectator-table__fit) { width: 100%; }
+.spectator-report--pair .spectator-report__head th:not(.spectator-table__fit) { width: 50%; }
+/* A result spends a row per competitor, so the identity fits on one unbroken line. The two rows
+   of a pair are held together by the คู่ที่ and ผลต่าง cells spanning both of them. */
+.spectator-line { color: var(--ink-strong); display: block; font-size: var(--text-sp-body); line-height: 1.35; overflow-wrap: break-word; word-break: normal; }
+.spectator-line__primary { display: block; min-width: 0; }
+.spectator-line__code { color: var(--sp-code); font-variant-numeric: tabular-nums; font-weight: 800; }
+.spectator-line__school { color: var(--muted); display: block; font-size: var(--text-sp-micro); margin-top: 1px; overflow-wrap: break-word; word-break: normal; }
+.spectator-cell--score { font-weight: 700; }
+.spectator-cell--score.is-won { color: var(--green-on-soft); }
+.spectator-cell--diff { color: var(--ink-soft); }
+.spectator-cell__status { color: var(--muted); display: block; font-size: var(--text-sp-micro); font-weight: 600; }
+
+/* Ranking: อันดับ · นักกีฬา · คะแนนสะสม · ผลต่างสะสม */
+.spectator-cell--rank { color: var(--ink-strong); font-size: var(--text-sp-lead); font-variant-numeric: tabular-nums; font-weight: 800; text-align: center; }
+.spectator-cell--num { color: var(--ink-strong); font-size: var(--text-sp-body); font-variant-numeric: tabular-nums; text-align: center; }
+.spectator-who { background: none; border: 0; display: grid; font: inherit; min-height: 44px; min-width: 0; padding: 4px 0; text-align: left; width: 100%; }
+button.spectator-who { cursor: pointer; }
+.spectator-player-identity-link {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  justify-content: inherit;
+  min-height: 44px;
+  padding: 4px 0;
+  text-align: inherit;
+  width: 100%;
+}
+.spectator-table tbody tr:hover:has(button.spectator-who) td { background: var(--blue-soft); }
+tr.spectator-standrow--active td { background: var(--blue-soft); }
+tr.spectator-standrow--active td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
+.spectator-standrow__name { color: var(--ink-strong); font-size: var(--text-sp-body); line-height: 1.35; overflow-wrap: break-word; word-break: normal; }
+.spectator-standrow__name b { color: var(--sp-code); font-variant-numeric: tabular-nums; }
+.spectator-standrow__school { color: var(--muted); font-size: var(--text-sp-micro); line-height: 1.35; overflow-wrap: break-word; word-break: normal; }
+
+/* Pairing / result: คู่ที่ · ที่นั่ง · ผู้เล่น · ที่นั่ง · ผู้เล่น */
+.spectator-cell--pair { color: var(--ink-soft); font-size: var(--text-sp-body); font-variant-numeric: tabular-nums; font-weight: 800; text-align: center; vertical-align: top; }
+.spectator-cell--seat { color: var(--muted); font-size: var(--text-sp-meta); font-variant-numeric: tabular-nums; text-align: center; vertical-align: middle; }
+.spectator-side__identity { display: grid; min-width: 0; }
+.spectator-side__code { color: var(--sp-code); font-size: var(--text-sp-meta); font-variant-numeric: tabular-nums; font-weight: 800; }
+.spectator-side__identity { display: block; min-width: 0; }
+.spectator-side__primary { display: block; min-width: 0; }
+.spectator-side__code { color: var(--sp-code); display: inline; font-size: var(--text-sp-meta); font-variant-numeric: tabular-nums; font-weight: 800; margin-right: 5px; }
+.spectator-side__name { color: var(--ink-strong); display: inline; font-size: var(--text-sp-body); line-height: 1.3; overflow-wrap: break-word; word-break: normal; }
+.spectator-side__school { color: var(--muted); display: block; font-size: var(--text-sp-micro); line-height: 1.3; margin-top: 1px; overflow-wrap: break-word; word-break: normal; }
+.spectator-side-link,
+.spectator-athlete-link {
+  align-items: start;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  min-height: 44px;
+  padding: 4px 0;
+  text-align: left;
+  width: 100%;
+}
+.spectator-line-link { min-height: 44px; }
+.spectator-cell--won .spectator-line { font-weight: 800; }
+
+@media (min-width: 560px) {
+  .spectator-find__filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+}
+@media (max-width: 768px) {
+  /* Below 16px iOS Safari zooms the page on focus, which is the one thing a QR-code arrival
+     must never experience. The rest of the scale stays exactly where it is. */
+  .spectator-find__input.input { font-size: var(--text-input-touch); }
+  .spectator-shell .content:has(.spectator-find),
+  .spectator-shell .content:has(.spectator-identity) { max-width: none; }
+}
+@media (max-width: 380px) {
+  /* One step down for the smallest phones. Only the three display numbers and the name move —
+     body text stays where it is, because that is the text people actually read. */
+  .spectator-shell {
+    --text-sp-display: 23px;
+    --text-sp-name: 18px;
+    --sp-pad-x: 12px;
+  }
+  .spectator-identity__primary { gap: var(--sp-2); grid-template-columns: 66px minmax(0, 1fr); }
+  .spectator-identity__code { font-size: var(--text-sp-title); min-height: 46px; }
+  .spectator-seat { gap: var(--sp-3); }
+  .spectator-seat__figure { min-width: 78px; padding-right: var(--sp-3); }
+  .spectator-standing__figures > div { padding: 0 3px; }
+}

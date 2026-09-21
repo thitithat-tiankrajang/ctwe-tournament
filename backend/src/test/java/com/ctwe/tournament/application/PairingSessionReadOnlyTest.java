@@ -53,7 +53,7 @@ class PairingSessionReadOnlyTest {
         UUID cardId = cards.create(new CardDtos.CreateCardRequest(tournamentId,
             "RO-" + UUID.randomUUID(), "DIV", 3,
             List.of(PairingRuleType.SWISS, PairingRuleType.SWISS), List.of(500, 500, 500),
-            "NONE", 0, false, PairingRuleType.RANDOM), ACTOR).id();
+            "NONE", 0, false, PairingRuleType.RANDOM, null), ACTOR).id();
         try {
             List<CardDtos.BulkPlayerEntry> entries = new ArrayList<>();
             for (int i = 0; i < 8; i++)

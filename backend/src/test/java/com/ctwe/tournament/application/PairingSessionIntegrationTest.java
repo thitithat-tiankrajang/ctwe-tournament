@@ -49,7 +49,7 @@ class PairingSessionIntegrationTest {
         UUID tournamentId = jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
         List<PairingRuleType> edges = List.of(PairingRuleType.SWISS, PairingRuleType.SWISS);
         UUID cardId = cards.create(new CardDtos.CreateCardRequest(tournamentId, "PS-" + UUID.randomUUID(),
-            "DIV", 3, edges, List.of(500, 500, 500), "NONE", 0, false, PairingRuleType.RANDOM), ACTOR).id();
+            "DIV", 3, edges, List.of(500, 500, 500), "NONE", 0, false, PairingRuleType.RANDOM, null), ACTOR).id();
         List<CardDtos.BulkPlayerEntry> entries = new ArrayList<>();
         for (int i = 0; i < players; i++)
             entries.add(new CardDtos.BulkPlayerEntry("F" + i, "L" + i, "School" + (i % 3)));
@@ -277,6 +277,33 @@ class PairingSessionIntegrationTest {
             .isInstanceOf(PairingSessionService.PairingRejectedException.class)
             .satisfies(error -> assertThat(((PairingSessionService.PairingRejectedException) error).blocks())
                 .extracting(CardDtos.PairingBlock::code).contains("HAS_RESULT"));
+    }
+
+    /**
+     * Owner rule (release validation): result deletion is only ever a CURRENT-game operation.
+     * Once a game is published its rows are history — force is not a second key to them. A director
+     * who needs to change a published result uses the historical override, which edits the result
+     * and leaves the pairing alone.
+     */
+    @Test
+    void aPublishedSlotCannotBeDestroyedEvenWithForce() {
+        UUID cardId = cardWithPairing(8);
+        int[] slot = fullSlot(cardId);
+        cards.autoResults(cardId, ACTOR);
+        cards.reviewResults(cardId, ACTOR);
+        cards.publishResults(cardId, ACTOR);
+
+        var forced = new CardDtos.PairingCommitRequest(UUID.randomUUID(), "irrelevant-here", true,
+            List.of(slot(1, slot[1], id(cardId, slot[2]), id(cardId, slot[3]))),
+            List.of(slot(1, slot[1], id(cardId, slot[2]), null)),
+            List.of(), List.of(), List.of());
+
+        assertThatThrownBy(() -> session.commit(cardId, forced, ACTOR))
+            .isInstanceOf(PairingSessionService.PairingRejectedException.class)
+            .satisfies(error -> assertThat(((PairingSessionService.PairingRejectedException) error).blocks())
+                .extracting(CardDtos.PairingBlock::code)
+                .as("a published game is history, not a current-game rearrangement")
+                .containsAnyOf("SNAPSHOTTED", "GAME_NOT_EDITABLE"));
     }
 
     /**

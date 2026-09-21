@@ -1,6 +1,7 @@
 package com.ctwe.tournament.application;
 
 import com.ctwe.tournament.domain.model.PairingRuleType;
+import com.ctwe.tournament.domain.ranking.RankingEngine;
 import com.ctwe.tournament.web.dto.CardDtos;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -38,6 +39,7 @@ class RestoreAndPairResultIntegrationTest {
 
     @Autowired TournamentCardService service;
     @Autowired JdbcTemplate jdbc;
+    @Autowired RankingSource rankingSource;
 
     private UUID tournamentId() {
         return jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
@@ -47,7 +49,7 @@ class RestoreAndPairResultIntegrationTest {
         List<Integer> maxDiffs = new ArrayList<>();
         for (int i = 0; i < games; i++) maxDiffs.add(500);
         var request = new CardDtos.CreateCardRequest(tournamentId(), "IT-" + UUID.randomUUID(), "DIV",
-            games, edgeRules, maxDiffs, "NONE", 0, false, initial);
+            games, edgeRules, maxDiffs, "NONE", 0, false, initial, null);
         return service.create(request, "ittest").id();
     }
 
@@ -79,6 +81,219 @@ class RestoreAndPairResultIntegrationTest {
         service.simulate(cardId, "ittest");
         String status = jdbc.queryForObject("SELECT status FROM tournament_cards WHERE id = ?", String.class, cardId);
         assertThat(status).isEqualTo("FINISHED");
+    }
+
+    // ---- Owner rule: historical correction EDITS the published result and preserves its pairing ----
+    @Test
+    void historicalOverrideEditsThePublishedResultAndLeavesItsPairingIntact() {
+        UUID cardId = createCard(3, PairingRuleType.RANDOM,
+            List.of(PairingRuleType.SWISS, PairingRuleType.SWISS));
+        addPlayers(cardId, 6);
+        service.finishRegistration(cardId, "ittest");
+        runGame(cardId);                                   // game 1 published
+        runGame(cardId);                                   // game 2 published — tournament has moved on
+
+        record Slot(int table, int one, int two, int scoreOne, int scoreTwo) {}
+        List<Slot> before = jdbc.query("""
+            SELECT table_number, player_one, player_two, score_one, score_two FROM matches
+            WHERE card_id = ? AND game_number = 1 ORDER BY table_number
+            """, (rs, row) -> new Slot(rs.getInt(1), rs.getInt(2), rs.getInt(3), rs.getInt(4), rs.getInt(5)), cardId);
+        Slot target = before.get(0);
+        Integer diffBefore = jdbc.queryForObject(
+            "SELECT diff FROM standings WHERE card_id = ? AND player_code = ?", Integer.class, cardId, target.one());
+
+        // Backdate the snapshot so the correction below genuinely MOVES confirmed_at. Without
+        // this the test cannot fail: now() is the transaction clock, publish and correction
+        // share this transaction, so the re-stamp would write the value already stored, the
+        // immutability trigger would see no change, and a correction that is impossible on a
+        // live card would pass here. On a real card the two are separate transactions.
+        jdbc.execute("SET LOCAL app.allow_snapshot_restamp = 'on'");
+        jdbc.update("""
+            UPDATE pairing_snapshots SET confirmed_at = confirmed_at - interval '1 hour'
+            WHERE card_id = ? AND game_from <= 1 AND game_to >= 1
+            """, cardId);
+        // RESET, not SET LOCAL's own scope: the flag would otherwise stay on for the rest of
+        // this transaction and exempt the override's re-stamp too, so the guard could never fail.
+        jdbc.execute("RESET app.allow_snapshot_restamp");
+        var confirmedBefore = jdbc.queryForObject("""
+            SELECT confirmed_at FROM pairing_snapshots WHERE card_id = ? AND game_from <= 1 AND game_to >= 1
+            """, java.time.Instant.class, cardId);
+
+        // Director corrects a PUBLISHED game-1 result, long after game 2 was published.
+        service.overrideResult(cardId, "g1t" + target.table(),
+            new CardDtos.ResultRequest(target.scoreOne() + 40, target.scoreTwo(), true), "ittest");
+
+        List<Slot> after = jdbc.query("""
+            SELECT table_number, player_one, player_two, score_one, score_two FROM matches
+            WHERE card_id = ? AND game_number = 1 ORDER BY table_number
+            """, (rs, row) -> new Slot(rs.getInt(1), rs.getInt(2), rs.getInt(3), rs.getInt(4), rs.getInt(5)), cardId);
+
+        assertThat(after).as("the historical pairing is preserved, not regenerated")
+            .extracting(Slot::table, Slot::one, Slot::two)
+            .isEqualTo(before.stream().map(slot -> org.assertj.core.groups.Tuple.tuple(
+                slot.table(), slot.one(), slot.two())).toList());
+        assertThat(after.get(0).scoreOne()).as("the result is edited, not deleted")
+            .isEqualTo(target.scoreOne() + 40);
+        assertThat(jdbc.queryForObject("""
+            SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 1 AND result_type IS NULL
+            """, Integer.class, cardId)).as("no published row lost its result").isZero();
+
+        Integer diffAfter = jdbc.queryForObject(
+            "SELECT diff FROM standings WHERE card_id = ? AND player_code = ?", Integer.class, cardId, target.one());
+        assertThat(diffAfter).as("standings recomputed forward through the current state").isNotEqualTo(diffBefore);
+
+        assertThat(jdbc.queryForObject("""
+            SELECT COUNT(*) FROM audit_logs WHERE card_id = ? AND action = 'OVERRIDE_RESULT'
+            """, Integer.class, cardId)).as("the correction is audited").isEqualTo(1);
+
+        var confirmedAfter = jdbc.queryForObject("""
+            SELECT confirmed_at FROM pairing_snapshots WHERE card_id = ? AND game_from <= 1 AND game_to >= 1
+            """, java.time.Instant.class, cardId);
+        assertThat(confirmedAfter)
+            .as("a corrected game carries a fresh publication time, which the trigger must allow")
+            .isAfter(confirmedBefore);
+    }
+
+    // ---- Owner-confirmed rule: a no-opponent slot keeps the differential its entered score produces ----
+    @Test
+    void noOpponentSlotKeepsTheEnteredScoreDifferential() {
+        // Owner fixture: configured maximum 250, the occupied player is entered at 100, the empty
+        // seat is 0, so the differential is the ordinary +100 — the system must not overrule it.
+        List<Integer> maxDiffs = List.of(250, 250);
+        var request = new CardDtos.CreateCardRequest(tournamentId(), "IT-" + UUID.randomUUID(), "DIV",
+            2, List.of(PairingRuleType.SWISS), maxDiffs, "NONE", 0, false, PairingRuleType.RANDOM, null);
+        UUID cardId = service.create(request, "ittest").id();
+        addPlayers(cardId, 5);                     // odd field -> exactly one no-opponent slot
+        service.finishRegistration(cardId, "ittest");
+        service.generatePairingPreview(cardId, "ittest");
+        service.confirmPairingPreview(cardId, "ittest");
+
+        var bye = jdbc.queryForMap("""
+            SELECT table_number, player_one, player_two FROM matches
+            WHERE card_id = ? AND game_number = 1 AND (player_one IS NULL OR player_two IS NULL)
+            """, cardId);
+        int table = (Integer) bye.get("table_number");
+        boolean occupiedIsOne = bye.get("player_one") != null;
+
+        service.submitResult(cardId, "g1t" + table,
+            new CardDtos.ResultRequest(occupiedIsOne ? 100 : 0, occupiedIsOne ? 0 : 100, false), "ittest");
+
+        var stored = jdbc.queryForMap("""
+            SELECT score_one, score_two, calculated_diff, winner, result_type FROM matches
+            WHERE card_id = ? AND game_number = 1 AND table_number = ?
+            """, cardId, table);
+        assertThat(stored.get("result_type")).isEqualTo("W");
+        assertThat(stored.get("calculated_diff")).as("no-opponent differential follows the entered score").isEqualTo(100);
+        assertThat(stored.get("winner")).isEqualTo(occupiedIsOne ? bye.get("player_one") : bye.get("player_two"));
+        assertThat(stored.get(occupiedIsOne ? "score_one" : "score_two")).isEqualTo(100);
+        assertThat(stored.get(occupiedIsOne ? "score_two" : "score_one")).as("empty seat scores zero").isEqualTo(0);
+    }
+
+    /**
+     * Owner decision 1, the other half: having proved the stored differential follows the entered
+     * score, prove that NOTHING downstream re-learns that the row was a bye. The four ranking
+     * dimensions are read here from the production sources — {@code standings} for win points and
+     * differential, {@link RankingSource} for the scoreFor/games the average is built from, and the
+     * live head-to-head provider for the one dimension a lone player genuinely cannot enter.
+     */
+    @Test
+    void noOpponentSlotFeedsTheRankingDimensionsLikeAnyOtherRow() {
+        var request = new CardDtos.CreateCardRequest(tournamentId(), "IT-" + UUID.randomUUID(), "DIV",
+            2, List.of(PairingRuleType.SWISS), List.of(250, 250), "NONE", 0, false, PairingRuleType.RANDOM, null);
+        UUID cardId = service.create(request, "ittest").id();
+        addPlayers(cardId, 5);                     // odd field -> exactly one no-opponent slot
+        service.finishRegistration(cardId, "ittest");
+        service.generatePairingPreview(cardId, "ittest");
+        service.confirmPairingPreview(cardId, "ittest");
+
+        record Slot(int table, Integer one, Integer two) {}
+        List<Slot> slots = jdbc.query("""
+            SELECT table_number, player_one, player_two FROM matches
+            WHERE card_id = ? AND game_number = 1 ORDER BY table_number
+            """, (rs, row) -> new Slot(rs.getInt(1), (Integer) rs.getObject(2), (Integer) rs.getObject(3)), cardId);
+        Slot bye = slots.stream().filter(slot -> slot.one() == null || slot.two() == null).findFirst().orElseThrow();
+        boolean occupiedIsOne = bye.one() != null;
+        int lone = occupiedIsOne ? bye.one() : bye.two();
+
+        service.submitResult(cardId, "g1t" + bye.table(),
+            new CardDtos.ResultRequest(occupiedIsOne ? 100 : 0, occupiedIsOne ? 0 : 100, false), "ittest");
+        for (Slot slot : slots)
+            if (slot != bye) service.submitResult(cardId, "g1t" + slot.table(),
+                new CardDtos.ResultRequest(400, 380, false), "ittest");
+        service.reviewResults(cardId, "ittest");
+        service.publishResults(cardId, "ittest");
+
+        var standing = jdbc.queryForMap(
+            "SELECT wins, win_points, diff FROM standings WHERE card_id = ? AND player_code = ?", cardId, lone);
+        var row = rankingSource.rankRows(cardId).stream()
+            .filter(entry -> entry.playerId().equals(String.valueOf(lone))).findFirst().orElseThrow();
+
+        assertThat(standing.get("wins")).as("dimension 1 — the lone player wins the slot").isEqualTo(1);
+        assertThat(standing.get("win_points")).as("dimension 1 — an ordinary win, worth 2").isEqualTo(2);
+        assertThat(standing.get("diff")).as("dimension 2 — the ordinary margin, 100 - 0").isEqualTo(100);
+        assertThat(rankingSource.headToHead(cardId).hasMet(String.valueOf(lone), String.valueOf(
+            slots.stream().filter(slot -> slot != bye).findFirst().orElseThrow().one())))
+            .as("dimension 3 — an empty seat is not an opponent, so there is no meeting to aggregate")
+            .isFalse();
+        assertThat(row.scoreFor()).as("dimension 4 — the submitted score counts in full").isEqualTo(100L);
+        assertThat(row.games()).as("dimension 4 — and the slot counts as a game played").isEqualTo(1);
+        assertThat(row.diff()).as("the engine is fed the same differential the standings hold").isEqualTo(100);
+    }
+
+    /**
+     * Owner-confirmed Average Score: every counted submitted score, whatever its sign.
+     *
+     * <p>A submitted 0 contributes 0 rather than being dropped, and a legal negative contributes
+     * its sign. The field is even so the followed player is never alone — a no-opponent slot has
+     * its own rule that the occupied player must win above zero, and
+     * {@code noOpponentSlotFeedsTheRankingDimensionsLikeAnyOtherRow} covers that side.
+     */
+    @Test
+    void averageScoreCountsEverySubmittedScoreIncludingZeroAndNegative() {
+        var request = new CardDtos.CreateCardRequest(tournamentId(), "IT-" + UUID.randomUUID(), "DIV",
+            3, List.of(PairingRuleType.SWISS, PairingRuleType.SWISS), List.of(500, 500, 500),
+            "NONE", 0, false, PairingRuleType.RANDOM, null);
+        UUID cardId = service.create(request, "ittest").id();
+        addPlayers(cardId, 6);                     // even field -> every player has an opponent
+        service.finishRegistration(cardId, "ittest");
+
+        int[] mine = { 45, 0, -3 };                // positive, zero, negative
+        int followed = 0;
+
+        for (int game = 1; game <= 3; game++) {
+            service.generatePairingPreview(cardId, "ittest");
+            service.confirmPairingPreview(cardId, "ittest");
+            record Slot(int table, int one, int two) {}
+            List<Slot> slots = jdbc.query("""
+                SELECT table_number, player_one, player_two FROM matches
+                WHERE card_id = ? AND game_number = ? ORDER BY table_number
+                """, (rs, row) -> new Slot(rs.getInt(1), rs.getInt(2), rs.getInt(3)), cardId, game);
+            if (followed == 0) followed = slots.get(0).one();
+
+            for (Slot slot : slots) {
+                boolean mineIsOne = slot.one() == followed;
+                boolean isMine = mineIsOne || slot.two() == followed;
+                if (!isMine) {
+                    service.submitResult(cardId, "g" + game + "t" + slot.table(),
+                        new CardDtos.ResultRequest(300, 280, false), "ittest");
+                    continue;
+                }
+                int myScore = mine[game - 1];
+                int theirScore = myScore + 10;     // the opponent wins; only my score is under test
+                service.submitResult(cardId, "g" + game + "t" + slot.table(),
+                    new CardDtos.ResultRequest(mineIsOne ? myScore : theirScore,
+                        mineIsOne ? theirScore : myScore, false), "ittest");
+            }
+            service.reviewResults(cardId, "ittest");
+            service.publishResults(cardId, "ittest");
+        }
+
+        String code = String.valueOf(followed);
+        var row = rankingSource.rankRows(cardId).stream()
+            .filter(entry -> entry.playerId().equals(code)).findFirst().orElseThrow();
+        assertThat(row.games()).as("the zero-scoring game is still a game").isEqualTo(3);
+        assertThat(row.scoreFor()).as("45 + 0 + (-3)").isEqualTo(42L);
+        assertThat(RankingEngine.averageScore(row.scoreFor(), row.games())).isEqualTo(14.0);
     }
 
     // ---- Bug 3: restoring a player writes a real bye+penalty row for each missed published game ----

@@ -103,7 +103,7 @@ class PublicCardReadCacheTest {
             List.of(new CardDtos.RuleResponse(1, 2,
                 com.ctwe.tournament.domain.model.PairingRuleType.SWISS)),
             List.of(), List.of(), List.of(), List.of(), "CHAMPION", 3,
-            finalRound, false, Instant.EPOCH, "A", List.of());
+            finalRound, false, Instant.EPOCH, "A", "PAIR", List.of());
         when(cards.get(cardId, false)).thenReturn(source);
         when(jdbc.queryForList("SELECT public_version FROM tournament_cards WHERE id = ?", Long.class, cardId))
             .thenReturn(List.of(9L));
@@ -180,7 +180,7 @@ class PublicCardReadCacheTest {
             RuntimeStage.PLAYER_REGISTRATION, 1, 0,
             List.of(), com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
             List.of(), List.of(), List.of(), List.of(), List.of(),
-            "NONE", 0, null, false, Instant.EPOCH, "A", List.of());
+            "NONE", 0, null, false, Instant.EPOCH, "A", "PAIR", List.of());
     }
 
     @Configuration(proxyBeanMethods = false)

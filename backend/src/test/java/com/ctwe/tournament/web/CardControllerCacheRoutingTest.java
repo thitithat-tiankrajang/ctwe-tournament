@@ -251,7 +251,7 @@ class CardControllerCacheRoutingTest {
             source.id(), source.tournamentId(), source.name(), source.division(), source.status(),
             stage, currentGame, source.version(), source.games(), source.initialPairingRule(), source.rules(), source.players(),
             source.tables(), snapshots, source.audit(), source.finalType(), source.finalGames(),
-            source.finalRound(), source.gibsonEnabled(), source.createdAt(), source.codePrefix(), List.of());
+            source.finalRound(), source.gibsonEnabled(), source.createdAt(), source.codePrefix(), source.slotLabel(), List.of());
     }
 
     private static CardDtos.CardResponse card(UUID id) {
@@ -260,6 +260,6 @@ class CardControllerCacheRoutingTest {
             RuntimeStage.PLAYER_REGISTRATION, 1, 0,
             List.of(), com.ctwe.tournament.domain.model.PairingRuleType.RANDOM,
             List.of(), List.of(), List.of(), List.of(), List.of(),
-            "NONE", 0, null, false, Instant.EPOCH, "A", List.of());
+            "NONE", 0, null, false, Instant.EPOCH, "A", "PAIR", List.of());
     }
 }

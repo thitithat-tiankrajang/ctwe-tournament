@@ -22,7 +22,7 @@ import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 
 const CONSEQUENCE_LABELS: Record<string, string> = {
   BECOMES_BYE: "กลายเป็นคู่บาย (ไม่มีคู่แข่ง)",
-  BECOMES_VOID: "ยกเลิกคู่ (เก็บหมายเลขโต๊ะไว้)",
+  BECOMES_VOID: "ยกเลิกคู่ (เก็บหมายเลขคู่ไว้)",
   UNVOIDED: "นำคู่ที่ยกเลิกไว้กลับมาใช้",
   POOL_ADD: "เข้า Screening Pool",
   POOL_REMOVE: "ออกจาก Screening Pool",
@@ -84,7 +84,7 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
           <ul className="diff-sheet__list">
             {validation.changes.map((change) => (
               <li key={`${change.game}-${change.table}`}>
-                <span className="diff-sheet__slot">เกม {change.game} โต๊ะ {change.table}</span>
+                <span className="diff-sheet__slot">เกม {change.game} คู่ที่ {change.table}</span>
                 <span className="diff-sheet__before">{name(change.beforeOne)} พบ {name(change.beforeTwo)}</span>
                 <ArrowRight size={13} aria-label="เปลี่ยนเป็น" />
                 <span className="diff-sheet__after">{name(change.afterOne)} พบ {name(change.afterTwo)}</span>
@@ -100,7 +100,7 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
               {validation.consequences.map((consequence, index) => (
                 <li key={index}>
                   {CONSEQUENCE_LABELS[consequence.kind] ?? consequence.kind}
-                  {consequence.table != null && ` · เกม ${consequence.game} โต๊ะ ${consequence.table}`}
+                  {consequence.table != null && ` · เกม ${consequence.game} คู่ที่ ${consequence.table}`}
                   {consequence.player && ` · ${name(consequence.player)}`}
                 </li>
               ))}
@@ -118,7 +118,7 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
                   checked={acknowledged.has(warning.code)}
                   onChange={() => toggle(warning.code)}
                 />
-                <span>โต๊ะ {warning.table} · {warning.message}</span>
+                <span>คู่ที่ {warning.table} · {warning.message}</span>
               </label>
             ))}
           </section>
@@ -130,7 +130,7 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
             <ul className="diff-sheet__list diff-sheet__list--plain">
               {validation.drift.map((drift) => (
                 <li key={`${drift.game}-${drift.table}`}>
-                  เกม {drift.game} โต๊ะ {drift.table} — ตอนนี้เป็น {name(drift.actualOne)} พบ {name(drift.actualTwo)}
+                  เกม {drift.game} คู่ที่ {drift.table} — ตอนนี้เป็น {name(drift.actualOne)} พบ {name(drift.actualTwo)}
                 </li>
               ))}
             </ul>

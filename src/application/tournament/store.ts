@@ -4,9 +4,8 @@ import { create } from "zustand";
 import type { AuditEntry, BackOfficeCardSummary, CreateCardInput, DestroyedResult, ManagedUser, Pairing, PairingChange, PairingChangeSet, PairingValidation, Player, PublicCardSummary, PublicSnapshotStatus, PublicTournamentBundle, PublicTournamentSummary, ScreeningHold, ShutdownReadiness, Tournament, TournamentCard } from "@/domain/tournament/types";
 import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
-import { rank } from "@/domain/tournament/ranking";
-import type { RankedPlayer } from "@/domain/tournament/history";
 import { hasStaffAccess } from "@/domain/tournament/roles";
+import { changedPairingSlots, changedResultPairings } from "./card-reconciliation";
 
 export interface AuthState {
   authenticated: boolean;
@@ -116,6 +115,15 @@ export interface PairingPresence {
   actors: string[];
 }
 
+export interface WakeReconciliationState {
+  cardId: string;
+  status: "checking" | "verified" | "failed";
+  attempt: number;
+  error?: string;
+}
+
+export type WakeReconciliationResult = "verified" | "failed";
+
 /** A card as a list or sidebar needs it: the twelve summary fields plus where the row came from. */
 export type CardListRow = Omit<BackOfficeCardSummary, "scope"> & {
   /** True when a full, SSE-patched card backs this row rather than a summary. */
@@ -142,12 +150,15 @@ interface TournamentState {
   load: () => Promise<void>;
   refreshPublicCatalog: (versionToken?: string) => Promise<PublicCardSummary[]>;
   syncCard: (cardId: string, publicVersion?: number) => Promise<void>;
+  /** Authoritative read used when an authenticated card returns to the foreground. */
+  reconcileCard: (cardId: string) => Promise<WakeReconciliationResult>;
   applyCardState: (card: TournamentCard) => void;
   applyResultPatch: (cardId: string, version: number, changedPairings: Pairing[]) => boolean;
   /** Latest result event authored by SOMEONE ELSE; null until one arrives. See RemoteResultNotice. */
   remoteResult: RemoteResultNotice | null;
   remotePairing: RemotePairingNotice | null;
   pairingPresence: PairingPresence | null;
+  wakeReconciliation: WakeReconciliationState | null;
   /** Raise the notice for a staff result event. Called BEFORE the patch, while `before` still exists. */
   noteRemoteResultChange: (cardId: string, version: number, changedPairings: Pairing[], actor: string | null, actorRoles: string[]) => void;
   /** A pairing commit landed from another session: record which slots moved and who moved them. */
@@ -390,6 +401,7 @@ async function readError(response: Response) {
 }
 
 export const useTournamentStore = create<TournamentState>((set, get) => {
+  const wakeInflight = new Map<string, Promise<WakeReconciliationResult>>();
   /**
    * Clear privileged data before leaving the page. A full navigation follows immediately, but
    * clearing first prevents a dead staff/admin/director screen from remaining interactive while
@@ -400,7 +412,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     clearCsrfCookie();
     publicScopeToken = null;
     if (typeof window !== "undefined") window.localStorage.removeItem(ACTIVE_TOURNAMENT_KEY);
-    set({ auth: anonymous, cards: [], summaries: [], activeTournament: null, loading: false, error: null });
+    set({ auth: anonymous, cards: [], summaries: [], activeTournament: null, loading: false, error: null, wakeReconciliation: null });
     redirectToLoginOnSessionLoss();
   };
 
@@ -755,6 +767,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     remoteResult: null,
     remotePairing: null,
     pairingPresence: null,
+    wakeReconciliation: null,
     auth: anonymous,
     loading: true,
     error: null,
@@ -790,6 +803,56 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
           expireBackOfficeSession();
         }
       } catch { /* transient network/poll error — keep current state */ }
+    },
+    reconcileCard(cardId) {
+      const existing = wakeInflight.get(cardId);
+      if (existing) return existing;
+
+      const previous = get().wakeReconciliation;
+      const attempt = previous?.cardId === cardId ? previous.attempt + 1 : 1;
+      const operation = (async (): Promise<WakeReconciliationResult> => {
+        set({ wakeReconciliation: { cardId, status: "checking", attempt } });
+        try {
+          const updated = await request<TournamentCard>(`/api/cards/${cardId}`);
+          const held = get().cards.find((card) => card.id === cardId);
+
+          // Capture the same notices that SSE would have raised before replacing the card. This
+          // keeps the existing draft/conflict UI authoritative without changing the frozen stream
+          // or patch functions. A same-version response is already represented locally and must not
+          // manufacture a new warning.
+          if (held && updated.version > held.version) {
+            const resultChanges = changedResultPairings(held, updated);
+            if (resultChanges.length > 0) {
+              get().noteRemoteResultChange(cardId, updated.version, resultChanges, null, []);
+            }
+            const pairingChanges = changedPairingSlots(held, updated);
+            if (pairingChanges.length > 0) {
+              get().noteRemotePairingChange(cardId, updated.version, pairingChanges, null);
+            }
+          }
+
+          get().applyCardState(updated);
+          set({ wakeReconciliation: { cardId, status: "verified", attempt } });
+          return "verified";
+        } catch (error) {
+          // Keep the held card and any local drafts. The notice gives the operator an explicit
+          // retry and makes it clear that the screen is not verified against the server.
+          set({
+            wakeReconciliation: {
+              cardId,
+              status: "failed",
+              attempt,
+              error: error instanceof Error ? error.message : "ตรวจสอบข้อมูลล่าสุดไม่สำเร็จ",
+            },
+          });
+          return "failed";
+        } finally {
+          wakeInflight.delete(cardId);
+        }
+      })();
+
+      wakeInflight.set(cardId, operation);
+      return operation;
     },
     async ensureSessionAlive() {
       // Used by the global back-office guard and after a refused staff live stream. Only a
@@ -1394,11 +1457,4 @@ export const selectTournamentCardList = (
  * Delegates to the ranking engine so this list obeys the same rule as every other standings
  * surface. There is no match history to consult, so no head-to-head is applied.
  */
-export const rankPlayers = (players: Player[]): RankedPlayer[] => {
-  const byId = new Map(players.map((player) => [player.id, player]));
-  return rank(players.map((player) => ({
-    playerId: player.id, winPoints: player.winPoints, diff: player.diff, scoreFor: 0, games: 0,
-  }))).map((entry) => ({
-    ...byId.get(entry.playerId)!, scoreFor: 0, games: 0, average: entry.average, displayRank: entry.displayRank,
-  }));
-};
+export { rankPlayers } from "@/domain/tournament/rank-player-list";

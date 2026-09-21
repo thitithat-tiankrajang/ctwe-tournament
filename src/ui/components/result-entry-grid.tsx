@@ -770,12 +770,14 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
         hideCancel
         title="คู่แข่งขันนี้ถูกเปลี่ยนโดยผู้ใช้อื่น"
         description={pairingConflict
-          ? `${pairingConflict.actor ?? "ผู้ใช้อื่น"} เปลี่ยนผู้เล่นของคู่ที่ ${pairingConflict.table} — สิ่งที่กรอกค้างไว้จะถูกยกเลิก`
+          ? `${pairingConflict.actor ?? "ผู้ใช้อื่น"} เปลี่ยนผู้เล่นของคู่ที่ ${pairingConflict.table}`
           : undefined}
         confirmLabel="รับทราบ"
         onConfirm={acknowledgePairingConflict}
         onCancel={acknowledgePairingConflict}
-      />
+      >
+        {pairingConflict && <p className="entry-conflict-explanation">เพื่อป้องกันการบันทึกคะแนนให้ผู้เล่นผิดคู่ ระบบจะทิ้งค่าที่กรอกค้างไว้และโหลดสถานะคู่ปัจจุบันใหม่ กดรับทราบแล้วตรวจสอบแถวนี้ก่อนเริ่มกรอกอีกครั้ง</p>}
+      </ConfirmDialog>
       {/*
         Blocking on purpose: this fires only when somebody else committed a result for the very
         pairing this user is mid-edit on, and the draft on screen is about to be thrown away. One
@@ -793,9 +795,12 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
         onCancel={acknowledgeConflict}
       >
         {conflict && (
-          <p className="entry-conflict-scores">
-            จาก <strong>{formatScore(conflict.change.before)}</strong> เป็น <strong>{formatScore(conflict.change.after)}</strong>
-          </p>
+          <>
+            <p className="entry-conflict-scores">
+              จาก <strong>{formatScore(conflict.change.before)}</strong> เป็น <strong>{formatScore(conflict.change.after)}</strong>
+            </p>
+            <p className="entry-conflict-explanation">เพื่อไม่ให้เขียนทับผลล่าสุด ค่าที่กรอกค้างไว้จะไม่ถูกส่งต่อ กดรับทราบเพื่อใช้ผลปัจจุบัน แล้วกดแก้ไขหากยังต้องการปรับใหม่</p>
+          </>
         )}
       </ConfirmDialog>
 

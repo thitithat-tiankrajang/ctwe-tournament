@@ -332,6 +332,8 @@ export interface TournamentCard {
   finalGames: number;
   finalRound: FinalRound | null;
   gibsonEnabled: boolean;
+  /** How the public reports name a slot. Absent on older payloads, which means "PAIR". */
+  slotLabel?: SlotLabel;
   createdAt: string;
   /**
    * Players currently held in the Screening Pool. Staff payloads only — the public projection
@@ -404,6 +406,15 @@ export interface PublicCardVersion {
   version: number;
 }
 
+/**
+ * Which number the public reports name a slot by.
+ *
+ * Pair n holds seats 2n-1 and 2n, so the two are the same fact read from opposite ends. Which one an
+ * event calls over the microphone is a decision the organiser makes once, for the whole card, and
+ * the viewer shows only that column — a 375px phone cannot afford to carry both.
+ */
+export type SlotLabel = "PAIR" | "SEAT";
+
 export interface CreateCardInput {
   tournamentId: string;
   name: string;
@@ -415,4 +426,5 @@ export interface CreateCardInput {
   finalType: FinalType;
   finalGames: number;
   gibsonEnabled: boolean;
+  slotLabel: SlotLabel;
 }

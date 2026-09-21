@@ -22,6 +22,7 @@ import { ExcelPlayerImport } from "@/ui/components/excel-player-import";
 import { GameFlow } from "@/ui/components/game-flow";
 import { InstitutionCombobox } from "@/ui/components/institution-combobox";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
+import { PairingToolButtons, canOpenScreening } from "@/ui/components/pairing-tool";
 import { PlayerTermination } from "@/ui/components/player-termination";
 import { ReopenRegistration } from "@/ui/components/reopen-registration";
 import { stageLabels } from "@/ui/components/stage-info";
@@ -189,7 +190,7 @@ export default function PlayersPage() {
         actions={canManage
           ? registrationOpen
             ? <Button variant="success" disabled={busy || card.players.length < 2} onClick={finish}>จบการลงทะเบียน {navPending ? <LoaderCircle className="loading-spinner" size={16} /> : <ArrowRight size={16} />}</Button>
-            : <><ReopenRegistration card={card} /><Link prefetch={false} href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link></>
+            : <>{canOpenScreening(card) && <PairingToolButtons card={card} modes={["screen"]} />}<ReopenRegistration card={card} /><Link prefetch={false} href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link></>
           : undefined}
       />
 

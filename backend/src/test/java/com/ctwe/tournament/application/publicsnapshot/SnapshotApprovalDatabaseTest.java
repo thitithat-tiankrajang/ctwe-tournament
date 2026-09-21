@@ -661,7 +661,7 @@ class SnapshotApprovalDatabaseTest {
         List<Integer> maxDiffs = new ArrayList<>(List.of(500, 500, 500));
         UUID cardId = service.create(new CardDtos.CreateCardRequest(tournamentId, "PhaseE-" + UUID.randomUUID(),
             "DIV", 3, List.of(PairingRuleType.SWISS, PairingRuleType.SWISS), maxDiffs,
-            "NONE", 0, false, PairingRuleType.RANDOM), "ittest").id();
+            "NONE", 0, false, PairingRuleType.RANDOM, null), "ittest").id();
         List<CardDtos.BulkPlayerEntry> players = new ArrayList<>();
         for (int i = 0; i < 6; i++) players.add(new CardDtos.BulkPlayerEntry("First" + i, "Last" + i, "School" + i));
         service.addPlayersBulk(cardId, players, "ittest");

@@ -4,13 +4,29 @@ import { playerHistory, type HistoryScope, type PlayerHistoryRow } from "@/domai
 import type { Player, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { DataGrid, type DataColumn } from "@/ui/components/data-grid";
+import { SpectatorHistoryRows } from "@/ui/components/spectator-report-lists";
 
 const signed = (value: number) => `${value > 0 ? "+" : ""}${value}`;
 
 /** Per-game play history table for one player (game, pair, result, running totals, opponent). */
-export function PlayerHistoryTable({ card, players, playerId, scope }: { card: TournamentCard; players: Map<string, Player>; playerId: string; scope: HistoryScope }) {
+export function PlayerHistoryTable({ card, players, playerId, scope, stacked = false }: { card: TournamentCard; players: Map<string, Player>; playerId: string; scope: HistoryScope; stacked?: boolean }) {
   const { qualifying, final } = playerHistory(card, playerId, scope);
   const opponentName = (id: string) => { const player = players.get(id); return `${player?.firstName ?? ""} ${player?.lastName ?? ""}`.trim() || "—"; };
+  // A portrait phone cannot hold ten aligned columns inside a dialog. Same rows, read as the record
+  // list the Player Participation page already uses.
+  if (stacked) return (
+    <>
+      {qualifying.length === 0
+        ? <p className="spectator-report-list__empty">ยังไม่มีประวัติการเล่นที่เผยแพร่</p>
+        : <SpectatorHistoryRows rows={qualifying} opponentName={opponentName} opponentSchool={(id) => players.get(id)?.school ?? ""} />}
+      {final.length > 0 && (
+        <>
+          <p className="spectator-record__section">รอบชิงชนะเลิศ · นับแยกจากรอบคัดเลือก</p>
+          <SpectatorHistoryRows rows={final} opponentName={opponentName} opponentSchool={(id) => players.get(id)?.school ?? ""} />
+        </>
+      )}
+    </>
+  );
   const columns: DataColumn<PlayerHistoryRow>[] = [
     { key: "game", label: "เกมที่", min: 52, width: 72, align: "right", render: (row) => <strong>{row.final ? row.gameLabel : row.game}</strong> },
     { key: "table", label: "คู่ที่", min: 48, width: 60, align: "right", render: (row) => row.final ? "—" : row.table },

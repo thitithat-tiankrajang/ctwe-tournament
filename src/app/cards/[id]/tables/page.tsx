@@ -17,8 +17,8 @@ import { CustomCombobox } from "@/ui/components/institution-combobox";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
-import { stageLabels } from "@/ui/components/stage-info";
-import { PairingToolButtons, ScreeningGenerationWarning } from "@/ui/components/pairing-tool";
+import { operatorStageLabels } from "@/ui/components/stage-info";
+import { PairingToolButtons, ScreeningGenerationWarning, canOpenScreening } from "@/ui/components/pairing-tool";
 
 export default function TablesPage() {
   const { id } = useParams<{ id: string }>();
@@ -76,9 +76,7 @@ export default function TablesPage() {
   const latestResultSnapshot = publishedSnapshots.find((snapshot) => snapshot.gameNumbers.includes(latestResultGame));
   const latestRanking = latestResultGame > 0 ? rankingAfterGame({ ...card, snapshots: publishedSnapshots }, latestResultGame) : [];
   const pairingActive = canGenerate || preview;
-  // Every stage the pairing tool accepts: before generation (the preferred flow), during
-  // preview, and during result collection — a no-show for a round already underway.
-  const screeningAvailable = canGenerate || preview || card.runtimeStage === "RESULT_COLLECTION";
+  const screeningAvailable = canOpenScreening(card);
   const browseGames = [...new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers))].sort((a, b) => a - b);
   const selectedBrowseGame = browseGame && browseGames.includes(browseGame) ? browseGame : (browseGames[browseGames.length - 1] ?? 0);
   const browseSnapshot = publishedSnapshots.find((snapshot) => snapshot.gameNumbers.includes(selectedBrowseGame));
@@ -129,32 +127,32 @@ export default function TablesPage() {
   };
 
   const confirm = async () => {
-    if (!await appDialog.confirm(`ยืนยัน pairing เกม ${card.currentGame}? หลังจากนี้${card.currentGame === 1 ? "จะสลับโต๊ะไม่ได้และ" : ""}จะเข้าสู่การกรอกผล`, {
-      title: `ยืนยัน Pairing เกม ${card.currentGame}`,
-      confirmLabel: "Finish pairing",
+    if (!await appDialog.confirm(`ยืนยันคู่แข่งขันเกม ${card.currentGame}? หลังจากนี้${card.currentGame === 1 ? "จะสลับโต๊ะไม่ได้และ" : ""}จะเข้าสู่การกรอกผล`, {
+      title: `ยืนยันคู่แข่งขันเกม ${card.currentGame}`,
+      confirmLabel: "ยืนยันคู่แข่งขัน",
     })) return;
     setBusy(true);
     try { await confirmPairing(id); navigate(`/cards/${id}/games`); }
-    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยืนยัน pairing ไม่สำเร็จ", "ยืนยัน Pairing ไม่สำเร็จ", true); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยืนยันคู่แข่งขันไม่สำเร็จ", "ยืนยันคู่แข่งขันไม่สำเร็จ", true); }
     finally { setBusy(false); }
   };
 
   const undo = async () => {
-    if (!await appDialog.confirm(`ลบ Pairing preview เกม ${card.currentGame} และกลับไปสร้าง Pairing เกมนี้ใหม่? ผลและ Ranking ของเกมก่อนหน้าจะไม่เปลี่ยนแปลง`, {
-      title: "สร้าง Pairing ใหม่",
+    if (!await appDialog.confirm(`ลบตัวอย่างคู่แข่งขันเกม ${card.currentGame} และกลับไปสร้างคู่เกมนี้ใหม่? ผลและอันดับของเกมก่อนหน้าจะไม่เปลี่ยนแปลง`, {
+      title: "สร้างคู่แข่งขันใหม่",
       confirmLabel: "ดำเนินการต่อ",
       danger: true,
     })) return;
     const password = await appDialog.prompt("กรอกรหัสผ่านผู้อำนวยการเพื่อยืนยันการยกเลิกการจับคู่", {
-      title: "ยืนยัน Un-pairing",
+      title: "ยืนยันการยกเลิกการจับคู่",
       label: "รหัสผ่านผู้อำนวยการ",
       type: "password",
-      confirmLabel: "Un-pairing",
+      confirmLabel: "ยืนยันยกเลิกการจับคู่",
     });
     if (!password) return;
     setBusy(true);
     try { await undoPairing(id, password); }
-    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ", "Un-pairing ไม่สำเร็จ", true); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ", "ยกเลิกการจับคู่ไม่สำเร็จ", true); }
     finally { setBusy(false); }
   };
   const canUndo = canManageTournament(auth) && preview;
@@ -173,14 +171,14 @@ export default function TablesPage() {
 
   return (
     <>
-      <PageHeader eyebrow={`${card.name} · ${stageLabels[card.runtimeStage]}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ปรับ/สลับคู่ผู้เล่นได้ก่อนยืนยัน`} actions={<>{screeningAvailable && <PairingToolButtons card={card} />}{canUndo && <Button variant="secondary" onClick={undo} disabled={busy}><Undo2 size={16} />Un-pairing</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />Pairing เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>Finish pairing {navPending ? <LoaderCircle className="loading-spinner" size={16} /> : <ArrowRight size={16} />}</Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
+      <PageHeader eyebrow={`${card.name} · ${operatorStageLabels[card.runtimeStage]}`} title={`โต๊ะแข่งขัน · เกม ${card.currentGame}`} description={`${pairingRuleForGame(card, card.currentGame)} · ตรวจคู่ก่อนยืนยัน`} actions={<>{screeningAvailable && <PairingToolButtons card={card} modes={["place"]} />}{canUndo && <Button variant="danger" onClick={undo} disabled={busy}><Undo2 size={16} />ยกเลิกการจับคู่</Button>}{canGenerate ? <Button onClick={generate} disabled={busy}><Shuffle size={16} />สร้างคู่เกม {card.currentGame}</Button> : preview ? <Button variant="success" onClick={confirm} disabled={busy || previewPairings.length === 0}>ยืนยันคู่แข่งขัน {navPending ? <LoaderCircle className="loading-spinner" size={16} /> : <ArrowRight size={16} />}</Button> : <Link prefetch={false} href={`/cards/${id}/games`}><Button>ไปหน้าผลการแข่งขัน <ArrowRight size={16} /></Button></Link>}</>} />
 
       {!pairingActive ? (
         browseGames.length === 0 ? (
-          <Panel><EmptyState icon={<Shuffle size={25} />} title="ยังไม่มีเกมที่เผยแพร่" description="Pairing และอันดับแต่ละเกมจะปรากฏที่นี่หลังผู้อำนวยการ Publish ผล" /></Panel>
+          <Panel><EmptyState icon={<Shuffle size={25} />} title="ยังไม่มีเกมที่เผยแพร่" description="คู่แข่งขันและอันดับแต่ละเกมจะปรากฏที่นี่หลังผู้อำนวยการเผยแพร่ผล" /></Panel>
         ) : (
           <Panel
-            title={`Pairing เกม ${selectedBrowseGame}`}
+            title={`คู่แข่งขันเกม ${selectedBrowseGame}`}
             description="เลือกเกมเพื่อดูคู่แข่งขันที่เผยแพร่แล้ว"
             actions={
               <div className="overview-game-select">
@@ -195,7 +193,7 @@ export default function TablesPage() {
       ) : (
         <>
       {canGenerate && <ScreeningGenerationWarning pool={card.screeningPool ?? []} />}
-      {canGenerate && <Panel><EmptyState icon={<Shuffle size={25} />} title={`พร้อมสร้าง pairing เกม ${card.currentGame}`} description={card.currentGame === 1 ? "ระบบจะจัดกลุ่ม 4 คนต่อโต๊ะและลดการพบผู้เล่นโรงเรียนเดียวกัน" : `ใช้กติกา ${pairingRuleForGame(card, card.currentGame)} จากผลที่ publish แล้ว`} action={<Button onClick={generate} disabled={busy}><Shuffle size={16} />เริ่ม Pairing</Button>} /></Panel>}
+      {canGenerate && <Panel><EmptyState icon={<Shuffle size={25} />} title={`พร้อมสร้างคู่แข่งขันเกม ${card.currentGame}`} description={card.currentGame === 1 ? "ระบบจะจัดกลุ่ม 4 คนต่อโต๊ะและลดการพบผู้เล่นโรงเรียนเดียวกัน" : `ใช้กติกา ${pairingRuleForGame(card, card.currentGame)} จากผลที่เผยแพร่แล้ว`} action={<Button onClick={generate} disabled={busy}><Shuffle size={16} />เริ่มสร้างคู่</Button>} /></Panel>}
 
       {preview && (
         <>
@@ -209,7 +207,11 @@ export default function TablesPage() {
               <ArrowRight size={17} />
             </button>
           )}
-          <Panel title="สลับ/ปรับคู่ผู้เล่น" description="เลือกผู้เล่นสองคนเพื่อสลับตำแหน่งกัน · ปรับได้ทุกเกมก่อนยืนยัน ระบบจะเตือนหากทำให้โรงเรียนเดียวกันแข่งกัน">
+          <Panel className="pairing-preview-panel" title={`คู่แข่งขันที่กำลังตรวจสอบ · ${previewPairings.length} คู่`} description="หลักฐานก่อนยืนยัน · ตรวจลำดับคู่และสถานะผู้เล่นก่อนเปิดเครื่องมือปรับคู่">
+            <PairingGrid pairings={previewPairings} players={players} storageKey={`${id}:tables:preview`} rowIdPrefix={`gibson-pair-${id}`} />
+          </Panel>
+
+          <Panel title="ปรับคู่ผู้เล่น" description="ใช้เมื่อพบความผิดพลาดในตัวอย่างคู่เท่านั้น · การสลับต้องยืนยันรหัสผ่าน และระบบจะเตือนเรื่องสถาบันเดียวกัน">
             <div className="panel-padding swap-controls">
               <div className="form-field">
                 <label className="form-label" htmlFor="swap-first">ผู้เล่นคนที่ 1</label>
@@ -225,10 +227,6 @@ export default function TablesPage() {
               </div>
               <Button onClick={swap} disabled={busy || !players.has(firstId) || !players.has(secondId) || !pairingPassword}><RefreshCw size={16} />ยืนยันการสลับ</Button>
             </div>
-          </Panel>
-
-          <Panel title={`Pairing preview · ${previewPairings.length} คู่`} description="คู่แข่งขันของเกมนี้ก่อนยืนยัน · เลขที่นั่งนับจากบนลงล่าง (คู่ 1 = ที่นั่ง 1,2) · ผู้เล่น Gibsonized แสดงด้วยสีเหลือง">
-            <PairingGrid pairings={previewPairings} players={players} storageKey={`${id}:tables:preview`} rowIdPrefix={`gibson-pair-${id}`} />
           </Panel>
         </>
       )}
