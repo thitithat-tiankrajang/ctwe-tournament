@@ -9,12 +9,12 @@ import { parseSpectatorHash, spectatorHash, spectatorReportContextFromHistory, S
 import { searchCoverageComplete, searchParticipants, type SpectatorSearchCriteria, type SpectatorSearchResult } from "@/application/tournament/spectator-search";
 import { fetchSystemState, systemIsOff, type SystemState } from "@/infrastructure/http/system-state";
 import { useSpectatorSync } from "@/application/tournament/use-spectator-sync";
-import type { TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { CardOverviewView } from "@/ui/components/card-overview-view";
 import { EmptyState, PageHeader } from "@/ui/components/page";
 import { SpectatorFind } from "@/ui/components/spectator-find";
 import { SpectatorParticipation } from "@/ui/components/spectator-participation";
+import { browseGroups } from "@/ui/components/spectator-card-groups";
 import { cardStageInfo } from "@/ui/components/stage-info";
 
 function currentRoute(): SpectatorRoute {
@@ -303,15 +303,7 @@ export function TournamentViewer({ token }: { token: string }) {
     );
   }
 
-  const groupedCards = [...tournamentCards]
-    .sort((a, b) => a.name.localeCompare(b.name, "th", { numeric: true })
-      || a.division.localeCompare(b.division, "th", { numeric: true }))
-    .reduce<Map<string, TournamentCard[]>>((groups, card) => {
-      const group = groups.get(card.name) ?? [];
-      group.push(card);
-      groups.set(card.name, group);
-      return groups;
-    }, new Map());
+  const groups = browseGroups(tournamentCards, tournament.name);
 
   const browse = tournamentCards.length === 0 ? (
     <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีรุ่นการแข่งขัน" description="เมื่อผู้จัดเผยแพร่รุ่นการแข่งขัน รายการจะปรากฏที่นี่" />
@@ -319,11 +311,11 @@ export function TournamentViewer({ token }: { token: string }) {
     <section className="spectator-browse" aria-label="รายงานรายรุ่น">
       <h2 className="spectator-browse__title">รายงานรายรุ่น</h2>
       <div className="card-groups">
-        {[...groupedCards.entries()].map(([name, group]) => (
+        {groups.map(({ name, cards: group, titled }) => (
           <section className="card-group" key={name}>
-            {/* One group means the group's name is the tournament name the page header already
-                carries — a second copy of it is noise, not structure. */}
-            {groupedCards.size > 1 && <h3 className="card-group__title">{name}</h3>}
+            {/* The heading is the only place the game is named — the rows carry the division alone.
+                `browseGroups` drops it only when it would reprint the page header verbatim. */}
+            {titled && <h3 className="card-group__title">{name}</h3>}
             <div className="card-group__rows">
               {group.map((card) => {
                 const stage = cardStageInfo(card, "viewer");
