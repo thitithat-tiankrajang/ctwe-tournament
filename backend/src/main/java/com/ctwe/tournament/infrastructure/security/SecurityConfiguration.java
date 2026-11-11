@@ -92,12 +92,15 @@ public class SecurityConfiguration {
     @Bean
     SecurityFilterChain securityFilterChain(
         HttpSecurity http,
-        UrlBasedCorsConfigurationSource corsConfigurationSource
+        UrlBasedCorsConfigurationSource corsConfigurationSource,
+        LoginThrottle loginThrottle
     ) throws Exception {
         var csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepository.setCookiePath("/");
 
         return http
+            .addFilterBefore(new LoginThrottleFilter(loginThrottle),
+                org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .csrf(csrf -> csrf.csrfTokenRepository(csrfRepository))
             .authorizeHttpRequests(auth -> auth

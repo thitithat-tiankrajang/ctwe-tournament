@@ -6,6 +6,7 @@ import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
 import { hasStaffAccess } from "@/domain/tournament/roles";
 import { changedPairingSlots, changedResultPairings } from "./card-reconciliation";
+import { loginFailureMessage } from "./login-error";
 
 export interface AuthState {
   authenticated: boolean;
@@ -1044,7 +1045,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         credentials: "same-origin",
         cache: "no-store",
       });
-      if (!response.ok) throw new Error(response.status === 401 ? "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" : `เข้าสู่ระบบไม่สำเร็จ (${response.status})`);
+      if (!response.ok) throw new Error(loginFailureMessage(response.status, response.headers.get("Retry-After")));
       await get().refreshAuth();
       if (!get().auth.authenticated) throw new Error("สร้าง session เจ้าหน้าที่ไม่สำเร็จ");
       await get().load();
