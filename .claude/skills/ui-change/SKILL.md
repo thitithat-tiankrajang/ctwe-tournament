@@ -23,8 +23,9 @@ that sync point. Full guide (Thai, with the prototype → React file map): `docs
    server validation) intact; prototype fixtures/simulations are not ported.
 5. Verify: `npx tsc --noEmit -p .`, `npm test`, and for visible changes
    `node scripts/ui/compare-shots.mjs /tmp/ctwe-ui-shots <page-filter>` (needs headless Chrome on
-   9444; see the file header) and view the `-proto`/`-react` pairs. React runs as `next dev` on
-   http://127.0.0.1:3319 (the only origin the local backend accepts).
+   9444; see the file header) and view the `-proto`/`-react` pairs. React runs on
+   http://127.0.0.1:3319 (the only origin the local backend accepts) as a production build:
+   rebuild with `scripts/ui/serve-local.sh prod` after code changes (`dev` mode is far slower).
 6. When React fully matches: `scripts/ui/proto.sh synced`, and commit
    `docs/ui-workflow/prototype-synced` together with the React change. If something was left
    unported, do not mark synced; say what remains.

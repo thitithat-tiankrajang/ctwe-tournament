@@ -28,6 +28,7 @@ Prototype (`~/Desktop/CTWE-prototype`) คือแบบ UI/UX ที่ตก�
    node scripts/ui/compare-shots.mjs /tmp/ctwe-ui-shots director-games
    ```
    (ต้องเปิด headless Chrome ตามที่เขียนไว้หัวไฟล์ก่อน) ได้ภาพ `-proto.png` คู่กับ `-react.png`
+   หน้าที่เปิดดูที่ http://127.0.0.1:3319 เป็น production build (เร็วเท่าของจริง) แก้โค้ดแล้วต้อง build ใหม่ด้วย `scripts/ui/serve-local.sh prod` (ประมาณหนึ่งนาที ถ้า build ไม่ผ่านจะไม่หยุดตัวเดิม) ถ้ากำลังแก้ถี่ ๆ ใช้ `scripts/ui/serve-local.sh dev` ได้ แต่ทุกหน้าจะช้ากว่ามาก
 6. **บันทึกจุด sync** แล้ว commit ไปพร้อมกับโค้ด React
    ```bash
    scripts/ui/proto.sh synced
