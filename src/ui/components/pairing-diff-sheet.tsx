@@ -1,9 +1,8 @@
 "use client";
 
-import { ArrowRight, Ban, CircleAlert, LoaderCircle, ShieldAlert } from "lucide-react";
+import { Ban, CircleAlert, LoaderCircle, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import type { PairingValidation, Player } from "@/domain/tournament/types";
-import { Button } from "@/ui/components/button";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 
@@ -66,31 +65,29 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
     });
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
+    <div className="scrim prototype-dialog-scrim" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
       <section
         ref={dialog.ref as React.RefObject<HTMLElement>}
         tabIndex={-1}
-        className="confirm-dialog diff-sheet"
+        className="dialog dialog--consequential dialog--msw-confirm"
         role="dialog"
         aria-modal="true"
         aria-labelledby={dialog.titleId}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <h2 id={dialog.titleId}>ตรวจสอบก่อนบันทึก</h2>
-
-        <section className="diff-sheet__section">
-          <h3>การเปลี่ยนแปลงคู่</h3>
-          {validation.changes.length === 0 && <p className="page-description">ไม่มีคู่ที่เปลี่ยน</p>}
-          <ul className="diff-sheet__list">
-            {validation.changes.map((change) => (
-              <li key={`${change.game}-${change.table}`}>
-                <span className="diff-sheet__slot">เกม {change.game} คู่ที่ {change.table}</span>
-                <span className="diff-sheet__before">{name(change.beforeOne)} พบ {name(change.beforeTwo)}</span>
-                <ArrowRight size={13} aria-label="เปลี่ยนเป็น" />
-                <span className="diff-sheet__after">{name(change.afterOne)} พบ {name(change.afterTwo)}</span>
-              </li>
-            ))}
-          </ul>
+        <header className="dlg-head"><span className="dlg-eyebrow">ยืนยันการเปลี่ยนแปลง</span><h2 id={dialog.titleId}>บันทึกการแก้คู่?</h2></header>
+        <div className="dlg-body">
+        <section className="msw-summary" aria-label="การเปลี่ยนแปลงคู่">
+          <p className="msw-summary-count"><strong>{validation.changes.length} คู่ที่เปลี่ยน</strong></p>
+          {validation.changes.length > 0 && <div className="msw-summary-scroll"><table className="dt" aria-label="คู่แข่งขันก่อนและหลังสลับ">
+            <thead><tr><th scope="col">คู่</th><th scope="col">ก่อนสลับ</th><th scope="col">หลังสลับ</th></tr></thead>
+            <tbody>{validation.changes.map((change) => <tr key={`${change.game}-${change.table}`}>
+              <td><strong>คู่ {change.table}</strong><small className="meta"> · เกม {change.game}</small></td>
+              <td className="msw-summary-players"><span>{name(change.beforeOne)}</span><span>{name(change.beforeTwo)}</span></td>
+              <td className="msw-summary-players"><span className={change.beforeOne === change.afterOne ? undefined : "msw-summary-change"}>{name(change.afterOne)}</span>
+                <span className={change.beforeTwo === change.afterTwo ? undefined : "msw-summary-change"}>{name(change.afterTwo)}</span></td>
+            </tr>)}</tbody>
+          </table></div>}
         </section>
 
         {validation.consequences.length > 0 && (
@@ -159,29 +156,30 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
         )}
 
         {!blocked && (
-          <FreshSecretInput
+          <label className="field"><span>รหัสผ่านผู้อำนวยการ</span><FreshSecretInput className="input"
             placeholder="รหัสผ่านผู้อำนวยการเพื่อยืนยัน"
             value={password}
             aria-label="รหัสผ่านผู้อำนวยการเพื่อบันทึกการเปลี่ยนแปลงคู่"
             onChange={(event) => setPassword(event.target.value)}
-          />
+          /></label>
         )}
 
-        <footer>
-          <Button variant="secondary" onClick={onCancel}>กลับไปแก้ไข</Button>
+        </div>
+        <footer className="dlg-foot">
+          <button className="btn btn--secondary" type="button" onClick={onCancel}>กลับไปแก้ไข</button>
           {/* Offered only when every colliding result can actually be unwound — never as a button
               that would fail after the operator has already committed to it. */}
           {blocked && onForce && validation.resultsToRemove.length > 0 && validation.forceAvailable && (
-            <Button variant="danger" onClick={() => onForce([...acknowledged])} disabled={busy}>
+            <button type="button" className="btn btn--danger" onClick={() => onForce([...acknowledged])} disabled={busy}>
               <ShieldAlert size={14} />
               ลบผล {validation.resultsToRemove.length} คู่ แล้วบันทึก…
-            </Button>
+            </button>
           )}
           {!blocked && (
-            <Button onClick={() => onConfirm(password, [...acknowledged])} disabled={!canCommit}>
+            <button type="button" className="btn btn--primary" onClick={() => onConfirm(password, [...acknowledged])} disabled={!canCommit}>
               {busy ? <LoaderCircle className="loading-spinner" size={14} /> : null}
               บันทึกการเปลี่ยนแปลง
-            </Button>
+            </button>
           )}
         </footer>
       </section>

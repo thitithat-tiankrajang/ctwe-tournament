@@ -165,13 +165,13 @@ test("the entry grid's fields resolve to real groups, not just tags", () => {
   for (const key of ["pair", "score1", "score2", "diff", "action"]) assert.equal(groups[key], undefined);
 });
 
-test("no grid keeps a hand-written list of filterable keys", () => {
-  // The list and the `searchable: false` flags were two statements of one fact, free to disagree.
+test("score entry opens the same filter for either seat of a logical field", () => {
   const source = readFileSync(COMPONENT, "utf8");
   for (const stale of ["ENTRY_FILTER_KEYS", "VIEW_FILTER_KEYS", "ENTRY_CODE_GROUP"])
     assert.ok(!source.includes(stale), `${stale} is back - the menu list must be derived from the columns`);
-  assert.equal((source.match(/sortable: \(key\) => filterKeys\.includes\(key\)/g) ?? []).length, 2);
-  assert.equal((source.match(/filterable: \(key\) => filterKeys\.includes\(key\)/g) ?? []).length, 2);
+  assert.match(source, /const field = column\.field/);
+  assert.match(source, /toggleMenu\(event\.currentTarget, "filter", field\)/);
+  assert.match(source, /\[row\.pairing\?\.playerOneId, row\.pairing\?\.playerTwoId\]\.some/);
 });
 
 test("the winner column is its own field - it answers who won, not who played", () => {
@@ -276,9 +276,18 @@ test("void is internal - it never appears as a status the operator can pick", ()
 test("every competition score input is wheel-guarded", () => {
   // type=number steps on wheel while focused; these are the fields where that silently corrupts a
   // recorded result. Configuration inputs are deliberately left alone.
-  for (const [file, expected] of [["result-entry-grid.tsx", 5], ["override-editor.tsx", 2], ["final-round-board.tsx", 4]] as const) {
+  for (const [file, expected] of [["result-entry-grid.tsx", 5], ["override-editor.tsx", 1], ["final-round-board.tsx", 4]] as const) {
     const source = readFileSync(join(process.cwd(), "src", "ui", "components", file), "utf8");
-    assert.equal((source.match(/<ScoreInput/g) ?? []).length, expected, `${file} lost a ScoreInput`);
+    if (file === "result-entry-grid.tsx") {
+      assert.equal((source.match(/<EntryScoreInput/g) ?? []).length, expected, "entry lost a validated score field");
+      assert.match(source, /function EntryScoreInput[\s\S]*?<ScoreInput \{\.\.\.props\} type="text"/);
+    } else {
+      assert.equal((source.match(/<ScoreInput/g) ?? []).length, expected, `${file} lost a ScoreInput`);
+      if (file === "override-editor.tsx") {
+        const sheet = readFileSync(COMPONENT, "utf8");
+        for (const side of ["one", "two"]) assert.ok(sheet.includes(`renderScore(pairing, "${side}"`));
+      }
+    }
     assert.ok(!/<input[^>]*type="number"/.test(source), `${file} still has a raw number input`);
   }
 });

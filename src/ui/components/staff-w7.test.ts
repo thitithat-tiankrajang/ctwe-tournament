@@ -17,8 +17,8 @@ test("staff workflow stages distinguish pairing, entry, review, and publication"
 
 test("director pairing page presents preview evidence before manipulation controls", () => {
   const source = read("src/app/cards/[id]/tables/page.tsx");
-  const preview = source.indexOf('className="pairing-preview-panel"');
-  const controls = source.indexOf('<Panel title="ปรับคู่ผู้เล่น"');
+  const preview = source.indexOf('aria-label="ตารางคู่แข่งขัน"');
+  const controls = source.indexOf('className="panel preview-swap"');
   assert.ok(preview >= 0, "pairing preview panel should be present");
   assert.ok(controls >= 0, "pairing manipulation panel should be present");
   assert.ok(preview < controls, "operators should see evidence before editing controls");
@@ -26,11 +26,12 @@ test("director pairing page presents preview evidence before manipulation contro
 
 test("result entry keeps recording, review, and publication as distinct actions", () => {
   const source = read("src/app/cards/[id]/games/page.tsx");
-  assert.match(source, /title=\{reviewing \? "ตรวจผลการแข่งขัน"/);
+  assert.match(source, /reviewing \? \(isDirector \? "ตรวจผลการแข่งขัน" : "ผู้อำนวยการกำลังตรวจผล"\)/);
   assert.match(source, />ตรวจผล <ArrowRight/);
-  assert.match(source, /เผยแพร่ผล<\/Button>/);
+  assert.match(source, /เผยแพร่ผล \{blockLabel\}<\/Button>/);
   assert.match(source, /เผยแพร่คู่แข่งขัน เกม/);
-  assert.match(source, /operator-state-strip/);
+  assert.match(source, /ResultEntryGrid/);
+  assert.doesNotMatch(source, /คู่แข่งขันของเกมที่กำลังกรอกผล/);
 });
 
 test("conflict acknowledgement explains draft handling before continuing", () => {

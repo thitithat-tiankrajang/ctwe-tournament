@@ -5,7 +5,7 @@ import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { PromptDialog } from "@/ui/components/prompt-dialog";
 
 /** One app-wide queue for confirmations, password prompts, and blocking messages. */
-export function GlobalDialogHost() {
+export function GlobalDialogHost({ appearance }: { appearance?: "prototype" } = {}) {
   const request = useDialogStore((state) => state.queue[0]);
   const shift = useDialogStore((state) => state.shift);
   if (!request) return null;
@@ -14,6 +14,7 @@ export function GlobalDialogHost() {
     const close = (value: string | null) => { request.resolve(value); shift(); };
     return (
       <PromptDialog
+        appearance={appearance}
         key={request.id}
         open
         title={request.title}
@@ -33,6 +34,7 @@ export function GlobalDialogHost() {
     const close = () => { request.resolve(); shift(); };
     return (
       <ConfirmDialog
+        appearance={appearance}
         open
         title={request.title}
         description={request.description}
@@ -48,6 +50,7 @@ export function GlobalDialogHost() {
   const close = (confirmed: boolean) => { request.resolve(confirmed); shift(); };
   return (
     <ConfirmDialog
+      appearance={appearance}
       open
       title={request.title}
       description={request.description}

@@ -126,7 +126,7 @@ test("real finalists use canonical player identity targets", () => {
   assert.match(markup, /โรงเรียนสาธิตมหาวิทยาลัยศรีนครินทรวิโรฒ/);
 });
 
-test("public overview uses the spectator composition while staff keeps the operational board", () => {
+test("public and read-only back-office overviews both use the final composition, never the entry board", () => {
   const card = finalsCard("published");
   const context = { game: "final" as const, views: [], filter: { mode: "player" as const, playerIds: [], schools: [], query: "" }, scrollY: 0 };
   const publicMarkup = renderToStaticMarkup(React.createElement(CardOverviewView, {
@@ -138,5 +138,7 @@ test("public overview uses the spectator composition while staff keeps the opera
   const staffMarkup = renderToStaticMarkup(React.createElement(CardOverviewView, {
     cardId: card.id, card, initialSpectatorContext: null,
   }));
-  assert.match(staffMarkup, /final-slot-table/);
+  // The accepted design shows admin's read-only overview with the same final panel as the viewer.
+  assert.match(staffMarkup, /fin__matches/);
+  assert.doesNotMatch(staffMarkup, /final-summary-form/);
 });

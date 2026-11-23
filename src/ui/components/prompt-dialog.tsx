@@ -19,6 +19,7 @@ interface PromptDialogProps {
   danger?: boolean;
   /** Header accent above the title. */
   eyebrow?: string;
+  appearance?: "prototype";
   /**
    * Type-to-confirm guard for irreversible actions. When set, an extra text field appears and the
    * dialog cannot be submitted until the operator retypes this exact phrase (trimmed). The phrase is
@@ -52,6 +53,7 @@ export function PromptDialog({
   busy = false,
   danger = false,
   eyebrow = "ยืนยันการดำเนินการ",
+  appearance,
   confirmationPhrase,
   confirmationLabel,
   error,
@@ -84,22 +86,18 @@ export function PromptDialog({
   const submit = () => { if (valid && !busy) onSubmit(value); };
   const submitSecondary = () => { if (valid && !busy && onSecondarySubmit) onSecondarySubmit(value); };
 
-  return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
-      <section ref={dialog.ref as React.RefObject<HTMLElement>} tabIndex={-1} className={`confirm-dialog${danger ? " confirm-dialog--danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby={dialog.titleId} onMouseDown={(event) => event.stopPropagation()}>
-        <header>
-          <div className="confirm-dialog__icon"><KeyRound size={20} /></div>
-          <div><span>{eyebrow}</span><h2 id={dialog.titleId}>{title}</h2></div>
-          <button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={busy} onClick={onCancel}><X size={18} /></button>
-        </header>
-        {description && <p>{description}</p>}
+  const prototype = appearance === "prototype";
+  const inputId = `${dialog.titleId}-input`;
+  const phraseId = `${dialog.titleId}-phrase`;
+  const fields = <>
+        {description && <p id={dialog.descriptionId}>{description}</p>}
         {confirmationPhrase && (
           <>
-            <label className="form-label" htmlFor="prompt-dialog-phrase">
+            <label className="form-label" htmlFor={phraseId}>
               {confirmationLabel ?? `พิมพ์ "${confirmationPhrase}" เพื่อยืนยัน`}
             </label>
             <input
-              id="prompt-dialog-phrase"
+              id={phraseId}
               className="input"
               type="text"
               value={phrase}
@@ -110,11 +108,11 @@ export function PromptDialog({
             />
           </>
         )}
-        <label className="form-label" htmlFor="prompt-dialog-input">{label}</label>
+        <label className="form-label" htmlFor={inputId}>{label}</label>
         {type === "password" ? (
           <FreshSecretInput
             ref={inputRef}
-            id="prompt-dialog-input"
+            id={inputId}
             className="input"
             value={value}
             placeholder={placeholder}
@@ -125,7 +123,7 @@ export function PromptDialog({
         ) : (
           <input
             ref={inputRef}
-            id="prompt-dialog-input"
+            id={inputId}
             className="input"
             type="text"
             value={value}
@@ -136,7 +134,27 @@ export function PromptDialog({
             onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } }}
           />
         )}
-        {error && <div className="confirm-dialog__error" role="alert">{error}</div>}
+        {error && <div className={prototype ? "dlg-err" : "confirm-dialog__error"} role="alert">{error}</div>}
+  </>;
+
+  return (
+    <div className={prototype ? "scrim prototype-dialog-scrim" : "dialog-backdrop"} role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
+      <section ref={dialog.ref as React.RefObject<HTMLElement>} tabIndex={-1}
+        className={prototype ? `dialog ${danger ? "dialog--destructive" : "dialog--consequential"}` : `confirm-dialog${danger ? " confirm-dialog--danger" : ""}`}
+        role="dialog" aria-modal="true" aria-labelledby={dialog.titleId} aria-describedby={description ? dialog.descriptionId : undefined} onMouseDown={(event) => event.stopPropagation()}>
+        {prototype ? <header className="dlg-head">
+          <span className="dlg-eyebrow"><KeyRound size={15} />{eyebrow}</span><h2 id={dialog.titleId}>{title}</h2>
+        </header> : <header>
+          <div className="confirm-dialog__icon"><KeyRound size={20} /></div>
+          <div><span>{eyebrow}</span><h2 id={dialog.titleId}>{title}</h2></div>
+          <button className="confirm-dialog__close" type="button" aria-label="ปิด" disabled={busy} onClick={onCancel}><X size={18} /></button>
+        </header>}
+        {prototype ? <div className="dlg-body">{fields}</div> : fields}
+        {prototype ? <footer className="dlg-foot">
+          <button className="btn btn--secondary" type="button" disabled={busy} onClick={onCancel}>ยกเลิก</button>
+          {secondaryConfirmLabel && onSecondarySubmit && <button className="btn btn--secondary" type="button" disabled={busy || !valid} onClick={submitSecondary}>{secondaryConfirmLabel}</button>}
+          <button className={`btn ${danger ? "btn--danger" : "btn--primary"}`} type="button" disabled={busy || !valid} onClick={submit}>{busy ? "กำลังดำเนินการ…" : confirmLabel}</button>
+        </footer> : (
         <footer>
           <Button variant="secondary" disabled={busy} onClick={onCancel}>ยกเลิก</Button>
           {secondaryConfirmLabel && onSecondarySubmit && (
@@ -147,7 +165,7 @@ export function PromptDialog({
           <Button disabled={!valid} loading={busy} loadingLabel="กำลังดำเนินการ…" onClick={submit}>
             {confirmLabel}
           </Button>
-        </footer>
+        </footer>)}
       </section>
     </div>
   );

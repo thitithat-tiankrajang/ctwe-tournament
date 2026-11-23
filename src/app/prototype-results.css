@@ -1,0 +1,27 @@
+/* The app shell supplies the same .content wrapper as the standalone prototype. */
+.ctwe-prototype .director-score { display: contents; }
+
+.ctwe-prototype .director-score .gscroll {
+  border: 0;
+  min-height: 0;
+  padding-inline-end: 0;
+}
+.ctwe-prototype .director-score table.score-review-table { min-width: 860px; }
+.ctwe-prototype .director-score .score-override-input { width: 58px; }
+.ctwe-prototype .director-score .score-empty { height: 60px; }
+
+/* Keep the password visibility control functional while retaining the prototype field width. */
+.ctwe-prototype .director-tools .score-swap-password { width: 107px; }
+.ctwe-prototype .director-tools .score-swap-password input { padding-inline-end: 28px; }
+.ctwe-prototype .director-tools .score-swap-password .fresh-secret-input__toggle {
+  color: #dce9fa;
+  height: 26px;
+  inset-inline-end: 1px;
+  width: 26px;
+}
+@container (max-width: 490px) {
+  .ctwe-prototype .director-tools .score-swap-password { grid-column: 3 / 5; width: auto; }
+}
+@media (max-width: 768px) {
+  .ctwe-prototype .score-entry-table .rz { display: none; }
+}
