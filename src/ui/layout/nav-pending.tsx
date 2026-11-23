@@ -24,9 +24,9 @@ import { useLinkStatus } from "next/link";
  * Note this covers `<Link>` clicks only. `router.push` navigations are not tracked by
  * `useLinkStatus` at all; those report through `useNavigateWithPending`.
  */
-export function NavLinkIcon({ icon: Icon, size = 18 }: { icon: LucideIcon; size?: number }) {
+export function NavLinkIcon({ icon: Icon, size = 18, className }: { icon: LucideIcon; size?: number; className?: string }) {
   const { pending } = useLinkStatus();
   return pending
-    ? <LoaderCircle className="loading-spinner" size={size} aria-hidden="true" />
-    : <Icon size={size} aria-hidden="true" />;
+    ? <LoaderCircle className={className ? `${className} spin nav-spin` : "loading-spinner"} size={size} aria-hidden="true" />
+    : <Icon className={className} size={size} aria-hidden="true" />;
 }

@@ -1769,3 +1769,43 @@
 /* Back-office report block (overview): ranking and pairing side by side when there is room. */
 .ctwe-prototype .report-grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); align-items:start; }
 .ctwe-prototype .report-grid--stack { grid-template-columns:minmax(0,1fr); }
+
+/* Revision 20 — top-bar background check, pending navigation, stage timeline. */
+.ctwe-prototype .app--op .topbar { position:relative; }
+.ctwe-prototype .app--op .topbar::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; pointer-events:none; opacity:0; transition:opacity .2s var(--ease);
+  background:linear-gradient(90deg, transparent, var(--blue) 45%, var(--blue) 55%, transparent) no-repeat; background-size:38% 100%; background-position:-40% 0; }
+.ctwe-prototype .app--op .topbar.topbar--syncing::after, .ctwe-prototype .app--op .topbar:has(.syncind--checking)::after { opacity:1; animation:ctwe-r20-sync-sweep 1.15s cubic-bezier(.45,.05,.35,1) infinite; }
+@keyframes ctwe-r20-sync-sweep { from { background-position:-40% 0; } to { background-position:140% 0; } }
+.ctwe-prototype .syncind-host { display:contents; }
+.ctwe-prototype .syncind { display:inline-flex; align-items:center; gap:6px; min-height:28px; font-size:12.5px; font-weight:600; color:var(--blue-on-soft); white-space:nowrap; animation:ctwe-r20-syncind-in .18s var(--ease); }
+.ctwe-prototype .syncind .spin { color:var(--blue); }
+.ctwe-prototype .syncind--fail { color:var(--yellow-on-soft); }
+.ctwe-prototype .syncind--fail > svg { color:var(--yellow-dark); }
+.ctwe-prototype .syncind__retry { margin-left:2px; }
+@keyframes ctwe-r20-syncind-in { from { opacity:0; transform:translateY(-2px); } to { opacity:1; transform:none; } }
+.ctwe-prototype .is-pending { cursor:progress; }
+.ctwe-prototype .nav-spin { color:var(--sidebar-accent); }
+.ctwe-prototype .mobile-nav .is-pending .nav-spin, .ctwe-prototype .crumbs .is-pending .nav-spin { color:var(--blue); }
+.ctwe-prototype .flow { list-style:none; margin:2px 0 0; padding:0 0 2px; display:flex; overflow-x:auto; scrollbar-width:none; position:relative; }
+.ctwe-prototype .flow::-webkit-scrollbar { display:none; }
+.ctwe-prototype .flow__s { flex:1 0 64px; display:grid; justify-items:center; align-content:start; gap:3px; position:relative; text-align:center; min-width:64px; }
+.ctwe-prototype .flow__s::before { content:""; position:absolute; top:8px; right:50%; width:100%; height:2px; background:var(--border); z-index:0; }
+.ctwe-prototype .flow__s:first-child::before { display:none; }
+.ctwe-prototype .flow__s--done::before, .ctwe-prototype .flow__s--current::before { background:var(--blue); transform-origin:left; animation:ctwe-r20-flow-fill .5s var(--ease) both; }
+.ctwe-prototype .flow__dot { position:relative; z-index:1; width:18px; height:18px; border-radius:50%; display:grid; place-items:center; background:var(--surface); border:2px solid var(--border-strong); color:#fff; }
+.ctwe-prototype .flow__s--done .flow__dot { background:var(--blue); border-color:var(--blue); }
+.ctwe-prototype .flow__s--current .flow__dot { border-color:var(--blue); box-shadow:0 0 0 3px var(--blue-soft); }
+.ctwe-prototype .flow__s--current .flow__dot::after { content:""; width:6px; height:6px; border-radius:50%; background:var(--blue); }
+.ctwe-prototype .flow__l { font-size:11.5px; color:var(--muted); white-space:nowrap; }
+.ctwe-prototype .flow__s--done .flow__l { color:var(--ink-soft); }
+.ctwe-prototype .flow__s--current .flow__l { color:var(--ink-strong); font-weight:700; }
+.ctwe-prototype .flow__sub { font-size:11px; font-weight:600; color:var(--blue-on-soft); white-space:nowrap; }
+@keyframes ctwe-r20-flow-fill { from { transform:scaleX(0); } to { transform:none; } }
+.ctwe-prototype .app--mob .flow__s { flex-basis:58px; min-width:58px; }
+@media (prefers-reduced-motion: reduce) {
+  .ctwe-prototype .app--op .topbar.topbar--syncing::after, .ctwe-prototype .app--op .topbar:has(.syncind--checking)::after { animation:none; background-position:50% 0; }
+  .ctwe-prototype .syncind, .ctwe-prototype .flow__s::before { animation:none !important; }
+  .ctwe-prototype .syncind .spin, .ctwe-prototype .nav-spin { animation-duration:2.4s; }
+}
+
+.ctwe-prototype .crumb-stage-menu .nav-spin { color:var(--blue); }

@@ -52,6 +52,9 @@ case "${1:-status}" in
       /^\+[^+]/ || /^\+$/ { add++ } /^-[^-]/ || /^-$/ { del++ }
       END { if (hdr) printf "%-90s +%d -%d\n", hdr, add, del }' | awk '{ key = $0; sub(/ +\+[0-9]+ -[0-9]+$/, "", key); n[key]++; a[key] += $(NF-1); d[key] += $NF; if (!(key in seen)) { order[++k] = key; seen[key] = 1 } }
       END { for (i = 1; i <= k; i++) { key = order[i]; printf "%s  (%d hunk%s, +%d -%d)\n", substr(key, 1, 110), n[key], (n[key] > 1 ? "s" : ""), a[key], -d[key] } }'
+    echo "== definitions added (+) / removed (-) inside those hunks"
+    pgit diff -U0 "$b" HEAD -- $UI | grep -E '^[+-](async )?function [A-Za-z0-9_$]+|^[+-](const|let) [A-Za-z0-9_$]+ *=|^[+-]S\.[A-Za-z]+ *=|^[+-][.#@a-zA-Z][^{;]*\{' \
+      | grep -vE '^(\+\+\+|---)' | sed -E 's/\{.*$/{/; s/^(.{1,110}).*/\1/' | sort | uniq -c | sort -k2 | awk '{ $1 = ($1 > 1 ? "×" $1 : ""); print }' | sed 's/^ //'
     ;;
   diff)
     b="$(base)"

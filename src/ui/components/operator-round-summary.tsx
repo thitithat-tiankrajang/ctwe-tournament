@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, ChevronDown, ChevronRight, ClipboardCheck, FileDown, Flag, Gamepad2, LockKeyhole, TableProperties, Trophy, Users } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { StageTimeline, stageShort, stageSteps } from "@/ui/components/stage-timeline";
 import { useRouter } from "next/navigation";
 import { useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
@@ -88,6 +89,7 @@ export function OperatorRoundSummary({ card, role, nextHref, finalBoard, documen
       <div className="overview-task-main"><span className="overview-task-icon" aria-hidden><task.icon className="i" size={21} /></span>
         <div className="overview-task-copy"><h2>{task.title}</h2>{task.body && <p>{task.body}</p>}</div>{task.action}
       </div>
+      <StageTimeline steps={stageSteps(card, active.length ? `${stageShort[card.runtimeStage] ?? ""} ${progress}/${active.length}` : stageShort[card.runtimeStage] ?? "")} />
       {active.length > 0 && <div className="overview-progress">
         <progress value={progress} max={active.length} aria-label="คู่ที่บันทึกผลแล้ว" />
         <span><strong>{progress}/{active.length}</strong> บันทึกแล้ว</span>

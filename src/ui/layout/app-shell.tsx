@@ -4,7 +4,7 @@ import { isSpectatorRoute } from "@/application/tournament/spectator-route";
 import { publicDivisionPayload, spectatorDivision } from "@/application/tournament/spectator-read-model";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { Activity, ArrowRight, ChevronDown, ChevronRight, Code2, Eye, FileClock, Folder, FolderOpen, Gamepad2, Layers, LogOut, Menu, PanelLeft, Search, ShieldCheck, TableProperties, Trophy, UserCog, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, ArrowRight, ChevronDown, LoaderCircle, ChevronRight, Code2, Eye, FileClock, Folder, FolderOpen, Gamepad2, Layers, LogOut, Menu, PanelLeft, Search, ShieldCheck, TableProperties, Trophy, UserCog, Users, X, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { isAuthPending, selectAuthStatus } from "@/application/tournament/auth-status";
 import { readActiveTournament, selectCardList, useTournamentStore, type CardListRow } from "@/application/tournament/store";
@@ -19,7 +19,8 @@ import { toast } from "@/application/ui/toast";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { Toaster } from "@/ui/components/toaster";
 import { GlobalDialogHost } from "@/ui/components/global-dialog-host";
-import { CardWakeReconciliationNotice } from "@/ui/components/card-wake-reconciliation-notice";
+import { CardSyncIndicator } from "@/ui/components/card-wake-reconciliation-notice";
+import { NavLinkIcon } from "@/ui/layout/nav-pending";
 import { SpectatorParticipation } from "@/ui/components/spectator-participation";
 import { operatorStageLabels } from "@/ui/components/stage-info";
 import { PrototypeViewerHelp } from "@/ui/components/prototype-spectator-chrome";
@@ -91,14 +92,14 @@ const fold = <span className="fold" aria-hidden><Folder className="i f-closed" s
 function RailLink({ item, current, onNavigate, ariaLabel }: { item: NavEntry; current?: boolean; onNavigate?: () => void; ariaLabel?: string }) {
   return <Link prefetch={false} scroll={false} href={item.href} className="rail__i rail-action" aria-label={ariaLabel ?? item.label} title={ariaLabel ?? item.label}
     aria-current={current ? "page" : undefined} onClick={onNavigate}>
-    <span className="rail-icon">{icon(item.icon)}</span>
+    <span className="rail-icon"><NavLinkIcon icon={item.icon} size={18} className="i" /></span>
     <span className="rail-label" aria-hidden>{item.label}</span>
   </Link>;
 }
 
 function PageLink({ item, path, next, onNavigate }: { item: NavEntry; path: string; next?: string; onNavigate?: () => void }) {
   return <Link prefetch={false} scroll={false} href={item.href} className="nav-link" aria-current={item.href === path ? "page" : undefined} onClick={onNavigate}>
-    {icon(item.icon, 15)}<span>{item.label}</span>
+    <NavLinkIcon icon={item.icon} size={15} className="i" /><span>{item.label}</span>
     <span className="next-flag" hidden={item.href !== next || item.href === path}>ทำต่อ{icon(ArrowRight, 11)}</span>
   </Link>;
 }
@@ -157,6 +158,7 @@ function OperationalShell({ children }: { children: ReactNode }) {
   const [peek, setPeek] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [switchOpen, setSwitchOpen] = useState<false | "rail" | "sheet">(false);
   const [loadedTournaments, setLoadedTournaments] = useState<{ username: string | null; choices: Tournament[] } | null>(null);
   const [switchStatus, setSwitchStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -238,6 +240,7 @@ function OperationalShell({ children }: { children: ReactNode }) {
     element.classList.add("page-enter");
   }, [pathname]);
   useEffect(() => {
+    setPendingHref(null);
     if (crumbs.current) crumbs.current.open = false;
     setSheetOpen(false);
     setSwitchOpen(false);
@@ -370,7 +373,7 @@ function OperationalShell({ children }: { children: ReactNode }) {
               </button>
               <div className="tkids" inert={!expanded}><div className="tkids-in tkids-in--pages">
                 {cardLinks(card.id, operator, director, admin).map((item) => <PageLink key={item.href} item={item} path={pathname}
-                  next={operator ? stageHref(card.id, card.runtimeStage) : undefined} onNavigate={mobileTree ? () => setSheetOpen(false) : undefined} />)}
+                  next={operator ? stageHref(card.id, card.runtimeStage) : undefined} />)}
               </div></div>
             </div>;
           })}
@@ -495,8 +498,8 @@ function OperationalShell({ children }: { children: ReactNode }) {
                     <div className="pop crumb-stage-menu">
                       <h2>{currentCard.division}</h2>
                       {pages.map((item) => <Link key={item.href} prefetch={false} scroll={false} href={item.href}
-                        aria-current={item.href === pathname ? "page" : undefined} onClick={() => { if (crumbs.current) crumbs.current.open = false; }}>
-                        {icon(item.icon, 15)}<span>{item.label}</span>{item.href === workflow && <small>ทำต่อ</small>}
+                        aria-current={item.href === pathname ? "page" : undefined}>
+                        <NavLinkIcon icon={item.icon} size={15} className="i" /><span>{item.label}</span>{item.href === workflow && <small>ทำต่อ</small>}
                       </Link>)}
                     </div>
                   </details>{icon(ChevronRight, 13)}
@@ -504,11 +507,13 @@ function OperationalShell({ children }: { children: ReactNode }) {
                 <strong aria-current="page">{authPending ? "กำลังตรวจสอบสิทธิ์…" : activePage}</strong>
               </nav>
             )}
+            {mobile && isStaff && <CardSyncIndicator cardId={id} compact />}
             {mobile && isStaff && (readOnlyTag ?? (showTopStat && currentCard && <span className="topstat topstat--mob">
               <span className={`strip strip--${cardStatus(currentCard)[0]}`} /><span className="count">{cardStatus(currentCard)[2]}</span>
               <span className="sr">{cardStatus(currentCard)[1]}</span>
             </span>))}
             {!mobile && <><span className="spacer" />
+              {isStaff && <CardSyncIndicator cardId={id} />}
               <span className="topchip">
                 {showTopStat && currentCard && <span className="topstat">
                   <span className={`strip strip--${cardStatus(currentCard)[0]}`} /><span>{cardStatusLine(currentCard)}</span>
@@ -520,14 +525,15 @@ function OperationalShell({ children }: { children: ReactNode }) {
             {isStaff && <OperatorSearch tournamentId={tournamentId} tournamentName={tourName} cardId={id} cardKeys={sportGroups.flatMap(([, cards]) => cards.map((card) => card.id))} />}
           </header>
           <div className="scroller" ref={scroll}>
-            <CardWakeReconciliationNotice cardId={isStaff ? id : undefined} />
             <main className="content" ref={content}>{children}</main>
           </div>
           <nav className="mobile-nav" aria-label="เมนูมือถือ" hidden={!mobile || navItems.length < 2}>
             {navItems.map((item) => <button type="button" key={item.href} aria-current={item.href === pathname ? "page" : undefined}
-              aria-label={`${item.label}${item.href === workflow && item.href !== pathname ? " (ทำต่อ)" : ""}`} onClick={() => router.push(item.href, { scroll: false })}>
+              aria-busy={pendingHref === item.href || undefined} className={pendingHref === item.href ? "is-pending" : undefined}
+              aria-label={`${item.label}${item.href === workflow && item.href !== pathname ? " (ทำต่อ)" : ""}`}
+              onClick={() => { if (item.href !== pathname) { setPendingHref(item.href); router.push(item.href, { scroll: false }); } }}>
               {item.href === workflow && item.href !== pathname && <span className="dot-next" aria-hidden />}
-              {icon(item.icon, 19)}<span aria-hidden>{item.label}</span>
+              {pendingHref === item.href ? <LoaderCircle className="i spin nav-spin" size={19} aria-hidden /> : icon(item.icon, 19)}<span aria-hidden>{item.label}</span>
             </button>)}
           </nav>
         </div>
@@ -547,7 +553,7 @@ function OperationalShell({ children }: { children: ReactNode }) {
             </div>}
             <div className="sidebar-like">
               {shortcuts.length > 0 && <p className="nav-label">ระบบ</p>}
-              {shortcuts.map((item) => <PageLink key={item.href} item={item} path={pathname} onNavigate={() => setSheetOpen(false)} />)}
+              {shortcuts.map((item) => <PageLink key={item.href} item={item} path={pathname} />)}
               {tournamentTitle && <p className="nav-label">{tournamentTitle}</p>}
               {renderTree(true)}
             </div>

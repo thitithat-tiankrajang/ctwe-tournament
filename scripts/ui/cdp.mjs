@@ -56,6 +56,17 @@ async function attach(target, port) {
 
 /** Log into the local real app with a role from ~/.ctwe-local (values never printed). */
 export async function login(p, role, base = "http://127.0.0.1:3319") {
+  // The dev server may still be compiling the login page; confirm the session and retry once.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const at = await loginOnce(p, role, base);
+    const ok = await p.ev(`const r = await fetch('/api/auth/me', { cache: 'no-store' }); return (await r.json()).authenticated === true`).catch(() => false);
+    if (ok) return at;
+    await sleep(2000);
+  }
+  throw new Error(`login as ${role} did not establish a session`);
+}
+
+async function loginOnce(p, role, base) {
   const env = Object.fromEntries(readFileSync(`${process.env.HOME}/.ctwe-local/prototype-port-accounts.env`, "utf8").split("\n").filter((l) => l.includes("=")).map((l) => { const i = l.indexOf("="); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^['"]|['"]$/g, "")]; }));
   const user = `ctwe-local-${role}`; const secret = env[`CTWE_LOCAL_${role.toUpperCase()}_PASSWORD`];
   await p.go(`${base}/staff-login`, 2500);

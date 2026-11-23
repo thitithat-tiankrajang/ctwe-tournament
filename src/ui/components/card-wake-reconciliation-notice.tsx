@@ -1,10 +1,14 @@
 "use client";
 
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
 import { useTournamentStore } from "@/application/tournament/store";
-import { Button } from "./button";
 
-export function CardWakeReconciliationNotice({ cardId }: { cardId?: string }) {
+/**
+ * The background check after the tab comes back (wake reconciliation), shown in the top bar so the
+ * page below never moves: a quiet status while checking (the top bar also draws a sweeping
+ * hairline through `.topbar:has(.syncind--checking)`), and a warning with retry if it failed.
+ */
+export function CardSyncIndicator({ cardId, compact = false }: { cardId?: string; compact?: boolean }) {
   const state = useTournamentStore((store) =>
     store.wakeReconciliation?.cardId === cardId ? store.wakeReconciliation : null);
   const reconcileCard = useTournamentStore((store) => store.reconcileCard);
@@ -13,26 +17,21 @@ export function CardWakeReconciliationNotice({ cardId }: { cardId?: string }) {
 
   if (state.status === "checking") {
     return (
-      <div className="notice notice--info" role="status" aria-live="polite">
-        <LoaderCircle className="loading-spinner" size={18} aria-hidden="true" />
-        <p>
-          <strong>กำลังตรวจสอบข้อมูลล่าสุด</strong>
-          <span>กำลังตรวจสอบการเปลี่ยนแปลงจากผู้ใช้อื่น</span>
-        </p>
-      </div>
+      <span className="syncind syncind--checking" role="status" aria-live="polite" title="กำลังตรวจสอบการเปลี่ยนแปลงจากผู้ใช้อื่น">
+        <LoaderCircle className="i spin" size={15} aria-hidden="true" />
+        <span className={compact ? "sr" : "syncind__t"}>กำลังตรวจสอบข้อมูลล่าสุด</span>
+      </span>
     );
   }
 
   return (
-    <div className="notice notice--warning" role="alert">
-      <p>
-        <strong>ยังตรวจสอบข้อมูลล่าสุดไม่ได้</strong>
-        <span>ข้อมูลบนหน้านี้อาจยังไม่เป็นปัจจุบัน</span>
-      </p>
-      <Button size="sm" variant="secondary" onClick={() => void reconcileCard(cardId)}>
-        <RefreshCw size={15} aria-hidden="true" />
-        ลองอีกครั้ง
-      </Button>
-    </div>
+    <span className="syncind syncind--fail" role="alert">
+      <TriangleAlert className="i" size={15} aria-hidden="true" />
+      <span className={compact ? "sr" : "syncind__t"}>ยังตรวจสอบข้อมูลล่าสุดไม่ได้</span>
+      <button type="button" className="btn btn--sm btn--secondary syncind__retry" aria-label="ตรวจสอบข้อมูลล่าสุดอีกครั้ง"
+        onClick={() => void reconcileCard(cardId)}>
+        <RefreshCw className="i" size={13} aria-hidden="true" />{compact ? null : "ลองอีกครั้ง"}
+      </button>
+    </span>
   );
 }

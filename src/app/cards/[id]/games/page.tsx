@@ -37,8 +37,23 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
   onRevokePenalty: (pairing: Pairing) => void;
 }) {
   const [rankingGame, setRankingGame] = useState<number | null>(null);
-  const [editGame, setEditGame] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Published results are read-only until the director re-enters the password for that game.
+  const verifyPassword = useTournamentStore((state) => state.verifyPassword);
+  const [unlocked, setUnlocked] = useState<number | null>(null);
+  const [asking, setAsking] = useState<number | null>(null);
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwError, setPwError] = useState("");
+  const askUnlock = (game: number) => { setPwError(""); setAsking(game); };
+  const confirmUnlock = async (password: string) => {
+    if (!password || asking === null) return;
+    setPwBusy(true); setPwError("");
+    try {
+      if (await verifyPassword(password)) { setUnlocked(asking); setAsking(null); }
+      else setPwError("รหัสผ่านไม่ถูกต้อง");
+    } catch { setPwError("ตรวจสอบรหัสผ่านไม่สำเร็จ"); }
+    finally { setPwBusy(false); }
+  };
   const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const games = [...new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers))].sort((a, b) => a - b);
   const latest = games[games.length - 1] ?? 0;
@@ -46,6 +61,10 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
   const rankingCard = { ...card, snapshots: publishedSnapshots };
   const ranked = selected > 0 ? rankingAfterGame(rankingCard, selected) : [];
   const selectedPlayer = selectedId ? players.get(selectedId) : undefined;
+  const publishedPairingsForGame = (game: number) => {
+    const snapshot = publishedSnapshots.find((item) => item.gameNumbers.includes(game));
+    return snapshot?.pairings.filter((pairing) => (pairing.gameNumber ?? game) === game) ?? [];
+  };
 
   return (
     <>
@@ -53,28 +72,27 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
         <section className="panel" aria-label="อันดับหลังจบเกม">
           <div className="panel-head"><h2>อันดับ · หลังเกม {selected}</h2><span className="desc">คะแนนชัยชนะและผลต่างสะสม</span>
             <span className="actions"><SelectMenu appearance="prototype" ariaLabel="เลือกเกมสำหรับอันดับ" value={String(selected)}
-              options={games.map((game) => ({ value: String(game), label: `เกม ${game}` }))} onChange={(value) => setRankingGame(Number(value))} /></span></div>
+              options={games.map((game) => ({ value: String(game), label: `เกม ${game}${game === latest ? " · ล่าสุด" : ""}` }))}
+              onChange={(value) => { const game = Number(value); setRankingGame(game); setUnlocked(null); if (canEdit && game !== latest) askUnlock(game); }} /></span></div>
           <RankingGrid ranked={ranked} storageKey={`${card.id}:games:ranking`} resetKey={String(selected)} onRowClick={(player) => setSelectedId(player.id)} activeId={selectedId} />
         </section>
       ) : (
         <div className="notice notice--quiet"><p>ยังไม่มีอันดับที่เผยแพร่</p></div>
       )}
 
-      {canEdit && games.length > 0 && (() => {
-        const target = editGame && games.includes(editGame) ? editGame : selected;
-        const snap = publishedSnapshots.find((s) => s.gameNumbers.includes(target));
-        const editPairings = snap?.pairings.filter((p) => (p.gameNumber ?? target) === target) ?? [];
-        const slots: EntrySlot[] = [...editPairings].sort((a, b) => a.tableNumber - b.tableNumber).map((p) => ({ tableNumber: p.tableNumber, pairing: p, isVoid: isVoidPairing(p) }));
-        const maxDiff = card.games.find((g) => g.number === target)?.maxDiff ?? 350;
-        return (
-          <section className="panel director-grid-panel" aria-label="แก้ไขผลเกมที่เผยแพร่แล้ว">
-            <div className="panel-head"><h2>ผลย้อนหลัง</h2><span className="actions"><SelectMenu appearance="prototype" ariaLabel="เลือกเกมย้อนหลัง" value={String(target)}
-              options={games.map((game) => ({ value: String(game), label: `เกม ${game}` }))} onChange={(value) => setEditGame(Number(value))} /></span></div>
-            <div className="panel-body"><div className="notice notice--warning"><LockKeyhole size={15} /><p><strong>การแก้ผลที่เผยแพร่แล้วมีผลต่ออันดับทันที</strong><span>ระบบบันทึกกิจกรรมทุกครั้ง</span></p></div></div>
-            <ResultEntryGrid key={target} gameNumber={target} codePrefix={card.codePrefix} slots={slots} players={players} maxDiff={maxDiff} storageKey={`${card.id}:override:${target}`} onSubmit={(pairing, scoreOne, scoreTwo) => onOverride(pairing.id, scoreOne, scoreTwo)} onRevokePenalty={onRevokePenalty} />
-          </section>
-        );
-      })()}
+      {games.length > 0 && <section className="panel director-grid-panel" aria-label={`ผล เกม ${selected}`}>
+        <div className="panel-head"><h2>ผล เกม {selected}</h2><span className="desc">{canEdit && unlocked === selected ? "โหมดแก้ไข" : "ดูอย่างเดียว"}</span>
+          {canEdit && unlocked !== selected && <span className="actions"><button type="button" className="btn btn--sm btn--secondary" onClick={() => askUnlock(selected)}>
+            <LockKeyhole className="i" size={13} />แก้ไขผล</button></span>}</div>
+        {canEdit && unlocked === selected
+          ? <OverrideEditor key={selected} block={[selected]} pairingsForGame={publishedPairingsForGame} players={players} onCommit={onOverride}
+              onRevokePenalty={onRevokePenalty} onDone={() => setUnlocked(null)} />
+          : <ResultViewGrid pairings={publishedPairingsForGame(selected)} players={players} />}
+      </section>}
+      {canEdit && <PromptDialog appearance="prototype" open={asking !== null} eyebrow="ยืนยันตัวตน" title="ยืนยันรหัสผ่านผู้อำนวยการ"
+        description={`กรอกรหัสผ่านเพื่อแก้ไขผลเกม ${asking ?? ""} ที่เผยแพร่แล้ว · อันดับจะคำนวณใหม่ทันทีและระบบบันทึกกิจกรรม`}
+        label="รหัสผ่าน" type="password" confirmLabel="ยืนยัน" busy={pwBusy} error={pwError || undefined}
+        onSubmit={(value) => void confirmUnlock(value)} onCancel={() => { if (!pwBusy) { setAsking(null); setPwError(""); } }} />}
 
       {selectedPlayer && (
         <Panel
@@ -357,7 +375,7 @@ export default function GamesPage() {
               )}
               <SelectMenu appearance="prototype" ariaLabel="เลือกเกม" value={effectiveKey}
                 options={scheduledBlocks.map((block) => ({ value: block.join("-"), label: `${blockLabelOf(block)}${block.join("-") === currentKey ? " · ปัจจุบัน" : ""}`, disabled: block[0] > card.currentGame }))}
-                onChange={(value) => { if (value !== effectiveKey) { clearPairingDraft(id); setEditUnlocked(false); } setViewKey(value); }} />
+                onChange={(value) => { if (value !== effectiveKey) { clearPairingDraft(id); setEditUnlocked(false); } setViewKey(value); if (value !== currentKey) { setPwError(""); setPwOpen(true); } }} />
               <Button variant="success" className="btn btn--success" disabled={!viewingCurrent || !allComplete || busy} onClick={beginReview}
                 title={!viewingCurrent ? "เลือกเกมปัจจุบันก่อนตรวจผล" : allComplete ? undefined : "ต้องบันทึกผลให้ครบทุกคู่ก่อน"}><Eye className="i" size={14} />ตรวจผล <ArrowRight className="i" size={14} /></Button>
             </div>
