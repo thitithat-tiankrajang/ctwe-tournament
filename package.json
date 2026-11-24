@@ -7,11 +7,11 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "test": "tsx --test src/app/*.test.ts src/application/tournament/*.test.ts src/domain/tournament/*.test.ts src/infrastructure/http/*.test.ts src/ui/components/*.test.ts src/ui/layout/*.test.ts src/ui/overlay/*.test.ts src/ui/pdf/*.test.ts load-testing/*.test.ts load-testing/lib/*.test.ts load-testing/scenarios/*.test.ts load-testing/scripts/*.test.ts",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "loadtest": "bash load-testing/scripts/run-load-test.sh",
     "loadtest:preflight": "bash load-testing/scripts/run-load-test.sh --preflight",
     "loadtest:runbook": "tsx load-testing/runbook-generator.ts",
@@ -22,11 +22,11 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
-    "@opennextjs/cloudflare": "^1.20.1",
+    "@opennextjs/cloudflare": "^1.20.18",
     "@tanstack/react-query": "^5.59.20",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.468.0",
-    "next": "^15.5.18",
+    "next": "^16.4.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.1",
@@ -39,11 +39,11 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "eslint": "^9.17.0",
-    "eslint-config-next": "^15.5.18",
+    "eslint-config-next": "^16.4.6",
     "eslint-plugin-react-hooks": "^5.2.0",
     "tsx": "^4.23.0",
     "typescript": "^5.7.2",
-    "wrangler": "^4.107.0"
+    "wrangler": "^4.148.0"
   },
   "overrides": {
     "postcss": "^8.5.10"
