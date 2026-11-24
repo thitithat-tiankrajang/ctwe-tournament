@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ChevronDown, ChevronRight, LockKeyhole, PowerOff, Search, Trophy } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, LockKeyhole, PowerOff, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createSpectatorState } from "@/application/tournament/spectator-state";
 import { legacyPublicCard } from "@/application/tournament/spectator-read-model";
@@ -15,6 +15,7 @@ import { browseGroups } from "@/ui/components/spectator-card-groups";
 import { viewerCardStageInfo } from "@/ui/components/stage-info";
 import { PrototypeViewerPopover } from "./prototype-spectator-chrome";
 import { PrototypeSpectatorPlayer } from "./prototype-spectator-player";
+import { TournamentBrandMark } from "./tournament-brand-mark";
 import { sportThemeFor, useSportColorRevision } from "./sport-colors";
 import { PrototypeSpectatorReport } from "./prototype-spectator-report";
 
@@ -61,7 +62,6 @@ export function TournamentViewer({ token }: { token: string }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [reportOverlay, setReportOverlay] = useState<{ background: SpectatorRoute; context?: SpectatorReportContext } | null>(null);
   const playerAnchor = useRef<HTMLElement | null>(null);
-  const profileFromSearch = useRef(false);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const [bottom, setBottom] = useState<HTMLDivElement | null>(null);
   const mobile = useSyncExternalStore(listenViewport, () => window.matchMedia(mobileViewport).matches, () => false);
@@ -261,10 +261,9 @@ export function TournamentViewer({ token }: { token: string }) {
     navigate(next, mode);
     scroller?.scrollTo({ top: 0, behavior: "auto" });
   };
-  const openPlayer = (divisionId: string, code: string, anchor?: HTMLElement | null, context?: SpectatorReportContext, master = false) => {
+  const openPlayer = (divisionId: string, code: string, anchor?: HTMLElement | null, context?: SpectatorReportContext) => {
     if (selectedCard && context) rememberReportContext(selectedCard.id, context);
     playerAnchor.current = anchor ?? null;
-    profileFromSearch.current = master;
     setReportOverlay({ background: route, context });
     setSearchOpen(false);
     navigate({ kind: "player", divisionId, code });
@@ -306,7 +305,7 @@ export function TournamentViewer({ token }: { token: string }) {
     ];
   };
   const pick = (hit: Hit, anchor?: HTMLElement | null) => {
-    if ("player" in hit) openPlayer(hit.player.divisionId, hit.player.code, anchor ?? searchTrigger.current, undefined, true);
+    if ("player" in hit) openPlayer(hit.player.divisionId, hit.player.code, anchor ?? searchTrigger.current);
     else openReportFromSearch(hit.report);
   };
   const draft = draftQuery.trim();
@@ -396,7 +395,7 @@ export function TournamentViewer({ token }: { token: string }) {
           <ArrowLeft className="i" size={20} /></button>}</span>
         <span className="vh-title" id="vh-title"><button type="button" className="vtour" aria-current={background.kind === "home" ? "page" : undefined}
           title="หน้าแรกของรายการแข่งขัน" onClick={() => { if (background.kind !== "home") navigateViewer(SPECTATOR_HOME); }}>
-          <span className="brand-mark"><Trophy className="i" size={15} /></span>
+          <TournamentBrandMark />
           <span className="vtour__t">{backgroundCard && <small>{tournament.name}</small>}<span className="vtour__h">{backgroundCard ? `${backgroundCard.name} · ${backgroundCard.division}` : tournament.name}</span></span>
         </button></span>
         <span className="vhead__sp" />
@@ -471,7 +470,7 @@ export function TournamentViewer({ token }: { token: string }) {
                       if (next.has(name)) next.delete(name); else next.add(name);
                       return next;
                     })}>
-                    <span className="sport-letter" aria-hidden>{name.slice(0, 1)}</span><span className="sport-heading"><span className="sport-name">{name}</span><small>{group.length} รุ่น</small></span>
+                    <span className="sport-heading"><span className="sport-name">{name}</span></span>
                     <span className="sport-chevron"><ChevronDown className="i" size={17} /></span>
                   </button></h2>
                   <div className="sport-fold" id={id} inert={!open}><div>
@@ -498,8 +497,8 @@ export function TournamentViewer({ token }: { token: string }) {
       </div></div>
       <div ref={setBottom} id="vbottom" />
     </div>
-    {overlay && route.kind === "player" && playerDivision && playerCard && <PrototypeSpectatorPlayer card={playerCard}
-      division={playerDivision} code={route.code} theme={sportThemeFor(tournament?.id, playerCard.name)} mobile={mobile} anchor={playerAnchor} master={profileFromSearch.current}
+    {overlay && route.kind === "player" && playerDivision && playerCard && <PrototypeSpectatorPlayer viewer card={playerCard}
+      division={playerDivision} code={route.code} theme={sportThemeFor(tournament?.id, playerCard.name)} mobile={mobile} anchor={playerAnchor}
       onClose={closePlayer} onOpenPlayer={code => navigate({ kind: "player", divisionId: playerDivision.id, code }, "replace")} />}
   </div>;
 }

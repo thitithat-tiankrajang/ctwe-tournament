@@ -1,7 +1,7 @@
 "use client";
 
-import { X } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { ChevronDown, ListOrdered, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from "react";
 import type { PublicDivisionPayload, SpectatorDivision } from "@/application/tournament/spectator-read-model";
 import { spectatorPlayerView, type SpectatorOpponent, type SpectatorPlayerGame, type SpectatorPlayerView } from "@/application/tournament/spectator-player";
 import { editableResultGames } from "@/domain/tournament/flow";
@@ -13,19 +13,23 @@ import { PrototypeViewerHelp, PrototypeViewerStatus, useViewerPlacement } from "
 const signed = (value: number) => value > 0 ? `+${value}` : String(value);
 function outcome(game: SpectatorPlayerGame) {
   if (game.outcome === "PENALTY") return ["danger", "ลงดาบ"] as const;
-  if (game.bye && game.outcome === "W") return ["success", "ชนะ (บาย)"] as const;
   if (game.outcome === "W") return ["success", "ชนะ"] as const;
   if (game.outcome === "L") return ["danger", "แพ้"] as const;
   if (game.outcome === "T") return ["neutral", "เสมอ"] as const;
-  return ["neutral", "รอผล"] as const;
+  return ["warning", "รอผล"] as const;
 }
 function score(game: SpectatorPlayerGame) {
   return !game.score ? "—" : game.bye ? game.score.own : `${game.score.own}–${game.score.opponent}`;
 }
 function Opponent({ player, open, inline = false }: { player: SpectatorOpponent; open: (code: string) => void; inline?: boolean }) {
   return <button type="button" className={`idn${inline ? " idn--inline" : ""}`} onClick={() => open(player.code)}>
-    <span className={inline ? undefined : "l1"}><span className="code">{player.code}</span>{" "}<span className="nm">{player.name}</span></span>
+    {inline ? <><span className="code">{player.code}</span>{" "}<span className="nm">{player.name}</span></>
+      : <><span className="nm">{player.name}</span><span className="code">{player.code}</span></>}
   </button>;
+}
+
+function PlayerSignal({ tone, children }: { tone: string; children: ReactNode }) {
+  return <span className="pm-signal" data-pm-tone={tone}>{children}</span>;
 }
 
 function PlayerMasterStatus({ card, view, operational, onOpenPlayer }: {
@@ -61,15 +65,17 @@ function PlayerMasterStatus({ card, view, operational, onOpenPlayer }: {
     waiting: false, saved: !assignment && Boolean(view.recordedCurrentGame), withdrawn: !view.participant.listedInStandings,
   }];
   return <section className="player-master" aria-label="สถานะปัจจุบัน">
-    <h3>สถานะปัจจุบัน</h3>
-    {rounds.map((round) => <article className="player-master-round" key={round.game}>
-      <header><strong>เกม {round.game}</strong><PrototypeViewerStatus tone={round.withdrawn ? "danger" : round.saved ? "success" : round.pair && !round.waiting ? "info" : "neutral"}>{round.label}</PrototypeViewerStatus></header>
+    {rounds.map((round) => {
+      const tone = round.withdrawn ? "danger" : round.saved ? "success" : round.pair || round.waiting ? "warning" : "neutral";
+      return <article className="player-master-round" data-pm-tone={tone} key={round.game}>
+      <header><strong>เกม {round.game}</strong><PlayerSignal tone={tone}>{round.label}</PlayerSignal></header>
       {round.pair != null && <dl className="player-master-facts">
         <div><dt>คู่</dt><dd className="num">{round.pair}</dd></div><div><dt>ที่นั่ง</dt><dd className="num">{round.seat}</dd></div>
         <div><dt>คู่แข่ง</dt><dd>{round.opponent ? <><Opponent player={round.opponent} open={onOpenPlayer} inline />
-          <span className="sub">{round.opponent.school}</span></> : round.waiting ? "รอผลจากเกมก่อนหน้า" : "บาย"}</dd></div>
+          <span className="sub">{round.opponent.school}</span></> : round.waiting ? "—" : "บาย"}</dd></div>
       </dl>}
-    </article>)}
+    </article>;
+    })}
   </section>;
 }
 
@@ -98,7 +104,7 @@ function PlayerStatus({ card, view, onOpenPlayer, master, operational }: {
   return <div className="pm-body">
     {master && view.phase === "regular" ? <PlayerMasterStatus card={card} view={view} operational={operational} onOpenPlayer={onOpenPlayer} /> : <section className="now5" aria-label="สถานะปัจจุบัน">
       <div className="now5__status">
-        <PrototypeViewerStatus tone={state}>{label}</PrototypeViewerStatus>
+        <PlayerSignal tone={state}>{label}</PlayerSignal>
         {assignment && <span className="now5__game">เกม {assignment.game}</span>}
         <PrototypeViewerHelp label="สถานะ">รอผลหมายถึงคู่แข่งขันประกาศแล้ว ส่วนรอคู่เกมหมายถึงคู่ใหม่ยังไม่ประกาศ หน้านี้อัปเดตตามการประกาศ</PrototypeViewerHelp>
       </div>
@@ -121,48 +127,98 @@ function PlayerStatus({ card, view, onOpenPlayer, master, operational }: {
         <span className="num">{score(last)}</span>{last.opponent && <Opponent player={last.opponent} open={onOpenPlayer} inline />}
       </div>}
     </section>}
-    {ranking && <div className="pm-stats"><span>อันดับ <b>{ranking.rank}</b></span><span>คะแนนสะสม <b>{ranking.wins + ranking.draws / 2}</b></span><span>ผลต่าง <b>{signed(ranking.diff)}</b></span></div>}
-    {history.length > 0 && <details className="pm-hist"><summary>ประวัติการแข่งขัน · {history.length} เกม</summary>
-      <table className="st" aria-label="ประวัติการแข่งขัน"><thead><tr><th scope="col" className="fitw">เกม</th><th scope="col">คู่แข่ง</th><th scope="col" className="n" style={{ width: 76 }}>คะแนน</th><th scope="col" style={{ width: 70 }}>ผล</th></tr></thead>
-        <tbody>{history.map((game, index) => <tr key={game.key} className={index % 2 ? "alt" : undefined}>
-          <td className="pairno">{game.game}</td><td>{game.opponent ? <Opponent player={game.opponent} open={onOpenPlayer} /> : "บาย"}</td>
-          <td className="n" style={{ whiteSpace: "nowrap" }}>{score(game)}</td><td><PrototypeViewerStatus tone={outcome(game)[0]}>{outcome(game)[1]}</PrototypeViewerStatus></td>
-        </tr>)}</tbody>
+    {ranking && <dl className="pm-stats"><div className="pm-rank" data-pm-tone="info"><dt>อันดับ</dt><dd>{ranking.rank}</dd></div>
+      <div><dt>คะแนนสะสม</dt><dd>{ranking.wins + ranking.draws / 2}</dd></div>
+      <div data-pm-tone={ranking.diff > 0 ? "success" : ranking.diff < 0 ? "danger" : "neutral"}><dt>ผลต่าง</dt><dd>{signed(ranking.diff)}</dd></div>
+    </dl>}
+    {history.length > 0 && <details className="pm-hist"><summary className="pm-hist__head">
+      <strong><ListOrdered className="i" size={15} />ประวัติการแข่งขัน</strong><span className="pm-hist__count">{history.length} เกม</span><ChevronDown className="i pm-hist__chev" size={14} />
+    </summary>
+      <table className="pm-hist__table" aria-label="ผลการแข่งขันรายเกม"><colgroup><col /><col /><col /><col /></colgroup>
+        <thead><tr><th scope="col">เกม</th><th scope="col">คู่แข่ง</th><th scope="col" aria-label="คะแนนผู้เล่น ต่อ คะแนนคู่แข่ง">คะแนน</th><th scope="col">ผล</th></tr></thead>
+        <tbody>{[...history].reverse().map((game) => {
+          const [tone, label] = outcome(game);
+          return <tr key={game.key}>
+            <th scope="row">{game.game}</th><td>{game.opponent ? <Opponent player={game.opponent} open={onOpenPlayer} /> : game.bye ? "บาย" : "—"}</td>
+            <td><span className="pm-hist__score">{game.score ? <><strong>{game.score.own}</strong>{!game.bye && <><span>–</span><span>{game.score.opponent}</span></>}</> : "—"}</span></td>
+            <td><PlayerSignal tone={tone}>{label}</PlayerSignal></td>
+          </tr>;
+        })}</tbody>
       </table>
     </details>}
   </div>;
 }
 
-export function PrototypeSpectatorPlayer({ card, division, code, theme, mobile, anchor, onClose, onOpenPlayer, master = false, operational }: {
+export function PrototypeSpectatorPlayer({ card, division, code, theme, mobile, anchor, onClose, onOpenPlayer, master = false, operational, viewer = false }: {
   card: PublicDivisionPayload; division: SpectatorDivision; code: string; theme: CSSProperties; mobile: boolean;
-  master?: boolean; operational?: TournamentCard;
+  master?: boolean; operational?: TournamentCard; viewer?: boolean;
   anchor: RefObject<HTMLElement | null>; onClose: () => void; onOpenPlayer: (code: string) => void;
 }) {
   const player = spectatorPlayerView(card, division, code);
   const [closing, setClosing] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const body = useRef<HTMLDivElement>(null);
+  const previousCode = useRef(code);
+  const drag = useRef<{ id: number; x: number; y: number; start: number; offset: number } | null>(null);
   const close = () => {
-    if (closing) return;
+    if (timer.current !== undefined) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { onClose(); return; }
     setClosing(true);
-    timer.current = setTimeout(onClose, 140);
+    timer.current = setTimeout(onClose, viewer ? 260 : 140);
   };
-  const modal = useModalDialog({ open: true, onDismiss: close, dismissible: !closing });
-  const anchored = useViewerPlacement(anchor, modal.ref, mobile ? 560 : 440, 240, false, true);
+  const modal = useModalDialog({ open: true, onDismiss: close, dismissible: !closing, focusDialog: viewer });
+  const anchored = useViewerPlacement(anchor, modal.ref, mobile ? 560 : 440, 240, false, true, !viewer);
   const placed = master ? { sheet: mobile, centered: !mobile, direction: undefined, style: undefined } : anchored;
   useEffect(() => () => clearTimeout(timer.current), []);
-  return <div className={`pm-layer pm-layer--viewer${placed?.sheet || placed?.centered ? " pm-layer--modal" : ""}${closing ? " closing" : ""}`}
-    onMouseDown={modal.onBackdropMouseDown}>
+  useLayoutEffect(() => {
+    if (!viewer || previousCode.current === code || !body.current) return;
+    previousCode.current = code;
+    body.current.scrollTop = 0;
+    modal.ref.current?.focus({ preventScroll: true });
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const animation = body.current.querySelector(".pm-body")?.animate([
+      { transform: "translateY(4px)" }, { transform: "none" },
+    ], { duration: 180, easing: "cubic-bezier(.22,.8,.25,1)" });
+    return () => animation?.cancel();
+  }, [code, modal.ref, viewer]);
+  const beginDrag = (event: PointerEvent<HTMLElement>) => {
+    if (!viewer || !mobile || closing || !event.isPrimary || event.pointerType === "mouse" || (event.target as Element).closest("button")) return;
+    drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, start: event.timeStamp, offset: 0 };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const moveDrag = (event: PointerEvent<HTMLElement>) => {
+    const current = drag.current, box = modal.ref.current;
+    if (!current || !box || current.id !== event.pointerId) return;
+    const distance = event.clientY - current.y;
+    if (!box.classList.contains("is-dragging") && (distance < 6 || distance < Math.abs(event.clientX - current.x))) return;
+    current.offset = Math.max(0, distance);
+    box.classList.add("is-dragging");
+    box.style.setProperty("--pm-drag", `${current.offset}px`);
+  };
+  const endDrag = (event: PointerEvent<HTMLElement>) => {
+    const current = drag.current, box = modal.ref.current;
+    if (!current || !box || current.id !== event.pointerId) return;
+    drag.current = null;
+    const far = current.offset >= Math.max(80, Math.min(135, box.offsetHeight * .24));
+    const fast = current.offset >= 48 && current.offset / Math.max(1, event.timeStamp - current.start) > .65;
+    box.classList.remove("is-dragging");
+    if (event.type === "pointerup" && mobile && (far || fast)) close();
+    else box.style.removeProperty("--pm-drag");
+  };
+  return <div className={`pm-layer pm-layer--viewer${viewer ? " pm-layer--public" : placed?.sheet || placed?.centered ? " pm-layer--modal" : ""}${closing ? " closing" : ""}`}
+    onPointerDown={event => { if (event.target === event.currentTarget) modal.onBackdropMouseDown(); }}>
     <section ref={modal.ref} role="dialog" aria-modal="true" aria-labelledby={modal.titleId} tabIndex={-1}
-      className={`pm pm--pop sport-theme${operational ? "" : " pm--viewer"}${master ? " pm--master" : ""}${placed?.sheet ? " pm--sheet" : placed?.centered ? " pm--center" : ""}`}
-      style={{ ...theme, ...placed?.style, visibility: placed ? undefined : "hidden" }}
-      data-side={placed?.direction} onMouseDown={event => event.stopPropagation()}>
-      <header className="pm__head"><div className="pm__title"><span className="pm__sub">{card.name} · {card.division}</span>
+      className={`pm pm--pop sport-theme${viewer ? " pm--viewer pm--public pm--master" : `${operational ? "" : " pm--viewer"}${master ? " pm--master" : ""}${placed?.sheet ? " pm--sheet" : placed?.centered ? " pm--center" : ""}`}`}
+      style={viewer ? theme : { ...theme, ...placed?.style, visibility: placed ? undefined : "hidden" }}
+      data-side={viewer ? undefined : placed?.direction}>
+      <header className="pm__head" onPointerDown={beginDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+        {viewer && <><span className="pm__handle" aria-hidden="true" /><button type="button" className="pm__dismiss" aria-label="ปิดรายละเอียดนักกีฬา" onClick={close}>ปิด</button></>}
+        <div className="pm__title"><span className="pm__sub">{card.name} · {card.division}</span>
         <h2 id={modal.titleId}><span className="code">{code}</span> {player?.participant.name ?? "ไม่พบรายชื่อนักกีฬา"}</h2>
         <span className="pm__school">{player?.participant.school}</span></div>
-        <button type="button" className="pm__close" aria-label="ปิดรายละเอียดนักกีฬา" onClick={close}><X className="i" size={17} /></button></header>
-      <div key={code} className="pm__scroll pm-swap">
-        {player ? <PlayerStatus card={card} view={player} master={master} operational={operational} onOpenPlayer={onOpenPlayer} /> : <p className="pm-body">รายชื่ออาจถูกปรับหลังจากเปิดหน้านี้</p>}
+        {!viewer && <button type="button" className="pm__close" aria-label="ปิดรายละเอียดนักกีฬา" onClick={close}><X className="i" size={17} /></button>}</header>
+      <div ref={body} key={viewer ? undefined : code} className={viewer ? "pm__scroll" : "pm__scroll pm-swap"}>
+        {player ? <PlayerStatus card={card} view={player} master={viewer || master} operational={operational} onOpenPlayer={onOpenPlayer} /> : <p className="pm-body">รายชื่ออาจถูกปรับหลังจากเปิดหน้านี้</p>}
       </div>
     </section>
   </div>;

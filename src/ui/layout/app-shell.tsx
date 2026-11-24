@@ -22,6 +22,7 @@ import { GlobalDialogHost } from "@/ui/components/global-dialog-host";
 import { CardSyncIndicator } from "@/ui/components/card-wake-reconciliation-notice";
 import { NavLinkIcon } from "@/ui/layout/nav-pending";
 import { PrototypeSpectatorPlayer } from "@/ui/components/prototype-spectator-player";
+import { TournamentBrandMark } from "@/ui/components/tournament-brand-mark";
 import { operatorStageLabels } from "@/ui/components/stage-info";
 import { PrototypeViewerHelp } from "@/ui/components/prototype-spectator-chrome";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
@@ -86,7 +87,7 @@ function byCreation(left: { createdAt: string }, right: { createdAt: string }) {
 }
 
 const icon = (Icon: LucideIcon, size = 18) => <Icon size={size} className="i" aria-hidden />;
-const mark = <span className="brand-mark">{icon(Trophy, 16)}</span>;
+const mark = <TournamentBrandMark />;
 const fold = <span className="fold" aria-hidden><Folder className="i f-closed" size={16} /><FolderOpen className="i f-open" size={16} /></span>;
 
 function RailLink({ item, current, onNavigate, ariaLabel }: { item: NavEntry; current?: boolean; onNavigate?: () => void; ariaLabel?: string }) {

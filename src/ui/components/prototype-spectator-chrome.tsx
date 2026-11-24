@@ -45,9 +45,11 @@ export function useViewerPlacement(
   minHeight: number,
   end = false,
   player = false,
+  enabled = true,
 ) {
   const [placement, setPlacement] = useState<Placement>();
   useLayoutEffect(() => {
+    if (!enabled) return;
     let frame: number;
     const position = () => {
       const trigger = anchor.current;
@@ -90,7 +92,7 @@ export function useViewerPlacement(
       window.removeEventListener("resize", onPositionChange);
       window.removeEventListener("scroll", onPositionChange, true);
     };
-  }, [anchor, box, width, minHeight, end, player]);
+  }, [anchor, box, width, minHeight, end, player, enabled]);
   return placement;
 }
 
