@@ -107,10 +107,11 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
 }
 
 /** Final / championship round: seeding review (director starts) then the entry + summary board. */
-function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, onPublish }: {
+function FinalRoundView({ card, canManage, onStart, onFinishWithRegularResults, onSubmitGame, onSetWinner, onPublish }: {
   card: TournamentCard;
   canManage: boolean;
   onStart: () => Promise<void>;
+  onFinishWithRegularResults: () => Promise<void>;
   onSubmitGame: (slot: number, gameIndex: number, scoreOne: number, scoreTwo: number, password?: string) => Promise<void>;
   onSetWinner: (slot: number, winnerId: string, winnerWins: number, winnerLosses: number, totalDiff: number, password?: string) => Promise<void>;
   onPublish: () => Promise<void>;
@@ -118,7 +119,12 @@ function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, o
   const [busy, setBusy] = useState(false);
   const seeding = card.runtimeStage === "FINAL_SEEDING";
   const needed = card.finalType === "CHAMPION_AND_THIRD" ? 4 : 2;
-  const seeds = [...card.players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff).slice(0, needed);
+  const seedIds = card.finalRound?.seedPlayerIds;
+  const seeds = seedIds
+    ? seedIds.flatMap((id) => card.players.filter((player) => player.id === id))
+    : card.players.filter((player) => !player.terminated)
+      .sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff).slice(0, needed);
+  const insufficient = seeds.length < needed;
   const start = async () => {
     if (!await appDialog.confirm("ผู้เข้าชิงจะถูกล็อกตามอันดับนี้ และจะแก้ไขผล/ยกเลิกการจับคู่ของเกมปกติไม่ได้อีก", {
       title: "เริ่มรอบชิง?",
@@ -128,14 +134,29 @@ function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, o
     setBusy(true);
     try { await onStart(); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เริ่มรอบชิงไม่สำเร็จ", "เริ่มรอบชิงไม่สำเร็จ", true); } finally { setBusy(false); }
   };
+  const finishWithRegularResults = async () => {
+    if (!await appDialog.confirm("ยืนยันใช้อันดับจากผลรอบปกติที่เผยแพร่แล้วเป็นอันดับสุดท้ายของรุ่นนี้", {
+      title: "จบด้วยอันดับรอบปกติ?",
+      confirmLabel: "ยืนยันจบการแข่งขัน",
+      danger: true,
+    })) return;
+    setBusy(true);
+    try {
+      await onFinishWithRegularResults();
+    } catch (error) {
+      await appDialog.alert(error instanceof Error ? error.message : "จบการแข่งขันไม่สำเร็จ", "จบการแข่งขันไม่สำเร็จ", true);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <>
       <PageHeader eyebrow={`${card.name} · รอบชิงชนะเลิศ`} title="รอบชิงชนะเลิศ"
-        description={seeding ? "ตรวจรายชื่อผู้เข้าชิงตามอันดับท้ายเกมสุดท้าย แล้วกดเริ่มรอบชิง" : "กรอกผลรายเกม (ไม่มี max diff) แล้วสรุปผู้ชนะของแต่ละคู่เอง"} />
+        description={seeding ? "ตรวจรายชื่อผู้เข้าชิงตามอันดับหลังเกมปกติเกมสุดท้าย" : "กรอกผลรายเกม (ไม่มี max diff) แล้วสรุปผู้ชนะของแต่ละคู่เอง"} />
       {seeding ? (
         <Panel title="ผู้เข้าชิง (ตรวจก่อนเริ่ม)" description={card.finalType === "CHAMPION_AND_THIRD" ? "ชิงที่ 1 (อันดับ 1,2) และชิงที่ 3 (อันดับ 3,4)" : "ชิงที่ 1 (อันดับ 1,2)"}>
           <div className="panel-padding">
-            {seeds.length < needed ? (
+            {insufficient ? (
               <p className="form-error">ผู้เล่นไม่พอสำหรับรอบชิง (ต้องการ {needed} คน มี {seeds.length} คน)</p>
             ) : (
               <ol className="final-seed-list">
@@ -148,8 +169,13 @@ function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, o
                 ))}
               </ol>
             )}
-            <div className="notice notice--warning" style={{ marginTop: 12 }}><LockKeyhole size={18} /><p><strong>เริ่มรอบชิงแล้วล็อกถาวร</strong><span>หลังเริ่ม จะแก้ไขผลเกมปกติหรือยกเลิกการจับคู่ไม่ได้อีก</span></p></div>
-            {canManage && <div className="form-actions" style={{ paddingLeft: 0 }}><Button disabled={busy || seeds.length < needed} onClick={() => void start()}><Trophy size={16} />เริ่มรอบชิง (ล็อก seed)</Button></div>}
+            {!insufficient && <div className="notice notice--warning" style={{ marginTop: 12 }}><LockKeyhole size={18} /><p><strong>เริ่มรอบชิงแล้วล็อกถาวร</strong><span>หลังเริ่ม จะแก้ไขผลเกมปกติหรือยกเลิกการจับคู่ไม่ได้อีก</span></p></div>}
+            {canManage && <div className="form-actions" style={{ paddingLeft: 0 }}>
+              {insufficient ? <>
+                <Link href={`/cards/${card.id}/players`} className="btn btn--secondary" prefetch={false}>ไปหน้าผู้เล่น</Link>
+                {seedIds && <Button disabled={busy} onClick={() => void finishWithRegularResults()}>จบด้วยอันดับรอบปกติ</Button>}
+              </> : <Button disabled={busy} onClick={() => void start()}><Trophy size={16} />เริ่มรอบชิง (ล็อก seed)</Button>}
+            </div>}
           </div>
         </Panel>
       ) : (
@@ -194,6 +220,7 @@ export default function GamesPage() {
   const publishNextPairing = useTournamentStore((state) => state.publishNextPairing);
   const verifyPassword = useTournamentStore((state) => state.verifyPassword);
   const startFinal = useTournamentStore((state) => state.startFinal);
+  const finishWithRegularResults = useTournamentStore((state) => state.finishWithRegularResults);
   const submitFinalResult = useTournamentStore((state) => state.submitFinalResult);
   const setFinalWinner = useTournamentStore((state) => state.setFinalWinner);
   const publishFinal = useTournamentStore((state) => state.publishFinal);
@@ -388,6 +415,7 @@ export default function GamesPage() {
   if (card.runtimeStage === "FINAL_SEEDING" || card.runtimeStage === "FINAL_COLLECTION" || (card.runtimeStage === "FINAL_PUBLISHED" && card.finalType !== "NONE")) {
     return <FinalRoundView card={card} canManage={isDirector}
       onStart={() => startFinal(id)}
+      onFinishWithRegularResults={() => finishWithRegularResults(id)}
       onSubmitGame={(slot, gameIndex, scoreOne, scoreTwo, password) => submitFinalResult(id, slot, gameIndex, scoreOne, scoreTwo, password)}
       onSetWinner={(slot, winnerId, winnerWins, winnerLosses, totalDiff, password) => setFinalWinner(id, slot, winnerId, winnerWins, winnerLosses, totalDiff, password)}
       onPublish={() => publishFinal(id)} />;

@@ -38,8 +38,12 @@ services:
         value: "0"
       - key: PUBLIC_CARD_CACHE_TTL_SECONDS
         value: "300"
-      - key: PUBLIC_CARD_CACHE_MAX_SIZE
-        value: "8"
+      # Public card detail cache budget, in ESTIMATED bytes (sum of PublicCardWeigher estimates, not a
+      # measured heap limit). Replaces the retired entry-count PUBLIC_CARD_CACHE_MAX_SIZE, which the
+      # backend no longer reads; if the service still has it set, delete it in the Render dashboard
+      # (startup logs a warning naming it).
+      - key: PUBLIC_CARD_CACHE_MAX_WEIGHT_BYTES
+        value: "20512768"
       - key: PUBLIC_CARD_CATALOG_CACHE_TTL_SECONDS
         value: "300"
       - key: PUBLIC_CARD_VERSIONS_CACHE_TTL_SECONDS

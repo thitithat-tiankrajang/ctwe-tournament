@@ -18,6 +18,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import com.ctwe.tournament.application.WebPushService;
 
 /**
  * {@code POST /login} through the real security chain and real PostgreSQL: the per-address
@@ -30,6 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class LoginThrottleDatabaseTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
     private static final String PASSWORD = "matrix-password-1";
     private static final String PASSWORD_HASH = "{bcrypt}$2y$12$Uk9bpX1P1GaASlpp1vCAlOOQ5wp3knfOCjoTQFpqQGWA6PIsbVD1W";
 

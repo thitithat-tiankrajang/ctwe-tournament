@@ -299,7 +299,12 @@ public final class CardDtos {
     public record FinalGameResponse(int gameIndex, Integer scoreOne, Integer scoreTwo, String winnerId, Integer diff) {}
     public record FinalSlotResponse(int slot, String playerOneId, String playerTwoId, List<FinalGameResponse> games,
                                     String winnerId, Integer winnerWins, Integer winnerLosses, Integer totalDiff) {}
-    public record FinalRoundResponse(List<FinalSlotResponse> slots) {}
+    public record FinalRoundResponse(
+        List<FinalSlotResponse> slots,
+        @JsonInclude(JsonInclude.Include.NON_NULL) List<String> seedPlayerIds
+    ) {
+        public FinalRoundResponse(List<FinalSlotResponse> slots) { this(slots, null); }
+    }
 
     public record CardResponse(
         UUID id,

@@ -6,7 +6,7 @@ import { ArrowRight, LockKeyhole, Save, Trash2, Undo2, Upload, UserPlus } from "
 import { useState } from "react";
 import { appDialog } from "@/application/ui/dialog";
 import { toast } from "@/application/ui/toast";
-import { selectCard, useTournamentStore } from "@/application/tournament/store";
+import { ApiError, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { comparePlayerCodes, matchesPlayerCode } from "@/domain/tournament/player-code";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { playerSchema, type PlayerForm } from "@/domain/tournament/schemas";
@@ -27,7 +27,7 @@ import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 const fields = { firstName: "ชื่อ", lastName: "นามสกุล", school: "โรงเรียน/สถาบัน" } as const;
 const fieldKeys = Object.keys(fields) as (keyof PlayerForm)[];
 const details = ({ firstName, lastName, school }: Player): PlayerForm => ({ firstName, lastName, school });
-type Draft = { before: PlayerForm; after: PlayerForm; displayName: string };
+type Draft = { before: PlayerForm; after: PlayerForm; displayName: string; version: number };
 
 const displayName = ({ firstName, lastName }: PlayerForm) => `${firstName} ${lastName}`;
 const splitName = (value: string, previous?: PlayerForm) => {
@@ -39,7 +39,7 @@ const splitName = (value: string, previous?: PlayerForm) => {
   const boundary = full.search(/\s/);
   return boundary < 0 ? { firstName: full, lastName: "" } : { firstName: full.slice(0, boundary), lastName: full.slice(boundary).trim() };
 };
-type Review = { kind: "edit"; changes: [string, Draft][] } | { kind: "delete"; player: Player };
+type Review = { kind: "edit"; changes: [string, Draft][]; version: number } | { kind: "delete"; player: Player; version: number };
 
 export default function PlayersPage() {
   const { id } = useParams<{ id: string }>();
@@ -51,6 +51,7 @@ export default function PlayersPage() {
   const importPlayers = useTournamentStore((state) => state.importPlayers);
   const updatePlayer = useTournamentStore((state) => state.updatePlayer);
   const removePlayer = useTournamentStore((state) => state.removePlayer);
+  const syncCard = useTournamentStore((state) => state.syncCard);
   const finishRegistration = useTournamentStore((state) => state.finishRegistration);
   const verifyPassword = useTournamentStore((state) => state.verifyPassword);
 
@@ -97,7 +98,12 @@ export default function PlayersPage() {
       const nextName = field === "name" ? value : current?.displayName ?? displayName(before);
       const nextSchool = field === "school" ? value : after.school;
       if (nextName === displayName(before) && nextSchool === before.school) next.delete(player.id);
-      else next.set(player.id, { before, displayName: nextName, after: { ...splitName(nextName, before), school: nextSchool } });
+      else next.set(player.id, {
+        before,
+        displayName: nextName,
+        after: { ...splitName(nextName, before), school: nextSchool },
+        version: current?.version ?? card.version,
+      });
       return next;
     });
   };
@@ -106,6 +112,10 @@ export default function PlayersPage() {
     setError("");
     const changes: [string, Draft][] = [];
     for (const [code, draft] of drafts) {
+      if (draft.version !== card.version) {
+        setError("ข้อมูลการแข่งขันเปลี่ยน กรุณายกเลิกฉบับร่างแล้วเลือกผู้เล่นอีกครั้ง");
+        return;
+      }
       const parsed = playerSchema.safeParse(draft.after);
       if (!parsed.success) {
         setError(`${code} · ${parsed.error.issues[0]?.message ?? "ตรวจสอบข้อมูลผู้เล่น"}`);
@@ -115,7 +125,7 @@ export default function PlayersPage() {
     }
     if (!changes.length) { setDrafts(new Map()); return; }
     setPassword("");
-    setReview({ kind: "edit", changes });
+    setReview({ kind: "edit", changes, version: card.version });
   };
 
   const confirm = async () => {
@@ -129,13 +139,14 @@ export default function PlayersPage() {
         if (!registration) throw new Error("ลบผู้เล่นได้ในช่วงลงทะเบียน");
         const live = selectCard(useTournamentStore.getState().cards, id)?.players.find((player) => player.id === review.player.id);
         if (!live || fieldKeys.some((key) => live[key] !== review.player[key])) throw new Error("ข้อมูลผู้เล่นเปลี่ยน กรุณาปิดแล้วเลือกผู้เล่นอีกครั้ง");
-        await removePlayer(id, review.player.id);
+        await removePlayer(id, review.player.id, review.version);
       } else {
         if (!await verifyPassword(password)) throw new Error("รหัสผ่านผู้อำนวยการไม่ถูกต้อง");
+        let expectedVersion = review.version;
         for (const [code, draft] of review.changes) {
           const live = selectCard(useTournamentStore.getState().cards,id)?.players.find((player) => player.id === code);
           if (!live || fieldKeys.some((key) => live[key] !== draft.before[key])) throw new Error(`${code} มีข้อมูลเปลี่ยน กรุณาตรวจแถวนี้ก่อนบันทึกอีกครั้ง`);
-          await updatePlayer(id, code, draft.after);
+          expectedVersion = await updatePlayer(id, code, draft.after, expectedVersion);
           ++completed;
           setDrafts((previous) => {
             const remaining = new Map(previous);
@@ -148,7 +159,12 @@ export default function PlayersPage() {
       setPassword("");
       toast.success(review.kind === "delete" ? "ลบผู้เล่นแล้ว" : `บันทึกข้อมูล ${completed} คนแล้ว`);
     } catch (failure) {
-      setError(`${completed ? `บันทึกแล้ว ${completed} คน · ` : ""}${failure instanceof Error ? failure.message : "ดำเนินการไม่สำเร็จ"}`);
+      const versionConflict = failure instanceof ApiError && failure.status === 409;
+      if (versionConflict) void syncCard(id);
+      const message = versionConflict
+        ? "ข้อมูลการแข่งขันเปลี่ยน กรุณาปิดการยืนยันแล้วตรวจรายการผู้เล่นอีกครั้ง"
+        : failure instanceof Error ? failure.message : "ดำเนินการไม่สำเร็จ";
+      setError(`${completed ? `บันทึกแล้ว ${completed} คน · ` : ""}${message}`);
       if (completed) { setReview(null); setPassword(""); }
     } finally { setBusy(false); }
   };
@@ -225,7 +241,7 @@ export default function PlayersPage() {
             <td><span className={`badge badge--${rowStatus === "withdrawn" ? "danger" : rowStatus === "held" ? "info" : "neutral"}`}>
               {rowStatus === "withdrawn" ? "ถอนแล้ว" : rowStatus === "held" ? "คัดชั่วคราว" : "แข่งอยู่"}</span></td>
             {registration && <td className="c"><button type="button" className="icon-btn roster-delete" aria-label={`ลบ ${player.id}`} disabled={working || drafts.size > 0}
-              onClick={() => { setError(""); setReview({ kind:"delete", player }); }}><Trash2 className="i" size={15} /></button></td>}
+              onClick={() => { setError(""); setReview({ kind:"delete", player, version: card.version }); }}><Trash2 className="i" size={15} /></button></td>}
           </tr>;
         }) : <tr><td colSpan={registration ? 6 : 5}>{card.players.length ? "ไม่พบผู้เล่นตามตัวกรอง" : "ยังไม่มีผู้เล่น"}</td></tr>}</tbody>
       </table></div>

@@ -15,6 +15,7 @@ const labels: Record<string, string> = {
   REVOKE_PENALTY: "ถอนดาบ", REVIEW_RESULTS: "ตรวจผล", REOPEN_RESULTS: "เปิดแก้ผล",
   PUBLISH_GAME_RESULTS: "เผยแพร่ผล", PUBLISH_FINAL_RESULTS: "เผยแพร่ผลรอบสุดท้าย",
   START_FINAL: "เริ่มรอบชิง", FINAL_RESULT: "บันทึกผลรอบชิง", FINAL_WINNER: "สรุปผู้ชนะ", PUBLISH_FINAL: "เผยแพร่รอบชิง", CLOSE_CARD: "ปิดการ์ด",
+  FINISH_WITH_REGULAR_RESULTS: "จบด้วยอันดับรอบปกติ",
 };
 const date = new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short" });
 const time = new Intl.DateTimeFormat("th-TH", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -132,6 +133,7 @@ const actionIcons: Record<string, { icon: typeof Save; tone: string }> = {
   PUBLISH_GAME_RESULTS: { icon: Globe, tone: "publish" },
   PUBLISH_FINAL_RESULTS: { icon: Globe, tone: "publish" },
   PUBLISH_FINAL: { icon: Upload, tone: "publish" },
+  FINISH_WITH_REGULAR_RESULTS: { icon: Upload, tone: "publish" },
 };
 
 function Timestamp({ value, compact = false }: { value: string; compact?: boolean }) {

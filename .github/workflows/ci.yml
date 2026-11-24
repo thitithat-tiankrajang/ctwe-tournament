@@ -18,12 +18,35 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: >-
+          npm exec --yes --package=c8@12.0.0 -- c8 --all
+          --include 'src/**/*.ts' --include 'src/**/*.tsx'
+          --exclude 'src/**/*.test.ts' --exclude 'src/**/fixtures/**'
+          --reporter=json-summary --reporter=lcov npm test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage/
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
 
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: tournament_ci
+          POSTGRES_USER: tournament_app
+          POSTGRES_PASSWORD: tournament-ci-only
+        ports:
+          - 5432:5432
+        options: --health-cmd "pg_isready -U tournament_app -d tournament_ci" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: jdbc:postgresql://127.0.0.1:5432/tournament_ci
+      DATABASE_USER: tournament_app
+      DATABASE_PASSWORD: tournament-ci-only
     defaults:
       run:
         working-directory: backend
@@ -34,4 +57,27 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: maven
-      - run: mvn --batch-mode --no-transfer-progress test
+      - run: >-
+          mvn --batch-mode --no-transfer-progress
+          org.jacoco:jacoco-maven-plugin:0.8.12:prepare-agent
+          test
+          org.jacoco:jacoco-maven-plugin:0.8.12:report
+      - name: Verify database integration tests ran
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          suites = [
+              "com.ctwe.tournament.web.CardAuthorizationMatrixTest",
+              "com.ctwe.tournament.web.TournamentLifecycleHttpTest",
+          ]
+          for suite in suites:
+              report = ElementTree.parse(Path("target/surefire-reports") / f"TEST-{suite}.xml").getroot()
+              if int(report.attrib["tests"]) == 0 or int(report.attrib["skipped"]) != 0:
+                  raise SystemExit(f"Integration suite was skipped: {suite}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/target/site/jacoco/

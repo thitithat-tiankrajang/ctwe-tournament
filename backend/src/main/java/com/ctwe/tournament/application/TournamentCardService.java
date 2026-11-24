@@ -169,7 +169,14 @@ public class TournamentCardService {
         // Audit is intentionally NOT loaded in the card payload — it is the largest part and only the
         // audit page needs it. It is served on demand via GET /{cardId}/audit instead.
         var audit = List.<CardDtos.AuditResponse>of();
-        var finalRound = "NONE".equals(card.finalType()) ? null : loadFinalRound(cardId, prefix);
+        CardDtos.FinalRoundResponse finalRound = null;
+        if (staffView && card.runtimeStage() == RuntimeStage.FINAL_SEEDING) {
+            var seeds = rankingSource.ranked(cardId).stream().limit(minimumEntrants(card.finalType()))
+                .map(entry -> pcode(prefix, Integer.parseInt(entry.playerId()))).toList();
+            finalRound = new CardDtos.FinalRoundResponse(List.of(), seeds);
+        } else if (!"NONE".equals(card.finalType())) {
+            finalRound = loadFinalRound(cardId, prefix);
+        }
         // Staff only. The projection strips it for anonymous viewers, but building it for a public
         // read would be a wasted query on the hottest path, so it is never built there.
         var screeningPool = staffView ? loadScreeningPool(cardId, prefix) : List.<CardDtos.ScreeningHold>of();
@@ -339,12 +346,13 @@ public class TournamentCardService {
 
     @Transactional
     @EvictPublicCard
-    public CardDtos.CardResponse updatePlayer(UUID cardId, String playerExternalId, CardDtos.PlayerRequest request, String actor, boolean operator) {
+    public CardDtos.CardResponse updatePlayer(UUID cardId, String playerExternalId, CardDtos.PlayerRequest request,
+                                              String actor, boolean operator, long expectedVersion) {
         // Directors/admins may correct player details throughout the tournament (the edit propagates to
         // every published pairing/ranking/result automatically, since those reference the player by code)
         // — but not once the card has finished. Staff may only edit during registration.
-        if (operator) requirePlayerEditable(cardId);
-        else requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
+        CardRow card = operator ? requirePlayerEditable(cardId) : requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
+        requireRosterVersion(card, expectedVersion);
         PlayerAudit oldPlayer = playerAudit(cardId, playerExternalId);
         if (request.id() != null && !request.id().isBlank() && !request.id().equals(playerExternalId))
             throw new IllegalArgumentException("รหัสนักกีฬาถูกจัดการโดยระบบและไม่สามารถแก้เองได้");
@@ -366,8 +374,9 @@ public class TournamentCardService {
 
     @Transactional
     @EvictPublicCard
-    public CardDtos.CardResponse removePlayer(UUID cardId, String playerExternalId, String actor) {
-        requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
+    public CardDtos.CardResponse removePlayer(UUID cardId, String playerExternalId, String actor, long expectedVersion) {
+        CardRow card = requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
+        requireRosterVersion(card, expectedVersion);
         PlayerAudit removedPlayer = playerAudit(cardId, playerExternalId);
         if (count("SELECT COUNT(*) FROM matches WHERE card_id = ? AND (player_one = ? OR player_two = ?)",
             cardId, removedPlayer.code(), removedPlayer.code()) > 0)
@@ -601,11 +610,12 @@ public class TournamentCardService {
     @Transactional
     @EvictPublicCard
     public CardDtos.CardResponse finishRegistration(UUID cardId, String actor) {
-        requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
+        CardRow card = requireStage(cardId, RuntimeStage.PLAYER_REGISTRATION);
         long players = activePlayerCount(cardId);
-        if (players < 2) throw new IllegalArgumentException("ต้องมีผู้เล่นอย่างน้อย 2 คน");
-        // Any player count is allowed: an odd field gets a bye (one-player pairing), and a non-multiple
-        // of 4 in the win/win–lose/lose block is handled by byes + a deferred Swiss group downstream.
+        int minimum = minimumEntrants(card.finalType());
+        if (players < minimum)
+            throw new IllegalArgumentException("ต้องมีผู้เล่นอย่างน้อย " + minimum + " คน");
+        // An odd field gets a bye. A non-multiple of four in a PAIR_RESULT block uses deferred Swiss.
         jdbc.update("UPDATE tournament_cards SET status = 'READY', runtime_stage = 'TABLE_PAIRING', version = version + 1 WHERE id = ?", cardId);
         publishPublic(cardId);
         audit(cardId, actor, "FINISH_PLAYER_REGISTRATION", players + " players", "ready for game 1 pairing");
@@ -1229,8 +1239,8 @@ public class TournamentCardService {
     @EvictPublicCard
     public CardDtos.CardResponse startFinalRound(UUID cardId, String actor) {
         CardRow card = requireStage(cardId, RuntimeStage.FINAL_SEEDING);
-        int slotCount = "CHAMPION_AND_THIRD".equals(card.finalType()) ? 2 : 1;
-        int needed = slotCount * 2;
+        int needed = minimumEntrants(card.finalType());
+        int slotCount = needed / 2;
         // Seeding consumes the ranking engine's INTERNAL order. It used to order by a rank column
         // that was never written, falling through to (win_points, diff) with no tie-break at all —
         // so whoever reached the final was decided by Postgres row order whenever the cut line fell
@@ -1261,6 +1271,32 @@ public class TournamentCardService {
         jdbc.update("UPDATE tournament_cards SET runtime_stage = 'FINAL_COLLECTION', version = version + 1 WHERE id = ?", cardId);
         publishPublic(cardId);
         audit(cardId, actor, "START_FINAL", null, "seeds=" + needed);
+        return get(cardId, true);
+    }
+
+    private static int minimumEntrants(String finalType) {
+        return "CHAMPION_AND_THIRD".equals(finalType) ? 4 : 2;
+    }
+
+    @Transactional
+    @EvictPublicCard
+    public CardDtos.CardResponse finishWithRegularResults(UUID cardId, String actor) {
+        CardRow card = requireStage(cardId, RuntimeStage.FINAL_SEEDING);
+        int required = minimumEntrants(card.finalType());
+        int eligible = rankingSource.ranked(cardId).size();
+        if (eligible >= required)
+            throw new IllegalArgumentException("มีผู้เล่นครบสำหรับรอบชิงแล้ว กรุณาเริ่มรอบชิง");
+
+        jdbc.update("""
+            UPDATE tournament_cards
+            SET status = 'FINISHED', runtime_stage = 'FINAL_PUBLISHED',
+                final_type = 'NONE', final_games = 0, version = version + 1
+            WHERE id = ?
+            """, cardId);
+        publishPublic(cardId);
+        audit(cardId, actor, "FINISH_WITH_REGULAR_RESULTS",
+            Map.of("finalType", card.finalType(), "finalGames", card.finalGames()),
+            Map.of("reason", "INSUFFICIENT_ELIGIBLE_PLAYERS", "eligible", eligible, "required", required));
         return get(cardId, true);
     }
 
@@ -2373,10 +2409,17 @@ public class TournamentCardService {
     }
 
     /** Player details / termination are editable throughout the tournament but not once it has finished. */
-    private void requirePlayerEditable(UUID cardId) {
-        CardStatus status = cardRow(cardId).status();
+    private CardRow requirePlayerEditable(UUID cardId) {
+        CardRow card = cardRow(cardId);
+        CardStatus status = card.status();
         if (status == CardStatus.FINISHED || status == CardStatus.CLOSED)
             throw new IllegalArgumentException("การแข่งขันจบแล้ว ไม่สามารถแก้ไขข้อมูลผู้เล่นได้");
+        return card;
+    }
+
+    private static void requireRosterVersion(CardRow card, long expectedVersion) {
+        if (card.version() != expectedVersion)
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "ข้อมูลการแข่งขันเปลี่ยน กรุณาตรวจรายชื่ออีกครั้ง");
     }
 
     /** Once a card enters/concludes its final round, the regular games are frozen (no override / un-pair). */

@@ -31,6 +31,7 @@ export interface FinalSlot {
 }
 export interface FinalRound {
   slots: FinalSlot[];
+  seedPlayerIds?: string[];
 }
 
 export interface PairingRule {

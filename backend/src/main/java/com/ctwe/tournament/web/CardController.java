@@ -11,6 +11,7 @@ import com.ctwe.tournament.infrastructure.security.AuthorizationService.Capabili
 import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
 import com.ctwe.tournament.web.dto.CardDtos;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
@@ -26,9 +27,8 @@ import java.util.function.Supplier;
 
 /**
  * Card operations are designed for concurrent multi-user editing (several staff/directors on the
- * same card from different machines). There is no card-level optimistic If-Match gate: every
- * mutation locks the card row ({@code SELECT ... FOR UPDATE}) and re-validates stage/snapshot
- * invariants, so concurrent writes serialize and all apply with nothing dropped.
+ * same card from different machines). Mutations lock the card row and revalidate the stage.
+ * Roster edits and deletions also check a version because registration can reassign player codes.
  */
 @RestController
 @RequestMapping("/api/cards")
@@ -64,7 +64,12 @@ public class CardController {
 
     @GetMapping("/{cardId}")
     public CardDtos.CardResponse get(@PathVariable UUID cardId, Authentication authentication) {
-        return backOffice(authentication) ? service.get(cardId, true) : publicCards.get(cardId);
+        if (!backOffice(authentication)) return publicCards.get(cardId);
+        // The internal view (roster, unpublished pairings, seats, Screening Pool) is tournament-scoped,
+        // the same read rule as this card's staff SSE stream. Deliberately not requireCardCapability:
+        // that also demands OPEN, and a CLOSED tournament must stay readable to its own operators.
+        authz.requireTournamentAccess(authentication, authz.tournamentOfCard(cardId));
+        return service.get(cardId, true);
     }
 
     /** On-demand audit log (kept out of the card payload). Role-gated to ADMIN/DIRECTOR by SecurityConfiguration. */
@@ -129,16 +134,29 @@ public class CardController {
 
     @PutMapping("/{cardId}/players/{playerId}")
     public CardDtos.CardResponse updatePlayer(@PathVariable UUID cardId, @PathVariable String playerId,
-                                               @Valid @RequestBody CardDtos.PlayerRequest request, Authentication authentication) {
+        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+        @Valid @RequestBody CardDtos.PlayerRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PLAYERS);
+        long expectedVersion = rosterVersion(ifMatch);
         boolean operator = authz.isAdmin(authentication) || authz.isDirector(authentication);
-        return changed(cardId, () -> service.updatePlayer(cardId, playerId, request, authentication.getName(), operator));
+        return changed(cardId, () -> service.updatePlayer(cardId, playerId, request, authentication.getName(), operator, expectedVersion));
     }
 
     @DeleteMapping("/{cardId}/players/{playerId}")
-    public CardDtos.CardResponse removePlayer(@PathVariable UUID cardId, @PathVariable String playerId, Authentication authentication) {
+    public CardDtos.CardResponse removePlayer(@PathVariable UUID cardId, @PathVariable String playerId,
+        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PLAYERS);
-        return changed(cardId, () -> service.removePlayer(cardId, playerId, authentication.getName()));
+        long expectedVersion = rosterVersion(ifMatch);
+        return changed(cardId, () -> service.removePlayer(cardId, playerId, authentication.getName(), expectedVersion));
+    }
+
+    private static long rosterVersion(String ifMatch) {
+        if (ifMatch == null)
+            throw new ResponseStatusException(HttpStatus.PRECONDITION_REQUIRED, "ระบุเวอร์ชันรายชื่อผู้เล่น");
+        String tag = ifMatch.strip();
+        if (!tag.matches("\"[0-9]+\""))
+            throw new IllegalArgumentException("Invalid If-Match header");
+        return Long.parseLong(tag.substring(1, tag.length() - 1));
     }
 
     @PostMapping("/{cardId}/registration/finish")
@@ -433,6 +451,16 @@ public class CardController {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         CardDtos.CardResponse card = changed(cardId, () -> service.startFinalRound(cardId, authentication.getName()));
         push.finalStarted(cardId);
+        return card;
+    }
+
+    @PostMapping("/{cardId}/final/finish-with-regular-results")
+    public CardDtos.CardResponse finishWithRegularResults(@PathVariable UUID cardId, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        if (!authz.isDirector(authentication))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "การจบด้วยอันดับรอบปกติสงวนสำหรับผู้อำนวยการ");
+        CardDtos.CardResponse card = changed(cardId, () -> service.finishWithRegularResults(cardId, authentication.getName()));
+        push.competitionCompleted(cardId);
         return card;
     }
 

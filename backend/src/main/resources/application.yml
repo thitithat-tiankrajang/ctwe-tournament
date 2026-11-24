@@ -96,7 +96,11 @@ app:
   cache:
     public-card-details:
       ttl-seconds: ${PUBLIC_CARD_CACHE_TTL_SECONDS:300}
-      maximum-size: ${PUBLIC_CARD_CACHE_MAX_SIZE:8}
+      # Budget for the SUM OF ESTIMATED CARD WEIGHTS, in estimate-bytes (see PublicCardWeigher). It is
+      # not a measured heap limit. Default 20,512,768 = the previous 8-entry setting's worst case at the
+      # 1,000-row reference card. Replaces the retired entry-count setting PUBLIC_CARD_CACHE_MAX_SIZE,
+      # which is no longer read (a startup warning names it if it is still set).
+      maximum-weight-bytes: ${PUBLIC_CARD_CACHE_MAX_WEIGHT_BYTES:20512768}
     public-card-catalog:
       ttl-seconds: ${PUBLIC_CARD_CATALOG_CACHE_TTL_SECONDS:300}
     public-card-versions:

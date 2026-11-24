@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * P1 guards for the Screening Pool: the deadlock that stranded the original rules, the review/publish
@@ -32,6 +33,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class ScreeningPoolIntegrationTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
@@ -48,8 +52,16 @@ class ScreeningPoolIntegrationTest {
 
     // ---- scaffolding -------------------------------------------------------
 
+    /** A synthetic tournament inside the rolled-back test transaction: no reliance on existing data. */
+    private UUID syntheticTournament() {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO tournaments (id, name, access_token, status) VALUES (?, ?, ?, 'OPEN')",
+            id, "IT " + id, "it-" + id);
+        return id;
+    }
+
     private UUID tournamentId() {
-        return jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
+        return syntheticTournament();
     }
 
     private UUID createCard(int games) {

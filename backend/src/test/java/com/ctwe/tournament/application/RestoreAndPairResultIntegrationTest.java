@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Real-Postgres integration tests (localhost:5432) — every test runs inside a transaction that is
@@ -31,6 +32,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class RestoreAndPairResultIntegrationTest {
 
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
+
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
         registry.add("security.staff.username", () -> "ittest");
@@ -42,8 +46,16 @@ class RestoreAndPairResultIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired RankingSource rankingSource;
 
+    /** A synthetic tournament inside the rolled-back test transaction: no reliance on existing data. */
+    private UUID syntheticTournament() {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO tournaments (id, name, access_token, status) VALUES (?, ?, ?, 'OPEN')",
+            id, "IT " + id, "it-" + id);
+        return id;
+    }
+
     private UUID tournamentId() {
-        return jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
+        return syntheticTournament();
     }
 
     private UUID createCard(int games, PairingRuleType initial, List<PairingRuleType> edgeRules) {

@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * The pairing tool's commit contract: atomicity, the per-slot precondition, idempotency, the hard
@@ -28,6 +29,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class PairingSessionIntegrationTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
@@ -45,8 +49,16 @@ class PairingSessionIntegrationTest {
 
     // ---- scaffolding -------------------------------------------------------
 
+    /** A synthetic tournament inside the rolled-back test transaction: no reliance on existing data. */
+    private UUID syntheticTournament() {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO tournaments (id, name, access_token, status) VALUES (?, ?, ?, 'OPEN')",
+            id, "IT " + id, "it-" + id);
+        return id;
+    }
+
     private UUID cardWithPairing(int players) {
-        UUID tournamentId = jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
+        UUID tournamentId = syntheticTournament();
         List<PairingRuleType> edges = List.of(PairingRuleType.SWISS, PairingRuleType.SWISS);
         UUID cardId = cards.create(new CardDtos.CreateCardRequest(tournamentId, "PS-" + UUID.randomUUID(),
             "DIV", 3, edges, List.of(500, 500, 500), "NONE", 0, false, PairingRuleType.RANDOM, null), ACTOR).id();

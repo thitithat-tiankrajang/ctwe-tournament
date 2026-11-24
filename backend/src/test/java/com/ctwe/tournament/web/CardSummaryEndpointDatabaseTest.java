@@ -26,6 +26,8 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import com.ctwe.tournament.application.WebPushService;
 
 /**
  * {@code GET /api/card-summaries} end to end: the five-way caller matrix B3 requires, and the value
@@ -40,6 +42,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class CardSummaryEndpointDatabaseTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
