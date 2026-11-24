@@ -26,6 +26,7 @@ const CONSEQUENCE_LABELS: Record<string, string> = {
   POOL_ADD: "เข้า Screening Pool",
   POOL_REMOVE: "ออกจาก Screening Pool",
   RESULT_REMOVED: "ลบผลที่บันทึกไว้แล้ว",
+  PAIR_RESULT_REBUILD: "คู่ปลายทางที่ต้องตรวจใหม่จากผลเกมก่อนหน้า",
 };
 
 interface Props {
@@ -46,7 +47,10 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
   const dialog = useModalDialog({ open: true, onDismiss: onCancel, dismissible: !busy });
 
   const blocked = validation.blocks.length > 0 || validation.drift.length > 0;
-  const allAcknowledged = validation.warnings.every((warning) => acknowledged.has(warning.code));
+  const warningKey = ({ game, table, code }: PairingValidation["warnings"][number]) => `${game}:${table}:${code}`;
+  const allAcknowledged = validation.warnings.every((warning) => acknowledged.has(warningKey(warning)));
+  const acceptedCodes = [...new Set(validation.warnings.filter((warning) => acknowledged.has(warningKey(warning))).map((warning) => warning.code))];
+  const games = [...new Set(validation.changes.map((change) => change.game))];
   const canCommit = !blocked && allAcknowledged && password.length > 0 && !busy;
 
   // Loose null check on purpose: the API serializes with non_null inclusion, so an empty seat
@@ -75,20 +79,25 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
         aria-labelledby={dialog.titleId}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="dlg-head"><span className="dlg-eyebrow">ยืนยันการเปลี่ยนแปลง</span><h2 id={dialog.titleId}>บันทึกการแก้คู่?</h2></header>
+        <header className="dlg-head"><span className="dlg-eyebrow">ยืนยันการเปลี่ยนแปลง</span><h2 id={dialog.titleId}>ตรวจผลกระทบก่อนบันทึก</h2></header>
         <div className="dlg-body">
-        <section className="msw-summary" aria-label="การเปลี่ยนแปลงคู่">
-          <p className="msw-summary-count"><strong>{validation.changes.length} คู่ที่เปลี่ยน</strong></p>
-          {validation.changes.length > 0 && <div className="msw-summary-scroll"><table className="dt" aria-label="คู่แข่งขันก่อนและหลังสลับ">
-            <thead><tr><th scope="col">คู่</th><th scope="col">ก่อนสลับ</th><th scope="col">หลังสลับ</th></tr></thead>
-            <tbody>{validation.changes.map((change) => <tr key={`${change.game}-${change.table}`}>
-              <td><strong>คู่ {change.table}</strong><small className="meta"> · เกม {change.game}</small></td>
-              <td className="msw-summary-players"><span>{name(change.beforeOne)}</span><span>{name(change.beforeTwo)}</span></td>
-              <td className="msw-summary-players"><span className={change.beforeOne === change.afterOne ? undefined : "msw-summary-change"}>{name(change.afterOne)}</span>
-                <span className={change.beforeTwo === change.afterTwo ? undefined : "msw-summary-change"}>{name(change.afterTwo)}</span></td>
-            </tr>)}</tbody>
-          </table></div>}
-        </section>
+        <div className="msw-impact-games">
+          {games.map((game) => {
+            const changes = validation.changes.filter((change) => change.game === game);
+            return <section key={game} className="msw-summary" aria-label={`ผลกระทบเกม ${game}`}>
+              <p className="msw-summary-count"><strong>เกม {game}</strong><span>{changes.length} คู่ที่เปลี่ยน</span></p>
+              <div className="msw-summary-scroll"><table className="dt" aria-label="คู่แข่งขันก่อนและหลังสลับ">
+                <thead><tr><th scope="col">คู่</th><th scope="col">ก่อนสลับ</th><th scope="col">หลังสลับ</th></tr></thead>
+                <tbody>{changes.map((change) => <tr key={change.table}>
+                  <td><strong>{change.table}</strong></td>
+                  <td className="msw-summary-players"><span>{name(change.beforeOne)}</span><span>{name(change.beforeTwo)}</span></td>
+                  <td className="msw-summary-players"><span className={change.beforeOne === change.afterOne ? undefined : "msw-summary-change"}>{name(change.afterOne)}</span>
+                    <span className={change.beforeTwo === change.afterTwo ? undefined : "msw-summary-change"}>{name(change.afterTwo)}</span></td>
+                </tr>)}</tbody>
+              </table></div>
+            </section>;
+          })}
+        </div>
 
         {validation.consequences.length > 0 && (
           <section className="diff-sheet__section">
@@ -97,7 +106,7 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
               {validation.consequences.map((consequence, index) => (
                 <li key={index}>
                   {CONSEQUENCE_LABELS[consequence.kind] ?? consequence.kind}
-                  {consequence.table != null && ` · เกม ${consequence.game} คู่ที่ ${consequence.table}`}
+                  {consequence.game != null && ` · เกม ${consequence.game}`}{consequence.table != null && ` คู่ที่ ${consequence.table}`}
                   {consequence.player && ` · ${name(consequence.player)}`}
                 </li>
               ))}
@@ -109,13 +118,13 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
           <section className="diff-sheet__section diff-sheet__section--warn">
             <h3><CircleAlert size={14} /> คำเตือน — ต้องยืนยันทีละข้อ</h3>
             {validation.warnings.map((warning) => (
-              <label key={`${warning.code}-${warning.table}`} className="diff-sheet__ack">
+              <label key={warningKey(warning)} className="diff-sheet__ack">
                 <input
                   type="checkbox"
-                  checked={acknowledged.has(warning.code)}
-                  onChange={() => toggle(warning.code)}
+                  checked={acknowledged.has(warningKey(warning))}
+                  onChange={() => toggle(warningKey(warning))}
                 />
-                <span>คู่ที่ {warning.table} · {warning.message}</span>
+                <span>เกม {warning.game} · คู่ที่ {warning.table} · {warning.message}</span>
               </label>
             ))}
           </section>
@@ -170,13 +179,13 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
           {/* Offered only when every colliding result can actually be unwound — never as a button
               that would fail after the operator has already committed to it. */}
           {blocked && onForce && validation.resultsToRemove.length > 0 && validation.forceAvailable && (
-            <button type="button" className="btn btn--danger" onClick={() => onForce([...acknowledged])} disabled={busy}>
+            <button type="button" className="btn btn--danger" onClick={() => onForce(acceptedCodes)} disabled={busy || !allAcknowledged}>
               <ShieldAlert size={14} />
               ลบผล {validation.resultsToRemove.length} คู่ แล้วบันทึก…
             </button>
           )}
           {!blocked && (
-            <button type="button" className="btn btn--primary" onClick={() => onConfirm(password, [...acknowledged])} disabled={!canCommit}>
+            <button type="button" className="btn btn--primary" onClick={() => onConfirm(password, acceptedCodes)} disabled={!canCommit}>
               {busy ? <LoaderCircle className="loading-spinner" size={14} /> : null}
               บันทึกการเปลี่ยนแปลง
             </button>

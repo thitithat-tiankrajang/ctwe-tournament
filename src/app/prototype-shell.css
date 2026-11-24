@@ -20,8 +20,6 @@
 .ctwe-prototype .prototype-sheet-switcher { position:relative; z-index:1; }
 .ctwe-prototype .prototype-sheet-account { padding:8px 14px; display:flex; gap:8px; justify-content:space-between; align-items:center; }
 .ctwe-prototype .prototype-operator-hits { position:absolute; top:calc(100% + 4px); right:0; width:min(420px,calc(100vw - 20px)); max-height:65dvh; }
-.ctwe-prototype .prototype-search-dialog { position:fixed; z-index:200; place-items:center; backdrop-filter:blur(3px); }
-.ctwe-prototype .prototype-search-dialog .pm { position:relative; width:min(530px, calc(100vw - 24px)); max-height:89dvh; overflow:auto; }
 .ctwe-prototype .panel-body > .panel-padding { padding:0; }
 .ctwe-prototype .prototype-login { max-width:520px; }
 .ctwe-prototype .prototype-login .field { width:100%; flex-basis:100%; }

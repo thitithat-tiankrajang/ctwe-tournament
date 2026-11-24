@@ -195,6 +195,7 @@ interface TournamentState {
   confirmPairingPreview: (cardId: string) => Promise<void>;
   publishNextPairing: (cardId: string) => Promise<void>;
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
+  forceBye: (cardId: string, matchId: string, expectedPlayer: string, score: number, password: string) => Promise<void>;
   overrideResult: (cardId: string, matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
   applyPenalty: (cardId: string, matchId: string, points: number, password: string) => Promise<void>;
   revokePenalty: (cardId: string, matchId: string, password: string) => Promise<void>;
@@ -208,7 +209,7 @@ interface TournamentState {
   publishFinal: (cardId: string) => Promise<void>;
   undoPairing: (cardId: string, password: string) => Promise<void>;
   unpairCurrentPairing: (cardId: string, password: string) => Promise<void>;
-  terminatePlayers: (cardId: string, playerIds: string[], password: string) => Promise<void>;
+  terminatePlayers: (cardId: string, playerIds: string[], password: string, fromGame?: number) => Promise<void>;
   /**
    * Verify the director's password and open the pairing tool, returning the current pool.
    *
@@ -1130,6 +1131,11 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       const patched = applyResultPatch(cardId, patch.version, patch.changedPairings);
       if (!patched) await get().syncCard(cardId); // safety net: pull the full card if we couldn't patch in place
     },
+    async forceBye(cardId, matchId, expectedPlayer, score, password) {
+      await mutateCard(`/api/cards/${cardId}/matches/${matchId}/force-bye`, cardId, {
+        method: "POST", body: JSON.stringify({ expectedPlayer, score, password }),
+      });
+    },
     async overrideResult(cardId, matchId, scoreOne, scoreTwo) {
       await mutateCard(`/api/cards/${cardId}/matches/${matchId}/override`, cardId, {
         method: "PUT",
@@ -1210,8 +1216,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         body: JSON.stringify({ commitKey, password, force, ...changes }),
       });
     },
-    async terminatePlayers(cardId, playerIds, password) {
-      await mutateCard(`/api/cards/${cardId}/players/terminate`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password }) });
+    async terminatePlayers(cardId, playerIds, password, fromGame) {
+      await mutateCard(`/api/cards/${cardId}/players/terminate`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password, fromGame }) });
     },
     async restorePlayers(cardId, playerIds, password, lossPoints, unpair) {
       await mutateCard(`/api/cards/${cardId}/players/restore`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password, lossPoints, unpair }) });

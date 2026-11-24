@@ -8,7 +8,7 @@ import { useState } from "react";
 import { isBadPassword, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, isOperator } from "@/domain/tournament/roles";
-import { allResultBlocks, isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
+import { allResultBlocks, editableResultGames, resultBlockGames } from "@/domain/tournament/flow";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import { blockCompletion, isRecordedPairing, isVoidPairing } from "@/domain/tournament/pairing-slot";
 import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
@@ -25,7 +25,6 @@ import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { RankingGrid } from "@/ui/components/standings-grids";
 import { OverrideEditor } from "@/ui/components/override-editor";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
-import { clearPairingDraft } from "@/ui/components/pairing-ui-draft";
 import { SelectMenu } from "@/ui/components/select-menu";
 import { operatorStageLabels } from "@/ui/components/stage-info";
 
@@ -198,6 +197,13 @@ export default function GamesPage() {
   const publishFinal = useTournamentStore((state) => state.publishFinal);
   const card = selectCard(cards, id); const [busy, setBusy] = useState(false);
   const [viewKey, setViewKey] = useState<string | null>(null);
+  const [activeGame, setActiveGame] = useState<number>();
+  const [byeMatch, setByeMatch] = useState<Pairing>();
+  const [byeScore, setByeScore] = useState("");
+  const [byePassword, setByePassword] = useState("");
+  const [byeError, setByeError] = useState("");
+  const [byeBusy, setByeBusy] = useState(false);
+  const forceBye = useTournamentStore((state) => state.forceBye);
   const [editUnlocked, setEditUnlocked] = useState(false);
   const [pwOpen, setPwOpen] = useState(false); const [pwBusy, setPwBusy] = useState(false); const [pwError, setPwError] = useState("");
   // Director "ลงดาบ" penalty dialog.
@@ -213,32 +219,27 @@ export default function GamesPage() {
   if (!card) return <CardNotFound />;
 
   const playerMap = new Map(card.players.map((player) => [player.id, player]));
-  const activeGames = resultBlockGames(card);
-  const pairResultBlock = isPairResultBlock(card);
+  const configuredGames = resultBlockGames(card);
+  const activeGames = editableResultGames(card);
+  const pairResultBlock = activeGames.length > 1;
+  const displayedGame = activeGames.includes(activeGame ?? 0) ? activeGame : activeGames[0];
   const blockLabel = activeGames.length === 1 ? `เกม ${activeGames[0]}` : `เกม ${activeGames[0]}–${activeGames[activeGames.length - 1]}`;
-  const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.includes(card.currentGame));
+  const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.some((game) => activeGames.includes(game)));
   const pairings = currentSnapshot?.pairings.filter((pairing) => activeGames.includes(pairing.gameNumber ?? card.currentGame)) ?? [];
   const resultCollection = card.runtimeStage === "RESULT_COLLECTION"; const reviewing = card.runtimeStage === "RESULT_REVIEW";
-  // PAIR_RESULT materialises exactly one destination row per source row, including byes; voided
-  // slots leave both sides of the equation, or the gate could never open. See `blockCompletion`.
   const allComplete = blockCompletion(pairings, activeGames, card.currentGame, pairResultBlock).complete;
   const pairingsForGame = (gameNumber: number) => pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === gameNumber);
-  const live = (list: Pairing[]) => list.filter((pairing) => !isVoidPairing(pairing));
-  const sourcePairings = pairResultBlock ? live(pairingsForGame(activeGames[0])) : [];
-  const sourceComplete = sourcePairings.length > 0 && sourcePairings.every(isRecordedPairing);
-  const destinationPairings = pairResultBlock ? live(pairingsForGame(activeGames[1])) : [];
-  const hasAnyPlayer = (pairing?: Pairing) => Boolean(pairing?.playerOneId || pairing?.playerTwoId);
-  const destinationPairingComplete = pairResultBlock && sourceComplete
-    && destinationPairings.length === sourcePairings.length
-    && destinationPairings.every(hasAnyPlayer);
-  const destinationPairingPublished = destinationPairings.length > 0
-    && destinationPairings.every((pairing) => pairing.pairingPublished);
+  const sourcePairings = pairResultBlock ? pairingsForGame(activeGames[0]) : [];
+  const sourceComplete = sourcePairings.length > 0 && sourcePairings.every((pair) => isVoidPairing(pair) || isRecordedPairing(pair));
+  const destinationPairingComplete = pairResultBlock && sourceComplete;
+  const destinationPairingPublished = configuredGames.length > activeGames.length;
   const maxDiffForGame = (gameNumber: number) => card.games.find((game) => game.number === gameNumber)?.maxDiff ?? 350;
   // Director-only: navigate to any past/current result block; staff stays on the current block.
   const isDirector = canManageTournament(auth);
   const currentKey = activeGames.join("-");
   const scheduledBlocks = allResultBlocks(card);
-  const selectableBlocks = scheduledBlocks.filter((block) => block[0] <= card.currentGame);
+  const selectableBlocks = [...scheduledBlocks.filter((block) => block[0] < card.currentGame),
+    ...(destinationPairingPublished ? [[card.currentGame]] : []), activeGames];
   const effectiveKey = viewKey && selectableBlocks.some((block) => block.join("-") === viewKey) ? viewKey : currentKey;
   const selectedBlock = selectableBlocks.find((block) => block.join("-") === effectiveKey) ?? activeGames;
   const viewingCurrent = effectiveKey === currentKey;
@@ -249,6 +250,20 @@ export default function GamesPage() {
   };
 
   const saveResult = (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => submitResult(id, pairing.id, scoreOne, scoreTwo, editExisting);
+  const openBye = (pairing: Pairing) => {
+    setByeScore(""); setByePassword(""); setByeError(""); setByeMatch(pairing);
+  };
+  const submitBye = async () => {
+    const player = byeMatch?.playerOneId ?? byeMatch?.playerTwoId;
+    const score = Number(byeScore);
+    if (!byeMatch || !player || !Number.isInteger(score) || score < 1 || score > 1500 || !byePassword) {
+      setByeError("กรอกคะแนนตั้งแต่ 1 ถึง 1500 และรหัสผ่านผู้อำนวยการ"); return;
+    }
+    setByeBusy(true); setByeError("");
+    try { await forceBye(id, byeMatch.id, player, score, byePassword); setByeMatch(undefined); setByePassword(""); }
+    catch (error) { setByeError(error instanceof Error ? error.message : "บันทึกผลบายไม่สำเร็จ"); }
+    finally { setByeBusy(false); }
+  };
   const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เปิดหน้าตรวจผลไม่สำเร็จ", "เปิดตรวจผลไม่สำเร็จ", true); } finally { setBusy(false); } };
   const publishDestinationPairing = async () => {
     if (destinationPairingPublished) return;
@@ -365,7 +380,7 @@ export default function GamesPage() {
         <div className="ttl"><h1>{reviewing ? (isDirector ? "ตรวจผลการแข่งขัน" : "ผู้อำนวยการกำลังตรวจผล") : <span className="sr">ผลการแข่งขัน</span>}</h1></div>
         {isDirector && (resultCollection
           ? <div className="actions">
-              {viewingCurrent && live(pairingsForGame(activeGames[0])).length > 0 && !live(pairingsForGame(activeGames[0])).some(isRecordedPairing) &&
+              {viewingCurrent && !destinationPairingPublished && pairings.some((pair) => !isVoidPairing(pair)) && !pairings.some(isRecordedPairing) &&
                 <Button variant="secondary" className="btn btn--secondary" disabled={busy} onClick={() => void onUnpairing()}><Undo2 className="i" size={14} />Unpairing</Button>}
               {pairResultBlock && !destinationPairingPublished && (
                 <Button variant="secondary" className="btn btn--secondary" disabled={busy || !viewingCurrent || !destinationPairingComplete} onClick={() => void publishDestinationPairing()}
@@ -375,7 +390,7 @@ export default function GamesPage() {
               )}
               <SelectMenu appearance="prototype" ariaLabel="เลือกเกม" value={effectiveKey}
                 options={scheduledBlocks.map((block) => ({ value: block.join("-"), label: `${blockLabelOf(block)}${block.join("-") === currentKey ? " · ปัจจุบัน" : ""}`, disabled: block[0] > card.currentGame }))}
-                onChange={(value) => { if (value !== effectiveKey) { clearPairingDraft(id); setEditUnlocked(false); } setViewKey(value); if (value !== currentKey) { setPwError(""); setPwOpen(true); } }} />
+                onChange={(value) => { if (value !== effectiveKey) setEditUnlocked(false); setViewKey(value); if (value !== currentKey) { setPwError(""); setPwOpen(true); } }} />
               <Button variant="success" className="btn btn--success" disabled={!viewingCurrent || !allComplete || busy} onClick={beginReview}
                 title={!viewingCurrent ? "เลือกเกมปัจจุบันก่อนตรวจผล" : allComplete ? undefined : "ต้องบันทึกผลให้ครบทุกคู่ก่อน"}><Eye className="i" size={14} />ตรวจผล <ArrowRight className="i" size={14} /></Button>
             </div>
@@ -393,32 +408,35 @@ export default function GamesPage() {
             </section>)}
         </>
       ) : resultCollection ? <>
+        {pairResultBlock && <div className="block-game-buttons" role="group" aria-label="เลือกเกมในชุดนี้">
+          {activeGames.map((game) => <button type="button" className="btn btn--sm btn--secondary" key={game}
+            aria-pressed={displayedGame === game} onClick={() => setActiveGame(game)}>เกม {game}</button>)}
+        </div>}
         {activeGames.map((gameNumber) => {
           const gamePairings = pairingsForGame(gameNumber);
           const maxDiff = maxDiffForGame(gameNumber);
           const isDestination = pairResultBlock && gameNumber === activeGames[1];
-          // A one-player game-1 row is a bye; a one-player destination row is a bye once the whole source game is recorded.
-          const destinationSourceComplete = isDestination && sourceComplete;
-          const slots: EntrySlot[] = isDestination
-            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => { const dest = gamePairings.find((d) => d.tableNumber === source.tableNumber); return { tableNumber: source.tableNumber, pairing: dest, isBye: oneOnly(dest) && destinationSourceComplete, isVoid: isVoidPairing(source) }; })
-            : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing, isBye: oneOnly(pairing), isVoid: isVoidPairing(pairing) }));
-          // A voided slot counts on neither side of the badge: it is resolved, not outstanding.
-          const destinationHasPlayers = isDestination && gamePairings.some(hasAnyPlayer);
-          const pairingEdit = isDirector
-            ? isDestination
-              ? {
-                  onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password),
-                  swapDisabled: !destinationHasPlayers,
-                  swapTitle: destinationHasPlayers ? "สลับผู้เล่นในคู่แข่งขันเกมปลายทางที่ยังไม่กรอกผล" : "ยังไม่มีผู้เล่นในคู่แข่งขันเกมปลายทางให้สลับ",
-                }
-              : gameNumber === card.currentGame
-                ? { onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password) }
-                : undefined
-            : undefined;
+          const tables = [...new Set([...gamePairings.map((pair) => pair.tableNumber),
+            ...(isDestination ? sourcePairings.map((pair) => pair.tableNumber) : [])])].sort((a,b) => a-b);
+          const slots: EntrySlot[] = tables.map((tableNumber) => {
+            const pairing = gamePairings.find((pair) => pair.tableNumber === tableNumber);
+            const group = Math.floor((tableNumber - 1) / 2);
+            const sources = sourcePairings.filter((pair) => Math.floor((pair.tableNumber - 1) / 2) === group);
+            const ready = !isDestination || sourceComplete || (sources.length > 0
+              && sources.every((pair) => isVoidPairing(pair) || isRecordedPairing(pair)));
+            const isBye = oneOnly(pairing) && (ready || Boolean(pairing?.resultType) || Boolean(pairing?.manualPairing));
+            return { tableNumber, pairing, isBye, waiting: isDestination && !ready && !pairing?.voided,
+              isVoid: Boolean(pairing?.voided) || (ready && isVoidPairing(pairing)) };
+          });
+          const pairingEdit = isDirector ? {
+            onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password),
+            swapDisabled: !gamePairings.some((pair) => pair.playerOneId || pair.playerTwoId),
+            seats: card.slotLabel === "SEAT",
+          } : undefined;
           if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`เกม ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยันคู่แข่งขันเกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
-          return <section className="panel director-grid-panel" key={gameNumber} aria-label="ผลการแข่งขัน">
+          return <section className="panel director-grid-panel" key={gameNumber} aria-label="ผลการแข่งขัน" hidden={gameNumber !== displayedGame}>
             {pairResultBlock && <div className="panel-head"><h2>เกม {gameNumber}</h2></div>}
-            <ResultEntryGrid gameNumber={gameNumber} codePrefix={card.codePrefix ?? card.players[0]?.id.match(/^[A-Za-z]+/)?.[0] ?? "P"} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} pairingEdit={pairingEdit} />
+            <ResultEntryGrid gameNumber={gameNumber} codePrefix={card.codePrefix ?? card.players[0]?.id.match(/^[A-Za-z]+/)?.[0] ?? "P"} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} onForceBye={isDirector && isDestination ? openBye : undefined} pairingEdit={pairingEdit} />
           </section>;
         })}
       </> : (
@@ -443,6 +461,19 @@ export default function GamesPage() {
         onSubmit={(value) => void confirmPw(value)}
         onCancel={() => { if (!pwBusy) { setPwOpen(false); setPwError(""); } }}
       />
+
+      <ConfirmDialog appearance="prototype" open={Boolean(byeMatch)}
+        title={`ให้บาย · เกม ${byeMatch?.gameNumber ?? ""} คู่ ${byeMatch?.tableNumber ?? ""}`}
+        description={`${byeMatch?.playerOneId ?? byeMatch?.playerTwoId ?? ""} จะชนะบาย ผู้เล่นที่เข้ามาทีหลังจะรอจัดคู่แยก`}
+        confirmLabel="ยืนยันและบันทึกผลบาย" busy={byeBusy} error={byeError || undefined}
+        onConfirm={() => void submitBye()} onCancel={() => { if (!byeBusy) { setByeMatch(undefined); setByePassword(""); } }}>
+        <label className="form-label" htmlFor="force-bye-score">คะแนนผู้เล่น</label>
+        <input className="input" id="force-bye-score" type="number" min={1} max={1500} value={byeScore}
+          onChange={(event) => setByeScore(event.target.value)} />
+        <label className="form-label" htmlFor="force-bye-password">รหัสผ่านผู้อำนวยการ</label>
+        <FreshSecretInput className="input" id="force-bye-password" value={byePassword}
+          onChange={(event) => setByePassword(event.target.value)} />
+      </ConfirmDialog>
 
       <ConfirmDialog
         appearance="prototype"

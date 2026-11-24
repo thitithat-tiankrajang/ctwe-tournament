@@ -4,6 +4,9 @@ import { X } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { PublicDivisionPayload, SpectatorDivision } from "@/application/tournament/spectator-read-model";
 import { spectatorPlayerView, type SpectatorOpponent, type SpectatorPlayerGame, type SpectatorPlayerView } from "@/application/tournament/spectator-player";
+import { editableResultGames } from "@/domain/tournament/flow";
+import { isRecordedPairing } from "@/domain/tournament/pairing-slot";
+import type { TournamentCard } from "@/domain/tournament/types";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 import { PrototypeViewerHelp, PrototypeViewerStatus, useViewerPlacement } from "./prototype-spectator-chrome";
 
@@ -25,8 +28,54 @@ function Opponent({ player, open, inline = false }: { player: SpectatorOpponent;
   </button>;
 }
 
-function PlayerStatus({ card, view, onOpenPlayer }: {
+function PlayerMasterStatus({ card, view, operational, onOpenPlayer }: {
+  card: PublicDivisionPayload; view: SpectatorPlayerView; operational?: TournamentCard; onOpenPlayer: (code: string) => void;
+}) {
+  const code = view.participant.code;
+  const assignment = view.assignment;
+  const rounds = operational ? editableResultGames(operational).map((game) => {
+    const pairing = operational.snapshots.filter((snapshot) => !snapshot.confirmedAt).flatMap((snapshot) => snapshot.pairings)
+      .find((pair) => (pair.gameNumber ?? operational.currentGame) === game && (pair.playerOneId === code || pair.playerTwoId === code));
+    const other = pairing?.playerOneId === code ? pairing.playerTwoId : pairing?.playerOneId;
+    const opponent = card.players.find((player) => player.id === other);
+    const held = operational.screeningPool?.some((hold) => hold.player === code && (hold.fromGame ?? 1) <= game);
+    const player = card.players.find((entry) => entry.id === code);
+    const withdrawn = Boolean(player?.terminated && (player.withdrawnFromGame ?? 0) <= game);
+    const source = operational.snapshots.filter((snapshot) => !snapshot.confirmedAt).flatMap((snapshot) => snapshot.pairings)
+      .filter((pair) => (pair.gameNumber ?? operational.currentGame) === operational.currentGame
+        && Math.floor((pair.tableNumber - 1) / 2) === Math.floor(((pairing?.tableNumber ?? 1) - 1) / 2));
+    const waiting = Boolean(pairing && !other && game > operational.currentGame && !pairing.resultType && !pairing.manualPairing
+      && source.some((pair) => (pair.playerOneId || pair.playerTwoId) && !isRecordedPairing(pair)));
+    return { game, pair: pairing?.tableNumber, seat: pairing ? (pairing.tableNumber - 1) * 2 + (pairing.playerOneId === code ? 1 : 2) : undefined,
+      opponent: opponent ? { code: opponent.id, name: `${opponent.firstName} ${opponent.lastName}`, school: opponent.school } : undefined,
+      label: withdrawn ? "ถอนแล้ว" : held ? "คัดชั่วคราว" : pairing?.resultType ? "บันทึกผลแล้ว" : waiting ? "รอคู่แข่ง"
+        : operational.runtimeStage === "PAIRING_PREVIEW" && pairing ? "รอยืนยันคู่" : pairing ? "รอผล"
+        : game > operational.currentGame ? "รอผลจากเกมก่อนหน้า" : "รอประกาศคู่",
+      waiting, saved: Boolean(pairing?.resultType), withdrawn };
+  }) : [{
+    game: assignment?.game ?? view.awaitingGame ?? view.recordedCurrentGame?.game ?? card.currentGame,
+    pair: assignment?.pairNumber ?? view.recordedCurrentGame?.pairNumber,
+    seat: assignment?.seat ?? view.recordedCurrentGame?.seat,
+    opponent: assignment?.opponent ?? view.recordedCurrentGame?.opponent,
+    label: !view.participant.listedInStandings ? "ถอนแล้ว" : assignment ? "รอผล" : view.recordedCurrentGame ? "บันทึกผลแล้ว" : "รอประกาศคู่",
+    waiting: false, saved: !assignment && Boolean(view.recordedCurrentGame), withdrawn: !view.participant.listedInStandings,
+  }];
+  return <section className="player-master" aria-label="สถานะปัจจุบัน">
+    <h3>สถานะปัจจุบัน</h3>
+    {rounds.map((round) => <article className="player-master-round" key={round.game}>
+      <header><strong>เกม {round.game}</strong><PrototypeViewerStatus tone={round.withdrawn ? "danger" : round.saved ? "success" : round.pair && !round.waiting ? "info" : "neutral"}>{round.label}</PrototypeViewerStatus></header>
+      {round.pair != null && <dl className="player-master-facts">
+        <div><dt>คู่</dt><dd className="num">{round.pair}</dd></div><div><dt>ที่นั่ง</dt><dd className="num">{round.seat}</dd></div>
+        <div><dt>คู่แข่ง</dt><dd>{round.opponent ? <><Opponent player={round.opponent} open={onOpenPlayer} inline />
+          <span className="sub">{round.opponent.school}</span></> : round.waiting ? "รอผลจากเกมก่อนหน้า" : "บาย"}</dd></div>
+      </dl>}
+    </article>)}
+  </section>;
+}
+
+function PlayerStatus({ card, view, onOpenPlayer, master, operational }: {
   card: PublicDivisionPayload; view: SpectatorPlayerView; onOpenPlayer: (code: string) => void;
+  master?: boolean; operational?: TournamentCard;
 }) {
   const history = view.ledger.filter(game => game.state === "official" || game.state === "recorded");
   const last = history.at(-1);
@@ -47,7 +96,7 @@ function PlayerStatus({ card, view, onOpenPlayer }: {
     : view.recordedCurrentGame ? ["neutral", `รอคู่เกม ${view.recordedCurrentGame.game + 1}`]
     : ["neutral", `รอคู่เกม ${view.awaitingGame ?? card.currentGame}`];
   return <div className="pm-body">
-    <section className="now5" aria-label="สถานะปัจจุบัน">
+    {master && view.phase === "regular" ? <PlayerMasterStatus card={card} view={view} operational={operational} onOpenPlayer={onOpenPlayer} /> : <section className="now5" aria-label="สถานะปัจจุบัน">
       <div className="now5__status">
         <PrototypeViewerStatus tone={state}>{label}</PrototypeViewerStatus>
         {assignment && <span className="now5__game">เกม {assignment.game}</span>}
@@ -71,7 +120,7 @@ function PlayerStatus({ card, view, onOpenPlayer }: {
         <span className="lbl">ล่าสุด · เกม {last.game}</span><PrototypeViewerStatus tone={outcome(last)[0]}>{outcome(last)[1]}</PrototypeViewerStatus>
         <span className="num">{score(last)}</span>{last.opponent && <Opponent player={last.opponent} open={onOpenPlayer} inline />}
       </div>}
-    </section>
+    </section>}
     {ranking && <div className="pm-stats"><span>อันดับ <b>{ranking.rank}</b></span><span>คะแนนสะสม <b>{ranking.wins + ranking.draws / 2}</b></span><span>ผลต่าง <b>{signed(ranking.diff)}</b></span></div>}
     {history.length > 0 && <details className="pm-hist"><summary>ประวัติการแข่งขัน · {history.length} เกม</summary>
       <table className="st" aria-label="ประวัติการแข่งขัน"><thead><tr><th scope="col" className="fitw">เกม</th><th scope="col">คู่แข่ง</th><th scope="col" className="n" style={{ width: 76 }}>คะแนน</th><th scope="col" style={{ width: 70 }}>ผล</th></tr></thead>
@@ -84,8 +133,9 @@ function PlayerStatus({ card, view, onOpenPlayer }: {
   </div>;
 }
 
-export function PrototypeSpectatorPlayer({ card, division, code, theme, mobile, anchor, onClose, onOpenPlayer }: {
+export function PrototypeSpectatorPlayer({ card, division, code, theme, mobile, anchor, onClose, onOpenPlayer, master = false, operational }: {
   card: PublicDivisionPayload; division: SpectatorDivision; code: string; theme: CSSProperties; mobile: boolean;
+  master?: boolean; operational?: TournamentCard;
   anchor: RefObject<HTMLElement | null>; onClose: () => void; onOpenPlayer: (code: string) => void;
 }) {
   const player = spectatorPlayerView(card, division, code);
@@ -98,12 +148,13 @@ export function PrototypeSpectatorPlayer({ card, division, code, theme, mobile, 
     timer.current = setTimeout(onClose, 140);
   };
   const modal = useModalDialog({ open: true, onDismiss: close, dismissible: !closing });
-  const placed = useViewerPlacement(anchor, modal.ref, mobile ? 560 : 440, 240, false, true);
+  const anchored = useViewerPlacement(anchor, modal.ref, mobile ? 560 : 440, 240, false, true);
+  const placed = master ? { sheet: mobile, centered: !mobile, direction: undefined, style: undefined } : anchored;
   useEffect(() => () => clearTimeout(timer.current), []);
   return <div className={`pm-layer pm-layer--viewer${placed?.sheet || placed?.centered ? " pm-layer--modal" : ""}${closing ? " closing" : ""}`}
     onMouseDown={modal.onBackdropMouseDown}>
     <section ref={modal.ref} role="dialog" aria-modal="true" aria-labelledby={modal.titleId} tabIndex={-1}
-      className={`pm pm--pop pm--viewer sport-theme${placed?.sheet ? " pm--sheet" : placed?.centered ? " pm--center" : ""}`}
+      className={`pm pm--pop sport-theme${operational ? "" : " pm--viewer"}${master ? " pm--master" : ""}${placed?.sheet ? " pm--sheet" : placed?.centered ? " pm--center" : ""}`}
       style={{ ...theme, ...placed?.style, visibility: placed ? undefined : "hidden" }}
       data-side={placed?.direction} onMouseDown={event => event.stopPropagation()}>
       <header className="pm__head"><div className="pm__title"><span className="pm__sub">{card.name} · {card.division}</span>
@@ -111,7 +162,7 @@ export function PrototypeSpectatorPlayer({ card, division, code, theme, mobile, 
         <span className="pm__school">{player?.participant.school}</span></div>
         <button type="button" className="pm__close" aria-label="ปิดรายละเอียดนักกีฬา" onClick={close}><X className="i" size={17} /></button></header>
       <div key={code} className="pm__scroll pm-swap">
-        {player ? <PlayerStatus card={card} view={player} onOpenPlayer={onOpenPlayer} /> : <p className="pm-body">รายชื่ออาจถูกปรับหลังจากเปิดหน้านี้</p>}
+        {player ? <PlayerStatus card={card} view={player} master={master} operational={operational} onOpenPlayer={onOpenPlayer} /> : <p className="pm-body">รายชื่ออาจถูกปรับหลังจากเปิดหน้านี้</p>}
       </div>
     </section>
   </div>;

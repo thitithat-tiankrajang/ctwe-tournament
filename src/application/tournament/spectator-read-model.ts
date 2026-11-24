@@ -123,7 +123,7 @@ export function spectatorDivision(card: PublicDivisionPayload): SpectatorDivisio
   return {
     id: card.id, tournamentId: card.tournamentId, name: card.name, division: card.division, version: card.version,
     participants: card.players.map(player => ({ key: key(player.id)!, code: player.id, divisionId: card.id,
-      name: `${player.firstName} ${player.lastName}`, school: player.school, listedInStandings: !player.terminated })),
+      name: `${player.firstName} ${player.lastName}`, school: player.school, listedInStandings: !player.terminated || (player.withdrawnFromGame ?? 0) > currentGame })),
     slotLabel: card.slotLabel ?? "PAIR",
     contests,
     publication: {

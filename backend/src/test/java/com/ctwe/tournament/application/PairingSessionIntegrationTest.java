@@ -202,6 +202,27 @@ class PairingSessionIntegrationTest {
     }
 
     @Test
+    void returningToAVoidedSlotRestoresItsOccupantAndClearsTheVoid() {
+        UUID cardId = cardWithPairing(8);
+        int[] first = fullSlot(cardId);
+        String one = id(cardId, first[2]);
+        String two = id(cardId, first[3]);
+        session.commit(cardId, request(
+            List.of(slot(1, first[1], one, two)), List.of(),
+            List.of(new CardDtos.ScreenEntry(one, "LATE", null), new CardDtos.ScreenEntry(two, "LATE", null)),
+            List.of(), List.of()), ACTOR);
+
+        session.commit(cardId, request(
+            List.of(slot(1, first[1], null, null)),
+            List.of(slot(1, first[1], one, null)), List.of(), List.of(one), List.of()), ACTOR);
+
+        assertThat(jdbc.queryForObject("""
+            SELECT player_one = ? AND voided_at IS NULL AND voided_by IS NULL
+            FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?
+            """, Boolean.class, first[2], cardId, first[1])).isTrue();
+    }
+
+    @Test
     void releasingAPlayerSeatsThemAndClosesTheHold() {
         UUID cardId = cardWithPairing(8);
         int[] slot = fullSlot(cardId);

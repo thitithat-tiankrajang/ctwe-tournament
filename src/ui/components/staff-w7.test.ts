@@ -15,13 +15,14 @@ test("staff workflow stages distinguish pairing, entry, review, and publication"
   assert.notEqual(operatorStageLabels.RESULT_COLLECTION, operatorStageLabels.RESULT_REVIEW);
 });
 
-test("director pairing page presents preview evidence before manipulation controls", () => {
+test("director pairing page puts the direct swap above the preview table", () => {
   const source = read("src/app/cards/[id]/tables/page.tsx");
   const preview = source.indexOf('aria-label="ตารางคู่แข่งขัน"');
-  const controls = source.indexOf('className="panel preview-swap"');
+  const controls = source.indexOf("<DirectPlayerSwap");
   assert.ok(preview >= 0, "pairing preview panel should be present");
-  assert.ok(controls >= 0, "pairing manipulation panel should be present");
-  assert.ok(preview < controls, "operators should see evidence before editing controls");
+  assert.ok(controls >= 0, "the inline swap should be present");
+  assert.doesNotMatch(source, /<details[^>]*preview-swap/);
+  assert.ok(controls < preview, "the inline swap should stay with its preview table");
 });
 
 test("result entry keeps recording, review, and publication as distinct actions", () => {

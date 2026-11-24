@@ -69,6 +69,12 @@ public final class CardDtos {
         boolean editExisting
     ) {}
 
+    public record ForceByeRequest(
+        @NotBlank String expectedPlayer,
+        @NotNull @Min(1) @Max(1500) Integer score,
+        @NotBlank String password
+    ) {}
+
     /** Director "ลงดาบ": penalty points applied as −points to both players; password re-authenticates. */
     public record PenaltyRequest(
         @NotNull @Min(0) @Max(1000000) Integer points,
@@ -104,8 +110,11 @@ public final class CardDtos {
     public record ScreenEntry(
         @NotBlank String player,
         @NotBlank String reason,
-        @Size(max = 280) String note
-    ) {}
+        @Size(max = 280) String note,
+        @Min(1) Integer fromGame
+    ) {
+        public ScreenEntry(String player, String reason, String note) { this(player, reason, note, null); }
+    }
 
     /**
      * A whole change set, committed atomically or not at all.
@@ -130,8 +139,18 @@ public final class CardDtos {
         @NotNull @Size(max = 4000) List<@jakarta.validation.Valid SlotState> slots,
         @NotNull @Size(max = 5000) List<@jakarta.validation.Valid ScreenEntry> screen,
         @NotNull @Size(max = 5000) List<@NotBlank String> release,
-        @NotNull @Size(max = 500) List<@NotBlank String> confirmWarnings
-    ) {}
+        @NotNull @Size(max = 500) List<@NotBlank String> confirmWarnings,
+        @Size(max = 4000) List<@jakarta.validation.Valid SlotState> clearResults
+    ) {
+        public PairingCommitRequest {
+            clearResults = clearResults == null ? List.of() : List.copyOf(clearResults);
+        }
+
+        public PairingCommitRequest(UUID commitKey, String password, boolean force, List<SlotState> expect,
+            List<SlotState> slots, List<ScreenEntry> screen, List<String> release, List<String> confirmWarnings) {
+            this(commitKey, password, force, expect, slots, screen, release, confirmWarnings, List.of());
+        }
+    }
 
     /** One slot's before/after, as the diff sheet's first section renders it. */
     public record PairingChange(int game, int table, String beforeOne, String beforeTwo,
@@ -190,7 +209,12 @@ public final class CardDtos {
     /** One open hold, as the right-hand panel renders it. */
     public record ScreeningHold(String player, String screenedAt, String screenedBy, String reason,
                                 String note, Integer originGame, Integer originTable,
-                                Integer originSide, String originOpponent, boolean originStale) {}
+                                Integer originSide, String originOpponent, boolean originStale, Integer fromGame) {
+        public ScreeningHold(String player, String screenedAt, String screenedBy, String reason,
+            String note, Integer originGame, Integer originTable, Integer originSide, String originOpponent, boolean originStale) {
+            this(player, screenedAt, screenedBy, reason, note, originGame, originTable, originSide, originOpponent, originStale, null);
+        }
+    }
 
     /**
      * Reopen player registration ("ลงทะเบียนเพิ่ม"). The password is optional: it is only required
@@ -201,8 +225,11 @@ public final class CardDtos {
     /** Batch terminate: pull players out of the running competition (director password required). */
     public record TerminateRequest(
         @NotNull @Size(min = 1, max = 5000) List<@NotBlank String> playerIds,
-        @NotBlank String password
-    ) {}
+        @NotBlank String password,
+        @Min(1) Integer fromGame
+    ) {
+        public TerminateRequest(List<String> playerIds, String password) { this(playerIds, password, null); }
+    }
 
     /**
      * Batch restore of terminated players. {@code lossPoints} is the per-missed-game loss margin;
@@ -218,7 +245,14 @@ public final class CardDtos {
     public record GameResponse(String id, int number, String name, String status, int maxDiff) {}
     public record RuleResponse(int fromGame, int toGame, PairingRuleType type) {}
     public record PlayerResponse(String id, String firstName, String lastName, String school, String division,
-                                 int wins, int draws, int losses, int winPoints, int diff, boolean terminated) {}
+                                 int wins, int draws, int losses, int winPoints, int diff, boolean terminated, Integer withdrawnFromGame,
+                                 @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+                                 List<Integer> rankingExcludedGames) {
+        public PlayerResponse(String id, String firstName, String lastName, String school, String division,
+            int wins, int draws, int losses, int winPoints, int diff, boolean terminated) {
+            this(id, firstName, lastName, school, division, wins, draws, losses, winPoints, diff, terminated, null, List.of());
+        }
+    }
     public record TableResponse(String id, int number, List<String> playerIds) {}
     /**
      * {@code voided} — the slot lost both players to screening. It keeps its table number so seat
@@ -233,7 +267,14 @@ public final class CardDtos {
     public record PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
                                   String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
                                   boolean playerOneGibsonized, boolean playerTwoGibsonized,
-                                  boolean pairingPublished, boolean voided, boolean resultWithdrawn) {}
+                                  boolean pairingPublished, boolean voided, boolean resultWithdrawn, boolean manualPairing) {
+        public PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
+            String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
+            boolean playerOneGibsonized, boolean playerTwoGibsonized, boolean pairingPublished, boolean voided, boolean resultWithdrawn) {
+            this(id, gameNumber, tableNumber, playerOneId, playerTwoId, winnerId, scoreOne, scoreTwo, resultType, calculatedDiff,
+                playerOneGibsonized, playerTwoGibsonized, pairingPublished, voided, resultWithdrawn, false);
+        }
+    }
     public record SnapshotResponse(String id, List<Integer> gameNumbers, List<PairingResponse> pairings, String confirmedAt) {}
     /** Lightweight result-save response: changed source/destination rows only, plus the card version. */
     public record ResultPatch(long version, List<PairingResponse> changedPairings) {}

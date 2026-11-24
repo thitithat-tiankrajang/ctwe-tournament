@@ -61,6 +61,7 @@ export function TournamentViewer({ token }: { token: string }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [reportOverlay, setReportOverlay] = useState<{ background: SpectatorRoute; context?: SpectatorReportContext } | null>(null);
   const playerAnchor = useRef<HTMLElement | null>(null);
+  const profileFromSearch = useRef(false);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const [bottom, setBottom] = useState<HTMLDivElement | null>(null);
   const mobile = useSyncExternalStore(listenViewport, () => window.matchMedia(mobileViewport).matches, () => false);
@@ -260,9 +261,10 @@ export function TournamentViewer({ token }: { token: string }) {
     navigate(next, mode);
     scroller?.scrollTo({ top: 0, behavior: "auto" });
   };
-  const openPlayer = (divisionId: string, code: string, anchor?: HTMLElement | null, context?: SpectatorReportContext) => {
+  const openPlayer = (divisionId: string, code: string, anchor?: HTMLElement | null, context?: SpectatorReportContext, master = false) => {
     if (selectedCard && context) rememberReportContext(selectedCard.id, context);
     playerAnchor.current = anchor ?? null;
+    profileFromSearch.current = master;
     setReportOverlay({ background: route, context });
     setSearchOpen(false);
     navigate({ kind: "player", divisionId, code });
@@ -304,7 +306,7 @@ export function TournamentViewer({ token }: { token: string }) {
     ];
   };
   const pick = (hit: Hit, anchor?: HTMLElement | null) => {
-    if ("player" in hit) openPlayer(hit.player.divisionId, hit.player.code, anchor ?? searchTrigger.current);
+    if ("player" in hit) openPlayer(hit.player.divisionId, hit.player.code, anchor ?? searchTrigger.current, undefined, true);
     else openReportFromSearch(hit.report);
   };
   const draft = draftQuery.trim();
@@ -497,7 +499,7 @@ export function TournamentViewer({ token }: { token: string }) {
       <div ref={setBottom} id="vbottom" />
     </div>
     {overlay && route.kind === "player" && playerDivision && playerCard && <PrototypeSpectatorPlayer card={playerCard}
-      division={playerDivision} code={route.code} theme={sportThemeFor(tournament?.id, playerCard.name)} mobile={mobile} anchor={playerAnchor}
+      division={playerDivision} code={route.code} theme={sportThemeFor(tournament?.id, playerCard.name)} mobile={mobile} anchor={playerAnchor} master={profileFromSearch.current}
       onClose={closePlayer} onOpenPlayer={code => navigate({ kind: "player", divisionId: playerDivision.id, code }, "replace")} />}
   </div>;
 }

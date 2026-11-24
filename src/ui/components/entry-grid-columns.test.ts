@@ -250,7 +250,7 @@ test("no grid carries a per-table mirror exception any more", () => {
 test("a void slot renders as a plain row of em dashes - no waiting text, no badge", () => {
   const source = readFileSync(COMPONENT, "utf8");
   // The branch must come FIRST: every later branch describes a match that this slot does not have.
-  const voidBranch = source.indexOf("if (slot.isVoid || isVoidPairing(pairing)) {");
+  const voidBranch = source.indexOf("if (slot.isVoid || (!slot.waiting && isVoidPairing(pairing))) {");
   const penaltyBranch = source.indexOf('if (pairing?.resultType === "PENALTY") {');
   const pendingBranch = source.indexOf("if (!isCompletePairing(pairing)) {");
   assert.ok(voidBranch >= 0, "the void row branch is missing");
@@ -261,7 +261,7 @@ test("a void slot renders as a plain row of em dashes - no waiting text, no badg
   assert.ok(!branch.includes("รอ"), "a void row must not say it is waiting for anything");
   assert.ok(!branch.includes("<input"), "a void row has no score to enter, not even a disabled one");
   // The pending branch keeps its waiting text: a slot with no row yet IS waiting on its source game.
-  assert.match(source.slice(pendingBranch), /const waitingText = pairing \? "รอคู่แข่งจากอีก row"/);
+  assert.match(source.slice(pendingBranch), /const waitingText = p1 \|\| p2 \? "รอคู่แข่งจากอีก row"/);
 });
 
 test("void is internal - it never appears as a status the operator can pick", () => {

@@ -22,6 +22,7 @@ export interface SlotRow {
   one: string | null;
   two: string | null;
   hasResult: boolean;
+  resultType?: string;
   voided: boolean;
 }
 
@@ -85,6 +86,7 @@ export function liveSlots(card: TournamentCard): SlotRow[] {
           one: pairing.playerOneId ?? null,
           two: pairing.playerTwoId ?? null,
           hasResult: pairing.resultType != null,
+          resultType: pairing.resultType,
           voided: pairing.voided === true,
         });
   return rows.sort((a, b) => a.game - b.game || a.table - b.table);

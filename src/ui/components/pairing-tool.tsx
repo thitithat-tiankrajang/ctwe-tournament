@@ -20,6 +20,8 @@ import { ForceCommitConfirm } from "@/ui/components/force-commit-confirm";
 import { PairingDiffSheet } from "@/ui/components/pairing-diff-sheet";
 import { buildRoster, seatsByPlayer } from "@/ui/components/pairing-roster";
 import { type SlotRow, type Staged, editedSlots, liveSlots, usePairingBaseline } from "@/ui/components/use-pairing-baseline";
+import { editableResultGames, rosterBlockScopes } from "@/domain/tournament/flow";
+import { RosterBlockScope } from "./roster-block-scope";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 
 /**
@@ -50,9 +52,10 @@ interface Props {
   mode: Mode;
   open: boolean;
   onClose: () => void;
+  initialGame?: number;
 }
 
-export function PairingTool({ card, mode, open, onClose }: Props) {
+export function PairingTool({ card, mode, open, onClose, initialGame }: Props) {
   const validatePairingChange = useTournamentStore((state) => state.validatePairingChange);
   const commitPairingChange = useTournamentStore((state) => state.commitPairingChange);
   const announcePairingPresence = useTournamentStore((state) => state.announcePairingPresence);
@@ -60,7 +63,12 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [staged, setStaged] = useState<Staged>(new Map());
-  const [available, setAvailable] = useState<string[]>([]);
+  const [availableByGame, setAvailableByGame] = useState<Record<number, string[]>>({});
+  const [cleared, setCleared] = useState<Set<string>>(new Set());
+  const [chosenGame, setChosenGame] = useState(initialGame);
+  const [chosenFromGame, setFromGame] = useState<number>();
+  const scopes = rosterBlockScopes(card);
+  const fromGame = scopes.find((scope) => scope.game === chosenFromGame)?.game ?? scopes[0]?.game;
   const [held, setHeld] = useState<string | null>(null);
   const [reason, setReason] = useState<ScreeningReason>("NO_SHOW");
   const [note, setNote] = useState("");
@@ -82,7 +90,10 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     setSelected(new Set());
     const saved = mode === "place" ? readPairingDraft(card) : null;
     setStaged(saved?.staged ?? new Map());
-    setAvailable(saved?.available ?? []);
+    setAvailableByGame(saved?.available ?? {});
+    setCleared(new Set(saved?.cleared));
+    setChosenGame(saved?.selectedGame ?? initialGame);
+    setFromGame(undefined);
     setSearch("");
     setLookup(null);
     setHeld(null);
@@ -109,8 +120,14 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     () => new Map(card.players.map((player) => [player.id, player])),
     [card.players],
   );
-  const pool = card.screeningPool ?? [];
-  const poolIds = useMemo(() => new Set(pool.map((hold) => hold.player)), [pool]);
+  const editable = editableResultGames(card);
+  const games = editable.filter((game) => baseline.some((slot) => slot.game === game));
+  const selectedGame = games.find((game) => game === chosenGame) ?? games[0] ?? card.currentGame;
+  const available = availableByGame[selectedGame] ?? [];
+  const setAvailable = (update: (current: string[]) => string[]) =>
+    setAvailableByGame((current) => ({ ...current, [selectedGame]: update(current[selectedGame] ?? []) }));
+  const pool = (card.screeningPool ?? []).filter((hold) => hold.fromGame == null || hold.fromGame <= selectedGame);
+  const poolIds = new Set(pool.map((hold) => hold.player));
 
   // What the operator sees: the frozen baseline with this session's staging applied on top.
   const rows: SlotRow[] = useMemo(() => baseline.map((slot) => {
@@ -122,7 +139,9 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     () => new Map(rows.map((slot) => [keyOf(slot.game, slot.table), slot])),
     [rows],
   );
-  const seats = useMemo(() => seatsByPlayer(rows), [rows]);
+  const board = useMemo(() => rows.filter((slot) => slot.game === selectedGame), [rows, selectedGame]);
+  const seats = useMemo(() => seatsByPlayer(board), [board]);
+  const resultLocked = (slot: SlotRow | undefined) => Boolean(slot?.hasResult && !cleared.has(keyOf(slot.game, slot.table)));
 
   // Slots that differ from the board this session opened on — NOT slots that were merely touched.
   // Everything downstream keys off this: the blue row, the count, and what the commit carries.
@@ -143,13 +162,13 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     if (!newlyRecorded.has(key) || !edited.has(key)) continue;
     liveAffected.add(key);
     for (const code of [slot.one, slot.two]) {
-      const moved = code ? seats.get(code) : null;
+      const moved = code ? seatsByPlayer(rows.filter((row) => row.game === slot.game)).get(code) : null;
       if (moved) liveAffected.add(keyOf(moved.game,moved.table));
     }
   }
   const roster = useMemo(
-    () => buildRoster(rows, available, (game, table) => conflicts.has(keyOf(game, table))),
-    [rows, available, conflicts],
+    () => buildRoster(board, available, (game, table) => conflicts.has(keyOf(game, table))),
+    [board, available, conflicts],
   );
 
   const others = presence?.cardId === card.id ? presence.actors : [];
@@ -182,7 +201,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
    * the "no active-but-unpaired" rule requires.
    */
   const place = (slot: SlotRow, side: 1 | 2, code = held) => {
-    if (code === null || slot.hasResult || slot.voided || newlyRecorded.has(keyOf(slot.game,slot.table)) || conflicts.has(keyOf(slot.game,slot.table))) return;
+    if (code === null || resultLocked(slot) || newlyRecorded.has(keyOf(slot.game,slot.table)) || conflicts.has(keyOf(slot.game,slot.table))) return;
     const occupant = side === 1 ? slot.one : slot.two;
     if (occupant === code) { setHeld(null); return; }
 
@@ -191,7 +210,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     // writing only the other half would seat one player twice and unseat the other for good.
     if (origin) {
       const originKey = keyOf(origin.game, origin.table);
-      if (conflicts.has(originKey) || newlyRecorded.has(originKey) || rowIndex.get(originKey)?.hasResult) return;
+      if (conflicts.has(originKey) || newlyRecorded.has(originKey) || resultLocked(rowIndex.get(originKey))) return;
     }
 
     const writes: { game: number; table: number; side: 1 | 2; code: string | null }[] = [
@@ -209,7 +228,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
   };
 
   const seatClick = (slot: SlotRow, side: 1 | 2) => {
-    if (slot.hasResult || slot.voided || conflictOf(slot.game, slot.table) || newlyRecorded.has(keyOf(slot.game,slot.table))) return;
+    if (resultLocked(slot) || conflictOf(slot.game, slot.table) || newlyRecorded.has(keyOf(slot.game,slot.table))) return;
     const occupant = side === 1 ? slot.one : slot.two;
     // Nothing in hand: pick this player up WITHOUT vacating their seat. Leaving a hole behind was the
     // old gesture and it made every single move a two-step repair.
@@ -229,7 +248,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
    */
   const recall = (code: string) => {
     const at = seats.get(code);
-    if (!at || conflicts.has(keyOf(at.game, at.table)) || newlyRecorded.has(keyOf(at.game, at.table)) || rowIndex.get(keyOf(at.game, at.table))?.hasResult) return;
+    if (!at || conflicts.has(keyOf(at.game, at.table)) || newlyRecorded.has(keyOf(at.game, at.table)) || resultLocked(rowIndex.get(keyOf(at.game, at.table)))) return;
     setSeats([{ ...at, code: null }]);
     setAvailable((list) => list.filter((entry) => entry !== code));
     if (held === code) setHeld(null);
@@ -250,6 +269,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     const live = new Map(rows.map((slot) => [keyOf(slot.game, slot.table), slot]));
     const touched = new Set<string>();
     for (const key of edited) touched.add(key);
+    for (const key of cleared) touched.add(key);
     for (const slot of baseline)
       if (occupants(slot).some((code) => code !== null && selected.has(code)))
         touched.add(keyOf(slot.game, slot.table));
@@ -264,20 +284,23 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
       if (edited.has(key)) slots.push({ game: after.game, table: after.table, one: after.one, two: after.two });
     }
 
-    const seatedNow = new Set(rows.flatMap((slot) => occupants(slot).filter((code): code is string => code !== null)));
+    const release = (card.screeningPool ?? []).filter((hold) =>
+      rows.some((slot) => slot.game >= (hold.fromGame ?? 1) && occupants(slot).includes(hold.player))).map((hold) => hold.player);
     return {
       expect,
       slots,
-      screen: [...selected].map((player) => ({ player, reason, note: note.trim() || undefined })),
+      screen: [...selected].map((player) => ({ player, reason, note: note.trim() || undefined, fromGame })),
       // Pool players who now occupy a seat leave the pool as part of this same commit.
-      release: [...poolIds].filter((code) => seatedNow.has(code)),
+      release,
+      clearResults: expect.filter((item) => cleared.has(keyOf(item.game, item.table))),
       confirmWarnings: acknowledged,
     };
   };
 
   const stagedCount = edited.size;
-  const nothingToDo = selected.size === 0 && stagedCount === 0;
-  const blockedByAvailable = available.length > 0;
+  const nothingToDo = selected.size === 0 && stagedCount === 0 && cleared.size === 0;
+  const outstanding = Object.values(availableByGame).flat();
+  const blockedByAvailable = outstanding.length > 0;
 
   const review = async () => {
     setBusy(true);
@@ -334,7 +357,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
   };
   const visible = rows.filter((slot) => {
     const q = search.trim();
-    return !q || slot.one && matches(slot.one, q) || slot.two && matches(slot.two, q) || q === `คู่ ${slot.table}`;
+    return (fromGame == null || slot.game >= fromGame) && (!q || slot.one && matches(slot.one, q) || slot.two && matches(slot.two, q) || q === `คู่ ${slot.table}`);
   });
   const lookupOptions = lookup?.term.trim() ? [...new Set([...roster.map((entry) => entry.code), ...poolIds])]
     .filter((code) => matches(code,lookup.term.trim()))
@@ -342,7 +365,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
       const origin = seats.get(code);
       if (!origin) return true;
       const key = keyOf(origin.game, origin.table);
-      return !newlyRecorded.has(key) && !conflicts.has(key) && !rowIndex.get(key)?.hasResult;
+      return !newlyRecorded.has(key) && !conflicts.has(key) && !resultLocked(rowIndex.get(key));
     }).slice(0,10) : [];
   const rosterSorted = [...card.players].sort((one, two) => {
     const a = seats.get(one.id);
@@ -357,19 +380,22 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     place(slot,lookup.side,code);
     setLookup(null);
   };
+  const switchGame = (game: number) => { setChosenGame(game); setHeld(null); setLookup(null); };
   const resetAffected = () => {
     const kept = new Map([...staged].filter(([key]) => !liveAffected.has(key)));
-    const stillSeated = new Set(baseline.flatMap((slot) => {
-      const next = kept.get(keyOf(slot.game,slot.table)) ?? slot;
-      return [next.one,next.two];
-    }));
     setStaged(kept);
-    setAvailable((codes) => codes.filter((code) => !stillSeated.has(code)));
+    setAvailableByGame((byGame) => Object.fromEntries(Object.entries(byGame).map(([game, codes]) => {
+      const seated = new Set(baseline.filter((slot) => slot.game === Number(game)).flatMap((slot) => {
+        const next = kept.get(keyOf(slot.game, slot.table)) ?? slot;
+        return [next.one, next.two];
+      }));
+      return [game, codes.filter((code) => !seated.has(code))];
+    })));
     setHeld(null);
   };
   const locked = (slot: SlotRow) => {
     const key = keyOf(slot.game, slot.table);
-    return slot.hasResult || slot.voided || newlyRecorded.has(key) || conflicts.has(key) || liveAffected.has(key);
+    return resultLocked(slot) || newlyRecorded.has(key) || conflicts.has(key) || liveAffected.has(key);
   };
   const location = (code: string) => {
     const position = seats.get(code);
@@ -380,14 +406,15 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
     const seat = seats.get(player.id);
     const slot = location(player.id);
     const onBoard = Boolean(slot);
-    const disabled = Boolean(player.terminated || slot && locked(slot) || !inPool && !availableCodes.has(player.id));
+    const withdrawn = player.terminated && (player.withdrawnFromGame ?? 0) <= selectedGame;
+    const disabled = Boolean(withdrawn || slot && locked(slot) || !inPool && !availableCodes.has(player.id));
     const seatLabel = seat ? card.slotLabel === "SEAT" ? `ที่นั่ง ${(seat.table - 1) * 2 + seat.side}` : `คู่ ${seat.table}` : inPool ? "พัก" : "—";
     return <div key={player.id} className="msw-roster-item">
       <button type="button" className="msw-roster-row" data-linked={held === player.id ? "true" : undefined}
         aria-pressed={held === player.id} aria-disabled={disabled || undefined} disabled={disabled} onClick={() => pick(player.id)}>
         <small className="msw-pos">{seatLabel}</small><span className="code">{player.id}</span>
         <span className="msw-person"><b>{player.firstName} {player.lastName}</b><small>{player.school}
-          {onBoard && slot && locked(slot) ? " · ล็อกผลแล้ว" : player.terminated ? " · ถอนแล้ว" : ""}</small></span>
+          {onBoard && slot && locked(slot) ? " · ล็อกผลแล้ว" : withdrawn ? " · ถอนแล้ว" : ""}</small></span>
       </button>
       {inPool && onBoard && !disabled && <button type="button" className="btn btn--ghost msw-recall" onClick={() => recall(player.id)}>
         <Undo2 className="i" size={14} />นำกลับเข้าคัดชั่วคราว</button>}
@@ -432,18 +459,24 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
         if (event.target instanceof Element && !event.target.closest("button,input,select,label,summary,[data-pairing-search]")) { setHeld(null); setLookup(null); }
       }}>
       <header className="dlg-head"><span className="dlg-eyebrow"><LockKeyhole className="i" size={14} />ตรวจสอบก่อนดำเนินการ</span>
-        <h2 id={dialog.titleId}>{mode === "place" ? "Multi Switching" : "คัดชั่วคราว"} · เกม {card.currentGame}</h2></header>
+        <h2 id={dialog.titleId}>{mode === "place" ? "Multi Switching" : "คัดชั่วคราว"} · เกม {games.length > 1 ? `${games[0]}–${games.at(-1)}` : selectedGame}</h2></header>
       <div className="dlg-body">
         {others.length > 0 && <p className="meta" role="status"><Users className="i" size={14} /> {others.join(", ")} กำลังเปิดเครื่องมือนี้อยู่เช่นกัน</p>}
         {mode === "place" ? <div className="msw">
-          <div className="msw-bar"><span className="meta">{stagedCount} คู่ที่แก้ไข</span>
+          <div className="msw-bar">{games.length > 1 && <div className="block-game-buttons" role="group" aria-label="เลือกเกมในชุดนี้">
+            {games.map((game) => {
+              const count = new Set([...edited,...cleared].filter((id) => id.startsWith(`${game}:`))).size;
+              return <button type="button" key={game} className="btn btn--sm btn--secondary" aria-pressed={selectedGame === game}
+                onClick={() => switchGame(game)}>เกม {game}{count > 0 && <span className="block-game-count">{count}</span>}</button>;
+            })}
+          </div>}<span className="meta">{new Set([...edited,...cleared]).size} คู่ที่แก้ไข</span>
             {liveAffected.size > 0 && <div className="msw-alert" role="status"><strong>ชนกับผลล่าสุด {liveAffected.size} แถว</strong>
               <button type="button" className="btn btn--sm btn--secondary" onClick={resetAffected}>คืนเฉพาะส่วนที่ชนกัน</button></div>}
           </div>
           <div className="msw-panels">
             <section className="msw-side"><header><h3>คู่แข่งขัน</h3><span className="meta">คลิกช่องแล้วพิมพ์เพื่อค้นหาผู้เล่น</span></header>
               <div className="msw-scroll"><table className="dt" aria-label="ตารางสำหรับสลับคู่"><thead><tr><th scope="col" className="c">คู่</th><th scope="col">ผู้เล่น 1</th><th scope="col">ผู้เล่น 2</th><th scope="col">สถานะ</th></tr></thead>
-                <tbody>{rows.map((slot) => {
+                <tbody>{board.map((slot) => {
                   const key = keyOf(slot.game, slot.table);
                   const conflict = conflictOf(slot.game, slot.table);
                   return <tr key={key} data-live-locked={newlyRecorded.has(key) || undefined}
@@ -451,7 +484,10 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
                     <td className="c num">{slot.table}</td>{seatButton(slot, 1)}{seatButton(slot, 2)}
                     <td className="msw-row-state">
                       {conflict ? <button type="button" className="btn btn--sm btn--secondary" onClick={() => rebase(slot.game, slot.table)}>ใช้ค่าปัจจุบัน</button>
-                        : liveAffected.has(key) ? "ชนกับผลล่าสุด" : slot.hasResult || newlyRecorded.has(key) ? "ล็อกผลแล้ว" : slot.voided ? "ยกเลิกคู่" : edited.has(key) ? "ปรับแล้ว" : "รอผล"}
+                        : liveAffected.has(key) ? "ชนกับผลล่าสุด" : cleared.has(key) ? "จะล้างผล" : slot.hasResult || newlyRecorded.has(key) ? "ล็อกผลแล้ว" : slot.voided ? "ยกเลิกคู่" : edited.has(key) ? "ปรับแล้ว" : "รอผล"}
+                      {slot.hasResult && slot.resultType !== "PENALTY" && !conflict && <button type="button" className="btn btn--sm btn--ghost msw-clear-result"
+                        onClick={() => setCleared((old) => { const next = new Set(old); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>
+                        {cleared.has(key) ? "ยกเลิกล้างผล" : "ล้างผล"}</button>}
                     </td>
                   </tr>;
                 })}</tbody>
@@ -463,7 +499,7 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
                   <option value="seat">{card.slotLabel === "SEAT" ? "ที่นั่ง / คู่" : "คู่ / ที่นั่ง"}</option><option value="code">รหัส</option><option value="name">ชื่อ</option>
                 </select><ChevronDown className="i" size={14} /></span>
                 <button type="button" className="btn btn--sm btn--secondary" data-msw-order title="กลับทิศทางการเรียง" onClick={() => setDescending(!descending)}>
-                  {descending ? "มาก → น้อย" : "น้อย → มาก"}</button>
+                  {sort === "name" ? descending ? "ฮ → ก" : "ก → ฮ" : descending ? "มาก → น้อย" : "น้อย → มาก"}</button>
               </div>
               <div className="msw-right-lists"><div className="msw-scroll" id="msw-list">{rosterSorted.filter((player) => !poolIds.has(player.id)).map((player) => rosterButton(player))}</div>
                 <details className="msw-pool" open><summary>คัดชั่วคราว <span className="meta">{pool.length}</span><ChevronDown className="i" size={15} /></summary>
@@ -473,17 +509,25 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
             </section>
           </div>
         </div> : <>
+          <RosterBlockScope scopes={scopes} game={fromGame} action="คัดชั่วคราว" onChange={(game) => { setFromGame(game); setSelected(new Set()); }} />
           <label className="cf__search"><Search className="i" size={14} /><input className="input" aria-label="ค้นหาผู้เล่นที่จะคัดชั่วคราว"
             placeholder="รหัส ชื่อ โรงเรียน หรือ คู่ 7" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
           <div className="roster-picker">
             <section className="roster-pick-list"><header className="roster-pick-header">รายชื่อผู้เล่น</header>
-              <div className="roster-picker-scroll">{visible.flatMap((slot) => [slot.one, slot.two].filter((id): id is string => Boolean(id)).map((id) =>
-                <label key={`${slot.game}-${slot.table}-${id}`} className={`roster-pick-row${locked(slot) ? " is-blocked" : ""}`}>
-                  <input type="checkbox" checked={selected.has(id)} disabled={locked(slot)} onChange={() => toggle(id)} />
-                  <span className="code">{id}</span><span className="roster-pick-person"><b>{playerName(id)}</b><small>{players.get(id)?.school}</small></span>
-                  <span className="roster-pick-status">คู่ {slot.table}{locked(slot) && <small>ล็อกผลแล้ว</small>}</span>
-                </label>
-              ))}</div>
+              <div className="roster-picker-scroll">{card.players.filter((player) => !player.terminated && !card.screeningPool?.some((hold) => hold.player === player.id)
+                && (fromGame != null || !baseline.length ? matches(player.id, search.trim()) || visible.some((slot) => occupants(slot).includes(player.id))
+                  : visible.some((slot) => occupants(slot).includes(player.id))))
+                .map((player) => {
+                  const id = player.id;
+                  const assignments = baseline.filter((slot) => occupants(slot).includes(id));
+                  const blocked = assignments.some((slot) => (fromGame == null || slot.game >= fromGame) && locked(slot));
+                  return <label key={id} className={`roster-pick-row${blocked ? " is-blocked" : ""}`}>
+                    <input type="checkbox" checked={selected.has(id)} disabled={blocked} onChange={() => toggle(id)} />
+                    <span className="code">{id}</span><span className="roster-pick-person"><b>{playerName(id)}</b><small>{player.school}</small></span>
+                    <span className="roster-pick-status">{assignments.map((slot) => games.length > 1 ? `เกม ${slot.game} คู่ ${slot.table}` : `คู่ ${slot.table}`).join(" · ")}
+                      {blocked && <small>ล็อกผลแล้ว</small>}</span>
+                  </label>;
+                })}</div>
             </section>
             <section className="roster-pick-selected"><header className="roster-pick-header"><strong>เลือกแล้ว {selected.size} คน</strong></header>
               <div className="roster-picker-scroll">{[...selected].map((id) => <div key={id} className="roster-picked-row"><span><b className="code">{id}</b> {playerName(id)}</span>
@@ -499,13 +543,13 @@ export function PairingTool({ card, mode, open, onClose }: Props) {
             value={note} maxLength={280} onChange={(event) => setNote(event.target.value)} /></div>
         </>}
         {error && <p className="dlg-err" role="alert">{error}</p>}
-        {blockedByAvailable && <p className="meta">ต้องจัดที่นั่งให้ผู้เล่นที่ยังไม่มีที่นั่ง ({available.join(", ")}) ก่อนจึงจะบันทึกได้</p>}
+        {blockedByAvailable && <p className="meta">ต้องจัดที่นั่งให้ผู้เล่นที่ยังไม่มีที่นั่ง ({outstanding.join(", ")}) ก่อนจึงจะบันทึกได้</p>}
         {conflicts.size > 0 && <p className="meta" role="status">มี {conflicts.size} คู่ที่ผู้ใช้อื่นแก้ไปแล้ว</p>}
       </div>
       <footer className="dlg-foot">
         <button type="button" className="btn btn--danger" onClick={onClose}>ยกเลิก</button>
-        {mode === "place" && <button type="button" className="btn msw-draft-btn" disabled={!staged.size || liveAffected.size > 0} onClick={() => {
-          try { savePairingDraft(card, staged, available); onClose(); }
+        {mode === "place" && <button type="button" className="btn msw-draft-btn" disabled={(!staged.size && !cleared.size) || liveAffected.size > 0} onClick={() => {
+          try { savePairingDraft(card, staged, availableByGame, cleared, selectedGame); onClose(); }
           catch { setError("บันทึกร่างในเบราว์เซอร์ไม่สำเร็จ"); }
         }}>บันทึกร่าง</button>}
         <button type="button" className="btn btn--primary" onClick={() => void review()} disabled={busy || nothingToDo || blockedByAvailable || liveAffected.size > 0}>
@@ -553,10 +597,11 @@ export const canOpenScreening = (card: TournamentCard) =>
  * pairs (it is a fact about the board), so the two pages each ask for the button they own.
  */
 export function PairingToolButtons({
-  card, modes = ["screen", "place"], disabled = false,
+  card, modes = ["screen", "place"], disabled = false, initialGame,
 }: {
   card: TournamentCard;
   modes?: Mode[];
+  initialGame?: number;
   disabled?: boolean;
 }) {
   const openPairingSession = useTournamentStore((state) => state.openPairingSession);
@@ -566,7 +611,6 @@ export function PairingToolButtons({
   useEffect(() => {
     if (previousGame.current === card.currentGame) return;
     previousGame.current = card.currentGame;
-    clearPairingDraft(card.id);
     setMode(null);
     setAsking(null);
   }, [card.id,card.currentGame]);
@@ -631,7 +675,7 @@ export function PairingToolButtons({
         />
       </ConfirmDialog>
 
-      {mode && !disabled && <PairingTool card={card} mode={mode} open onClose={() => setMode(null)} />}
+      {mode && !disabled && <PairingTool card={card} mode={mode} initialGame={initialGame} open onClose={() => setMode(null)} />}
     </>
   );
 }

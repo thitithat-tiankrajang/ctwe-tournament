@@ -21,7 +21,7 @@ import { Toaster } from "@/ui/components/toaster";
 import { GlobalDialogHost } from "@/ui/components/global-dialog-host";
 import { CardSyncIndicator } from "@/ui/components/card-wake-reconciliation-notice";
 import { NavLinkIcon } from "@/ui/layout/nav-pending";
-import { SpectatorParticipation } from "@/ui/components/spectator-participation";
+import { PrototypeSpectatorPlayer } from "@/ui/components/prototype-spectator-player";
 import { operatorStageLabels } from "@/ui/components/stage-info";
 import { PrototypeViewerHelp } from "@/ui/components/prototype-spectator-chrome";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
@@ -226,11 +226,28 @@ function OperationalShell({ children }: { children: ReactNode }) {
     }, () => { resolving.current = null; });
   }, [auth.username, hydrated, isStaff, loadTournaments, loading, setActiveTournament, tourName, tournamentId]);
 
+  const treeKey = tournamentId && auth.username ? `ctwe-nav-tree:${auth.username}:${tournamentId}` : null;
+  const [loadedTree, setLoadedTree] = useState<string | null>(null);
+  useEffect(() => {
+    if (!treeKey) return;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(treeKey) ?? "{}");
+      setFolders(new Set(Array.isArray(saved.folders) ? saved.folders : []));
+      setSports(new Map(Array.isArray(saved.sports) ? saved.sports : []));
+    } catch { setFolders(new Set()); setSports(new Map()); }
+    setLoadedTree(treeKey);
+  }, [treeKey]);
+  useEffect(() => {
+    if (treeKey && loadedTree === treeKey) try {
+      sessionStorage.setItem(treeKey, JSON.stringify({ folders: [...folders], sports: [...sports] }));
+    } catch { /* storage may be unavailable */ }
+  }, [treeKey, loadedTree, folders, sports]);
+
   // Visiting a division opens its folder without closing folders the operator expanded.
   useEffect(() => {
-    if (!id) return;
+    if (!id || !treeKey || loadedTree !== treeKey) return;
     setFolders((prior) => prior.has(id) ? prior : new Set(prior).add(id));
-  }, [id]);
+  }, [id, treeKey, loadedTree]);
   // The accepted design fades each newly opened page in (3px rise); in-place refreshes do not animate.
   useEffect(() => {
     const element = content.current;
@@ -522,7 +539,7 @@ function OperationalShell({ children }: { children: ReactNode }) {
                 {readOnlyTag}
               </span>
             </>}
-            {isStaff && <OperatorSearch tournamentId={tournamentId} tournamentName={tourName} cardId={id} cardKeys={sportGroups.flatMap(([, cards]) => cards.map((card) => card.id))} />}
+            {isStaff && <OperatorSearch tournamentId={tournamentId} cardId={id} mobile={mobile} cardKeys={sportGroups.flatMap(([, cards]) => cards.map((card) => card.id))} />}
           </header>
           <div className="scroller" ref={scroll}>
             <main className="content" ref={content}>{children}</main>
@@ -573,13 +590,12 @@ function OperationalShell({ children }: { children: ReactNode }) {
   );
 }
 
-function OperatorSearch({ tournamentId, tournamentName, cardId, cardKeys }: {
+function OperatorSearch({ tournamentId, cardId, cardKeys, mobile }: {
   tournamentId?: string;
-  tournamentName?: string;
+  mobile: boolean;
   cardId?: string;
   cardKeys: string[];
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -590,7 +606,6 @@ function OperatorSearch({ tournamentId, tournamentName, cardId, cardKeys }: {
   const requested = useRef(new Set<string>());
   const cards = useTournamentStore((state) => open || player ? state.cards : null);
   const syncCard = useTournamentStore((state) => state.syncCard);
-  const profile = useModalDialog({ open: Boolean(player), onDismiss: () => setPlayer(null) });
   const keys = cardKeys.join(",");
 
   useEffect(() => {
@@ -629,7 +644,7 @@ function OperatorSearch({ tournamentId, tournamentName, cardId, cardKeys }: {
   const choose = (hit: (typeof hits)[number]) => { setPlayer({ cardId: hit.card.id, code: hit.candidate.id }); setOpen(false); };
   const suggestions = open && parsed.kind !== "empty";
   return <div className="ms" data-open={open} ref={ref}>
-    <button ref={trigger} type="button" className="ms__btn" aria-label="ค้นหานักกีฬา รหัส ชื่อ หรือโรงเรียน" aria-expanded={open} onClick={() => setOpen(true)}>{icon(Search, 18)}</button>
+    <button ref={trigger} type="button" className="ms__btn" aria-label="ค้นหานักกีฬา รหัส ชื่อ หรือโรงเรียน" aria-expanded={open} inert={open} onClick={() => setOpen(true)}>{icon(Search, 18)}</button>
     <div className="ms__field" inert={!open}>
       <span className="ms__ico">{icon(Search, 16)}</span>
       <input ref={field} type="search" value={query} enterKeyHint="search" autoComplete="off" placeholder="รหัส ชื่อ หรือโรงเรียน"
@@ -654,15 +669,9 @@ function OperatorSearch({ tournamentId, tournamentName, cardId, cardKeys }: {
         <span className="ms-hit__d">{card.name} · {card.division}</span>
       </button>) : <div className="lb__empty">ไม่พบนักกีฬา</div>}
     </div></div>}
-    {opened && payload && player && <div className="prototype-search-dialog scrim" onMouseDown={profile.onBackdropMouseDown}>
-      <section className="pm" ref={profile.ref as React.RefObject<HTMLElement>} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={profile.titleId}
-        onMouseDown={(event) => event.stopPropagation()}>
-        <div className="sheet-head"><h2 id={profile.titleId}>รายละเอียดนักกีฬา</h2><button className="icon-btn" type="button" aria-label="ปิด" onClick={() => setPlayer(null)}>{icon(X, 20)}</button></div>
-        <SpectatorParticipation card={payload} division={spectatorDivision(payload)}
-          code={player.code} tournamentName={tournamentName} onBack={() => setPlayer(null)}
-          onOpenPlayer={(nextId, code) => setPlayer({ cardId: nextId, code })}
-          onBrowseDivision={() => { setPlayer(null); router.push(`/cards/${opened.id}`); }} />
-      </section>
-    </div>}
+    {opened && payload && player && <PrototypeSpectatorPlayer card={payload} division={spectatorDivision(payload)}
+      code={player.code} theme={{}} mobile={mobile} anchor={trigger} operational={opened} master
+      onClose={() => { setPlayer(null); trigger.current?.focus({ preventScroll: true }); }}
+      onOpenPlayer={(code) => setPlayer({ cardId: opened.id, code })} />}
   </div>;
 }

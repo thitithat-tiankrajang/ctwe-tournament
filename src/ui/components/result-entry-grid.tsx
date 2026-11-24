@@ -14,7 +14,7 @@ import { useTournamentStore, type RemoteResultChange, type RemoteResultNotice } 
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { Badge } from "@/ui/components/badge";
 import { useResizableColumns, type GridColumnBase } from "@/ui/components/data-grid";
-import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
+import { DirectPlayerSwap } from "@/ui/components/direct-player-swap";
 
 /** Typed something into a row that has no saved result yet — that counts as actively editing. */
 export function hasTypedDraft(draft?: { one: string; two: string }): boolean {
@@ -76,12 +76,14 @@ export interface EntrySlot {
    * void by inheritance, and otherwise indistinguishable from a slot still waiting on its source.
    */
   isVoid?: boolean;
+  waiting?: boolean;
 }
 
 interface PairingEditConfig {
   onSwap: (a: string, b: string, password: string) => Promise<boolean>;
   swapDisabled?: boolean;
   swapTitle?: string;
+  seats?: boolean;
 }
 
 /**
@@ -384,6 +386,7 @@ interface ResultEntryRowProps {
   onFocusNext: (origin: HTMLElement, direction: "other" | "next") => void;
   onPenalty?: (pairing: Pairing) => void;
   onRevokePenalty?: (pairing: Pairing) => void;
+  onForceBye?: (pairing: Pairing) => void;
 }
 
 export function PenaltySword({ size = 16 }: { size?: number }) {
@@ -413,13 +416,13 @@ function ScoreRowActions({ locked, saving, editable, valid, onSave, onEdit, onCa
  */
 const ResultEntryRow = memo(function ResultEntryRow({
   slot, pairing, players, maxDiff, one, two, saved, changed, isEditing, saving, failed, savingAll,
-  highlight, onDraft, onSaveRow, onSaveBye, onStartEdit, onCancelEdit, onFocusNext, onPenalty, onRevokePenalty,
+  highlight, onDraft, onSaveRow, onSaveBye, onStartEdit, onCancelEdit, onFocusNext, onPenalty, onRevokePenalty, onForceBye,
 }: ResultEntryRowProps) {
   // A slot holding nobody: no players, no result to enter, and nothing to wait for. It keeps its
   // row so pair numbers still line up with the printed table cards and the source game beside it,
   // and says nothing else — a "รอ…" here would describe a match that does not exist, and a badge
   // would make a non-event look like a state the operator has to clear.
-  if (slot.isVoid || isVoidPairing(pairing)) {
+  if (slot.isVoid || (!slot.waiting && isVoidPairing(pairing))) {
     return <tr className="egrid-row">
       <td className="c egrid-td egrid-td--center cell-pair"><b>{slot.tableNumber}</b></td>
       <td className="cid egrid-td cell-id">—</td>
@@ -500,7 +503,7 @@ const ResultEntryRow = memo(function ResultEntryRow({
   if (!isCompletePairing(pairing)) {
     const p1 = pairing?.playerOneId ? players.get(pairing.playerOneId) : undefined;
     const p2 = pairing?.playerTwoId ? players.get(pairing.playerTwoId) : undefined;
-    const waitingText = pairing ? "รอคู่แข่งจากอีก row" : "รอผลจากเกมก่อนหน้า";
+    const waitingText = p1 || p2 ? "รอคู่แข่งจากอีก row" : "รอผลจากเกมก่อนหน้า";
     return <tr className={`egrid-row egrid-row--pending${pairing?.playerOneGibsonized || pairing?.playerTwoGibsonized ? " egrid-row--gibson" : ""}`}>
       <td className="c egrid-td egrid-td--center cell-pair"><b>{slot.tableNumber}</b></td>
       <td className="cid egrid-td cell-id">{p1?.id ?? "—"}</td>
@@ -512,7 +515,9 @@ const ResultEntryRow = memo(function ResultEntryRow({
       <td className="score-cell"><input className="sc egrid-score" disabled value="" readOnly placeholder="—" /></td>
       <td className="score-cell"><input className="sc egrid-score" disabled value="" readOnly placeholder="—" /></td>
       <td className="egrid-td egrid-td--center cell-diff">—</td>
-      <td className="egrid-td cell-action"><Badge tone="neutral">{pairing ? "รออีกฝั่ง" : "รอข้อมูล"}</Badge></td>
+      <td className="egrid-td cell-action">{onForceBye && pairing && (p1 || p2) && !pairing.resultType
+        ? <button type="button" className="btn btn--sm btn--secondary" data-force-bye={pairing.id} onClick={() => onForceBye(pairing)}>ให้บาย</button>
+        : <Badge tone="neutral">{p1 || p2 ? "รออีกฝั่ง" : "รอข้อมูล"}</Badge>}</td>
     </tr>;
   }
   const p1 = players.get(pairing.playerOneId); const p2 = players.get(pairing.playerTwoId);
@@ -545,7 +550,7 @@ const ResultEntryRow = memo(function ResultEntryRow({
   </tr>;
 });
 
-export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKey, onSubmit, onPenalty, onRevokePenalty, pairingEdit, codePrefix = "P" }: {
+export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKey, onSubmit, onPenalty, onRevokePenalty, onForceBye, pairingEdit, codePrefix = "P" }: {
   gameNumber: number;
   codePrefix?: string;
   slots: EntrySlot[];
@@ -558,6 +563,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   onPenalty?: (pairing: Pairing) => void;
   /** Director-only withdrawal. A penalized row cannot otherwise be edited. */
   onRevokePenalty?: (pairing: Pairing) => void;
+  onForceBye?: (pairing: Pairing) => void;
   /** Director-only pairing edit during result collection. Swaps require password re-authentication. */
   pairingEdit?: PairingEditConfig;
 }) {
@@ -593,12 +599,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [savingAll, setSavingAll] = useState(false);
-  const swapInputA = useRef<HTMLInputElement>(null);
-  const swapInputB = useRef<HTMLInputElement>(null);
-  const swapInputPassword = useRef<HTMLInputElement>(null);
   const [swapOpen, setSwapOpen] = useState(false);
-  const [swapFeedback, setSwapFeedback] = useState<{ error?: boolean; message: string } | null>(null);
-  const [swapA, setSwapA] = useState(""); const [swapB, setSwapB] = useState(""); const [swapPassword, setSwapPassword] = useState(""); const [swapping, setSwapping] = useState(false);
   // Quick key-in bar (รหัส A → คะแนน A → รหัส B → คะแนน B → save) + inline feedback/highlight.
   const [qIdA, setQIdA] = useState(""); const [qScoreA, setQScoreA] = useState("");
   const [qIdB, setQIdB] = useState(""); const [qScoreB, setQScoreB] = useState("");
@@ -636,7 +637,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     const pairing = slot.pairing;
     // Ahead of every other case: a void slot must not fall into `pending`, which is what made the
     // review gate uncompletable — and it is neither empty (nothing to fill in) nor saved.
-    if (slot.isVoid || isVoidPairing(pairing)) return { slot, pairing, status: "void" as RowStatus };
+    if (slot.isVoid || (!slot.waiting && isVoidPairing(pairing))) return { slot, pairing, status: "void" as RowStatus };
     const side = slot.isBye ? byeSide(pairing) : null;
     if (side && pairing) {
       // A finalized bye: one editable score for the lone player (they must win).
@@ -847,33 +848,6 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
     idARef.current?.focus();
   };
 
-  const doSwap = async () => {
-    if (!pairingEdit || pairingEdit.swapDisabled || swapping) return;
-    const [a, b] = [swapA, swapB].map((code) => code.trim());
-    if (![a, b].every((code) => /^(?:[A-Za-z]+)?\d{1,4}$/.test(code))) {
-      setSwapFeedback({ error: true, message: "กรอกรหัสผู้เล่นสองคน เลขท้ายไม่เกิน 4 หลัก" });
-      return;
-    }
-    if (!swapPassword) { setSwapFeedback({ error: true, message: "กรอกรหัสผ่านเพื่อยืนยัน" }); return; }
-    const locate = (code: string) => rows.find((row) => [row.pairing?.playerOneId, row.pairing?.playerTwoId].some((id) => id && matchesPlayerCode(id, code)));
-    const first = locate(a); const second = locate(b);
-    if (!first?.pairing || !second?.pairing || [first, second].some((row) => row.saved || row.changed || savingIds.has(row.pairing?.id ?? "")) || savingAll) {
-      setSwapFeedback({ error: true, message: "สลับได้เฉพาะผู้เล่นในคู่ที่ยังไม่มีคะแนนหรือร่างคะแนน" });
-      return;
-    }
-    const matchedCode = (pairing: Pairing, code: string) => [pairing.playerOneId, pairing.playerTwoId].find((id) => id && matchesPlayerCode(id, code));
-    const fullA = matchedCode(first.pairing, a); const fullB = matchedCode(second.pairing, b);
-    if (!fullA || !fullB || fullA === fullB) { setSwapFeedback({ error: true, message: "กรอกรหัสผู้เล่นสองคนที่ต่างกัน" }); return; }
-    setSwapping(true);
-    try {
-      if (await pairingEdit.onSwap(fullA, fullB, swapPassword)) {
-        setSwapA(""); setSwapB(""); setSwapPassword("");
-        setSwapFeedback({ message: `สลับ ${fullA} ↔ ${fullB} แล้ว` });
-        swapInputA.current?.focus({ preventScroll: true });
-      }
-    } finally { setSwapping(false); }
-  };
-
   const startEdit = useCallback((id: string) => {
     setEditing((previous) => new Set(previous).add(id));
     window.requestAnimationFrame(() => document.getElementById(`entry-${id}`)?.querySelector<HTMLInputElement>("input.egrid-score:not(:disabled)")?.focus({ preventScroll: true }));
@@ -1019,13 +993,13 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
         <div className="dir-tool-head">
           {pairingEdit ? <div className="dir-tool-tabs" role="group" aria-label="เครื่องมือกรอกผล">
             <button type="button" aria-pressed={!swapOpen} aria-controls={quickId} onClick={() => {
-              setSwapOpen(false); setSwapPassword(""); setSwapFeedback(null);
+              setSwapOpen(false);
               window.requestAnimationFrame(() => idARef.current?.focus({ preventScroll: true }));
             }}><Gamepad2 className="i" size={15} />คีย์เร็ว</button>
             <button type="button" aria-pressed={swapOpen} aria-controls={swapId} disabled={pairingEdit.swapDisabled}
               title={pairingEdit.swapTitle} onClick={() => {
                 setSwapOpen(true);
-                window.requestAnimationFrame(() => swapInputA.current?.focus({ preventScroll: true }));
+
               }}><Shuffle className="i" size={15} />สลับผู้เล่น</button>
           </div> : <span className="quick-entry-caption"><Gamepad2 className="i" size={15} />คีย์เร็ว</span>}
           <span><button type="button" className="help" aria-label={swapOpen ? "วิธีสลับผู้เล่น" : "วิธีคีย์เร็ว"} aria-haspopup="dialog"
@@ -1054,23 +1028,10 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
             </span>
           </div>
         </div>
-        {pairingEdit && <div id={swapId} data-score-tool="swap" hidden={!swapOpen}>
-          <div className="dir-tool-fields">
-            <span className="dir-field"><input ref={swapInputA} className="kid" inputMode="numeric" autoComplete="off" placeholder="รหัส A" value={swapA} aria-label="รหัสผู้เล่น A ที่จะสลับ"
-              onChange={(event) => { setSwapFeedback(null); setSwapA(event.target.value.toUpperCase()); }}
-              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); swapInputB.current?.focus({ preventScroll: true }); swapInputB.current?.select(); } }} /></span>
-            <span className="dir-tool-join" aria-hidden="true"><Shuffle className="i" size={15} /></span>
-            <span className="dir-field"><input ref={swapInputB} className="kid" inputMode="numeric" autoComplete="off" placeholder="รหัส B" value={swapB} aria-label="รหัสผู้เล่น B ที่จะสลับ"
-              onChange={(event) => { setSwapFeedback(null); setSwapB(event.target.value.toUpperCase()); }}
-              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); swapInputPassword.current?.focus({ preventScroll: true }); swapInputPassword.current?.select(); } }} /></span>
-            <FreshSecretInput ref={swapInputPassword} wrapperClassName="dir-field score-swap-password" placeholder="รหัสผ่าน" aria-label="รหัสผ่านผู้อำนวยการ"
-              value={swapPassword} onChange={(event) => { setSwapFeedback(null); setSwapPassword(event.target.value); }}
-              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void doSwap(); } }} />
-            <button type="button" className="btn btn--secondary dir-tool-submit" disabled={swapping || pairingEdit.swapDisabled} onClick={() => void doSwap()}>
-              {swapping ? <LoaderCircle className="i spin" size={15} /> : <Shuffle className="i" size={15} />}ยืนยันการสลับ
-            </button>
-            <span className="dir-tool-feedback" data-score-message="swap" data-error={swapFeedback?.error} role="status" title={swapFeedback?.message}>{swapFeedback?.message}</span>
-          </div>
+        {pairingEdit && swapOpen && <div id={swapId} data-score-tool="swap">
+          <DirectPlayerSwap players={[...players.values()]} pairings={slots.flatMap((slot) => slot.pairing ? [slot.pairing] : [])}
+            game={gameNumber} seats={pairingEdit.seats} disabled={pairingEdit.swapDisabled || savingAll} autoFocus onSwap={pairingEdit.onSwap}
+            lockReason={(pairing) => savingIds.has(pairing.id) ? "กำลังบันทึกผล" : rows.find((row) => row.pairing?.id === pairing.id)?.changed ? "มีร่างคะแนน" : undefined} />
         </div>}
       </div>
 
@@ -1152,6 +1113,7 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
                 onCancelEdit={cancelEdit}
                 onFocusNext={focusNext}
                 onPenalty={onPenalty}
+                onForceBye={onForceBye}
                 onRevokePenalty={onRevokePenalty}
               />;
             })}

@@ -59,6 +59,8 @@ export interface Player {
   winPoints: number;
   diff: number;
   terminated: boolean;
+  withdrawnFromGame?: number;
+  rankingExcludedGames?: number[];
 }
 
 export interface SeatingTable {
@@ -93,6 +95,7 @@ export interface Pairing {
    * submit a new result.
    */
   resultWithdrawn?: boolean;
+  manualPairing?: boolean;
 }
 
 /** Why a player is being held. Controlled so the pool is filterable and reportable. */
@@ -115,6 +118,7 @@ export interface ScreeningHold {
   originOpponent: string | null;
   /** The captured pairing has since changed, so treat the context as historical, not current. */
   originStale: boolean;
+  fromGame?: number;
 }
 
 /** Desired or observed occupancy of one pairing slot. `null` is an empty seat. */
@@ -191,9 +195,10 @@ export interface PairingValidation {
 export interface PairingChangeSet {
   expect: SlotState[];
   slots: SlotState[];
-  screen: { player: string; reason: ScreeningReason; note?: string }[];
+  screen: { player: string; reason: ScreeningReason; note?: string; fromGame?: number }[];
   release: string[];
   confirmWarnings: string[];
+  clearResults?: SlotState[];
 }
 
 export interface PairingSnapshot {

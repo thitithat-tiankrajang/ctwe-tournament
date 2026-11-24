@@ -273,7 +273,7 @@ public class CardController {
                                                   Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(cardId, () -> service.terminatePlayers(cardId, request.playerIds(), authentication.getName()));
+        return changed(cardId, () -> service.terminatePlayers(cardId, request.playerIds(), request.fromGame(), authentication.getName()));
     }
 
     /** Director batch-restores terminated players (password-confirmed), charging missed games as losses. */
@@ -302,6 +302,14 @@ public class CardController {
             // A result on an unpublished pairing can still change public data (e.g. a stage flip).
             publishPublicIfBumped(cardId, publicVersionBefore);
         return patch;
+    }
+
+    @PostMapping("/{cardId}/matches/{matchId}/force-bye")
+    public CardDtos.CardResponse forceBye(@PathVariable UUID cardId, @PathVariable String matchId,
+                                           @Valid @RequestBody CardDtos.ForceByeRequest request, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.FORCE_BYE);
+        reauthentication.requireCurrentPassword(authentication, request.password());
+        return changed(cardId, () -> service.forceBye(cardId, matchId, request.expectedPlayer(), request.score(), authentication.getName()));
     }
 
     @PutMapping("/{cardId}/matches/{matchId}/override")

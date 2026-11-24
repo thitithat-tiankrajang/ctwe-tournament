@@ -1,8 +1,10 @@
 "use client";
 
+import "../../../prototype-results.css";
+
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowRight, LoaderCircle, LockKeyhole, RefreshCw, Shuffle, Sparkles, Undo2 } from "lucide-react";
+import { ArrowRight, LoaderCircle, LockKeyhole, Shuffle, Sparkles, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { isBadPassword, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
@@ -16,9 +18,9 @@ import { Button } from "@/ui/components/button";
 import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { pairingRuleForGame } from "@/ui/components/game-flow";
-import { CustomCombobox } from "@/ui/components/institution-combobox";
+import { DirectPlayerSwap } from "@/ui/components/direct-player-swap";
 import { EmptyState } from "@/ui/components/page";
-import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
+import { editableResultGames } from "@/domain/tournament/flow";
 import { matchesPlayerCode } from "@/domain/tournament/player-code";
 import { useWorkspaceListFilter, WorkspaceListFilter, WorkspaceListToolbar } from "@/ui/components/workspace-list-filter";
 import { PairingToolButtons, canOpenScreening } from "@/ui/components/pairing-tool";
@@ -34,9 +36,6 @@ export default function TablesPage() {
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
   const undoPairing = useTournamentStore((state) => state.undoPairing);
   const card = selectCard(cards, id);
-  const [firstId, setFirstId] = useState("");
-  const [secondId, setSecondId] = useState("");
-  const [pairingPassword, setPairingPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [browseGame, setBrowseGame] = useState<{ round: number; game: number } | null>(null);
   const filter = useWorkspaceListFilter();
@@ -48,11 +47,6 @@ export default function TablesPage() {
   if (!card) return <CardNotFound />;
 
   const players = new Map(card.players.map((player) => [player.id, player]));
-  const playerOptions = card.players.map((player) => ({
-    value: player.id,
-    label: `${player.id} · ${player.firstName} ${player.lastName}`,
-    detail: player.school,
-  }));
   const canGenerate = card.runtimeStage === "TABLE_PAIRING";
   const preview = card.runtimeStage === "PAIRING_PREVIEW";
   const manualGameOne = preview && card.currentGame === 1;
@@ -68,7 +62,7 @@ export default function TablesPage() {
         })
         .map((pair, index) => ({ id: `g1-${index + 1}`, gameNumber: 1, tableNumber: index + 1, playerOneId: pair.one, playerTwoId: pair.two }))
     : [];
-  const previewPairings = manualGameOne ? gameOnePairs : currentPairings;
+  const previewPairings = currentPairings.length || !manualGameOne ? currentPairings : gameOnePairs;
   const gibsonPairings = previewPairings.filter((pairing) =>
     pairing.playerOneGibsonized || pairing.playerTwoGibsonized);
   const gibsonPlayerIds = [...new Set(gibsonPairings.flatMap((pairing) => [
@@ -81,14 +75,17 @@ export default function TablesPage() {
   const pairingActive = canGenerate || preview;
   const screeningAvailable = canOpenScreening(card);
   const browseGames = [...new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers))].sort((a, b) => a - b);
-  const selectedBrowseGame = browseGame?.round === card.currentGame ? browseGame.game : card.currentGame;
-  const historical = selectedBrowseGame !== card.currentGame;
-  const gameOptions = [...new Set([...browseGames,card.currentGame])].map((game) => ({
-    value: String(game),label: `เกม ${game}${game === card.currentGame ? " · ปัจจุบัน" : ""}`,
+  const editable = editableResultGames(card);
+  const chosen = browseGame?.round === card.currentGame ? browseGame.game : editable[0] ?? card.currentGame;
+  const selectedBrowseGame = chosen;
+  const historical = !editable.includes(selectedBrowseGame);
+  const gameOptions = [...new Set([...browseGames, ...editable])].sort((a, b) => a - b).map((game) => ({
+    value: String(game), label: `เกม ${game}${editable.includes(game) ? " · ปัจจุบัน" : ""}`,
   }));
-  const browseSnapshot = publishedSnapshots.find((snapshot) => snapshot.gameNumbers.includes(selectedBrowseGame));
-  const browsePairings = (historical ? browseSnapshot?.pairings.filter((pairing) => (pairing.gameNumber ?? selectedBrowseGame) === selectedBrowseGame) : currentPairings) ?? [];
-  const rows = historical || !pairingActive ? browsePairings : previewPairings;
+  const browseSnapshot = (historical ? publishedSnapshots : card.snapshots.filter((snapshot) => !snapshot.confirmedAt))
+    .find((snapshot) => snapshot.gameNumbers.includes(selectedBrowseGame));
+  const browsePairings = browseSnapshot?.pairings.filter((pairing) => (pairing.gameNumber ?? selectedBrowseGame) === selectedBrowseGame) ?? [];
+  const rows = !historical && preview && selectedBrowseGame === card.currentGame ? previewPairings : browsePairings;
   const searchable = rows.filter((pair) => !isVoidPairing(pair));
   const matchesNumber = (input: string | undefined, ...numbers: number[]) => !input ||
     input.split(/[\s,]+/).some((value) => numbers.includes(Number(value)));
@@ -118,55 +115,30 @@ export default function TablesPage() {
 
   const generate = async () => {
     setBusy(true);
-    try { await generatePairings(id); }
+    try { await generatePairings(id); clearPairingDraft(id); }
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "สร้าง pairing ไม่สำเร็จ", "สร้าง Pairing ไม่สำเร็จ", true); }
     finally { setBusy(false); }
   };
 
-  const swap = async () => {
-    if (!firstId || !secondId || firstId === secondId) {
-      await appDialog.alert("เลือกรหัสผู้เล่น 2 คนที่ต่างกัน");
-      return;
-    }
-    if (!pairingPassword) {
-      await appDialog.alert("กรอกรหัสผ่านเพื่อยืนยันการแก้ไข pairing");
-      return;
-    }
-    setBusy(true);
-    try {
-      await swapPlayers(id, firstId, secondId, pairingPassword, false);
-      setFirstId(""); setSecondId(""); setPairingPassword("");
-    } catch (error) {
-      // The swap verifies the password itself, so a wrong one lands here instead of costing a
-      // separate pre-flight request. `code` identifies it — a rejected CSRF token is also a 403.
-      if (isBadPassword(error)) {
-        await appDialog.alert(error.message, "ยืนยันตัวตนไม่สำเร็จ", true);
-        return;
-      }
+  const swap = async (first: string, second: string, password: string) => {
+    try { await swapPlayers(id, first, second, password, false, selectedBrowseGame); return true; }
+    catch (error) {
       const message = error instanceof Error ? error.message : "สลับผู้เล่นไม่สำเร็จ";
-      if (message.includes("SCHOOL_CONFLICT") && await appDialog.confirm(message.replace("SCHOOL_CONFLICT: ", ""), {
-        title: "พบผู้เล่นสถาบันเดียวกัน",
-        confirmLabel: "ยืนยันการสลับ",
-      })) {
-        try {
-          await swapPlayers(id, firstId, secondId, pairingPassword, true);
-          setFirstId(""); setSecondId(""); setPairingPassword("");
-        } catch (retry) {
-          await appDialog.alert(retry instanceof Error ? retry.message : "สลับผู้เล่นไม่สำเร็จ", "สลับผู้เล่นไม่สำเร็จ", true);
-        }
-      } else if (!message.includes("SCHOOL_CONFLICT")) {
-        await appDialog.alert(message, "สลับผู้เล่นไม่สำเร็จ", true);
-      }
-    } finally { setBusy(false); }
+      if (!message.includes("SCHOOL_CONFLICT")) throw error;
+      if (!await appDialog.confirm(message.replace("SCHOOL_CONFLICT: ", ""), {
+        title: "พบผู้เล่นสถาบันเดียวกัน", confirmLabel: "ยืนยันการสลับ",
+      })) return false;
+      await swapPlayers(id, first, second, password, true, selectedBrowseGame);
+      return true;
+    }
   };
-
   const confirm = async () => {
     if (!await appDialog.confirm(`ยืนยันคู่แข่งขันเกม ${card.currentGame}? หลังจากนี้${card.currentGame === 1 ? "จะสลับโต๊ะไม่ได้และ" : ""}จะเข้าสู่การกรอกผล`, {
       title: `ยืนยันคู่แข่งขันเกม ${card.currentGame}`,
       confirmLabel: "ยืนยันคู่แข่งขัน",
     })) return;
     setBusy(true);
-    try { await confirmPairing(id); clearPairingDraft(id); navigate(`/cards/${id}/games`); }
+    try { await confirmPairing(id); navigate(`/cards/${id}/games`); }
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยืนยันคู่แข่งขันไม่สำเร็จ", "ยืนยันคู่แข่งขันไม่สำเร็จ", true); }
     finally { setBusy(false); }
   };
@@ -185,7 +157,7 @@ export default function TablesPage() {
     });
     if (!password) return;
     setBusy(true);
-    try { clearPairingDraft(id); await undoPairing(id, password); }
+    try { await undoPairing(id, password); }
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ", "ยกเลิกการจับคู่ไม่สำเร็จ", true); }
     finally { setBusy(false); }
   };
@@ -208,17 +180,21 @@ export default function TablesPage() {
     <div className="table-actions">
       <SelectMenu appearance="prototype" ariaLabel="เลือกเกม" options={gameOptions} value={String(selectedBrowseGame)}
         onChange={(value) => {
-          if (Number(value) !== selectedBrowseGame) clearPairingDraft(id);
           setBrowseGame({ round: card.currentGame, game: Number(value) });
           filter.clear();
         }} />
-      <PairingToolButtons card={card} modes={["place"]} disabled={historical || !screeningAvailable || canGenerate} />
+      <PairingToolButtons card={card} modes={["place"]} initialGame={selectedBrowseGame} disabled={historical || !screeningAvailable || canGenerate || !rows.length} />
       {historical || pairingActive
         ? <button type="button" className="btn btn--primary" disabled>ไปหน้าผลการแข่งขัน <ArrowRight className="i" size={14} /></button>
         : <Link prefetch={false} href={`/cards/${id}/games`} className="btn btn--primary">ไปหน้าผลการแข่งขัน <ArrowRight className="i" size={14} /></Link>}
     </div>
 
-    <section className="panel" aria-label="คู่แข่งขัน" data-history={historical || undefined}>
+    <section className={preview && !historical && selectedBrowseGame === card.currentGame ? "panel director-grid-panel" : "panel"} aria-label="คู่แข่งขัน" data-history={historical || undefined}>
+      {preview && !historical && selectedBrowseGame === card.currentGame && previewPairings.length > 0 && <div className="director-tools" role="group" aria-label="สลับผู้เล่น">
+        <div className="dir-tool-head"><span className="dir-swap-title"><Shuffle className="i" size={15} />สลับผู้เล่น</span></div>
+        <div data-score-tool="swap"><DirectPlayerSwap players={card.players} pairings={previewPairings} onSwap={swap}
+          disabled={busy} seats={card.slotLabel === "SEAT"} samePairAllowed={card.currentGame === 1} /></div>
+      </div>}
       {!historical && canGenerate ? <div className="panel-body empty pairing-generate">
         <div className="pairing-rule"><span>รูปแบบที่ตั้งไว้สำหรับเกม {card.currentGame}</span><strong>{pairingRuleForGame(card, card.currentGame)}</strong></div>
         <button type="button" className="btn btn--primary" data-act="generate" onClick={() => void generate()} disabled={busy}><Shuffle className="i" size={16} />สร้างคู่ เกม {card.currentGame}</button>
@@ -256,22 +232,6 @@ export default function TablesPage() {
         <button type="button" className="btn btn--success" onClick={() => void confirm()} disabled={busy || !previewPairings.length}>
           ยืนยันคู่แข่งขัน {navPending ? <LoaderCircle className="i loading-spinner" size={14} /> : <ArrowRight className="i" size={14} />}</button>
       </div>
-      <details className="panel preview-swap"><summary>ปรับคู่ผู้เล่นโดยตรง</summary>
-        <div className="panel-body"><div className="form-row">
-          {([[firstId, setFirstId, secondId], [secondId, setSecondId, firstId]] as const).map(([value, setValue, other], index) => {
-            const fieldId = `swap-player-${index}`;
-            const label = `ผู้เล่นคนที่ ${index + 1}`;
-            return <div className="field" key={fieldId}><label htmlFor={fieldId}>{label}</label>
-              <CustomCombobox id={fieldId} value={value} onChange={(value) => setValue(value.toUpperCase())}
-                options={playerOptions.filter((option) => option.value !== other)} disabled={busy} placeholder="รหัส ชื่อ หรือสถาบัน" listLabel={label} />
-            </div>;
-          })}
-          <div className="field"><label htmlFor="pairing-password">รหัสผ่านยืนยัน</label>
-            <FreshSecretInput id="pairing-password" className="input" value={pairingPassword} onChange={(event) => setPairingPassword(event.target.value)} disabled={busy} /></div>
-          <button type="button" className="btn btn--primary" onClick={() => void swap()} disabled={busy || !players.has(firstId) || !players.has(secondId) || !pairingPassword}>
-            <RefreshCw className="i" size={14} />ยืนยันการสลับ</button>
-        </div></div>
-      </details>
     </>}
     {!historical && pairingActive && latestRanking.length > 0 && <section className="panel" aria-label="อันดับล่าสุด">
       <div className="gscroll" style={{ maxHeight:420 }}><table className="dt" aria-label="ตารางอันดับล่าสุด"><thead><tr>

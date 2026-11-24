@@ -50,9 +50,9 @@ Prototype (`~/Desktop/CTWE-prototype`) คือแบบ UI/UX ที่ตก�
 | --- | --- |
 | `<style>` rule `.x` | `src/app/prototype-workspace.css` เป็น `.ctwe-prototype .x` (ลำดับเดียวกัน); ตัว override legacy อยู่ `prototype-shell.css`, viewer อยู่ `prototype-viewer.css`, หน้ากรอกผล `prototype-results.css` |
 | `railShell`, `syncChrome`, `treeHtml`, `sideIntent`, `searchMorph`, sheet-nav | `src/ui/layout/app-shell.tsx` |
-| `pgGames`, grid กรอกผล, คีย์เร็ว, สลับผู้เล่น, colfilter | `src/ui/components/result-entry-grid.tsx`, `src/app/cards/[id]/games/page.tsx` |
-| `pgTables`, Multi Switching, pairing draft | `src/app/cards/[id]/tables/page.tsx`, `pairing-tool.tsx`, `pairing-diff-sheet.tsx`, `pairing-ui-draft.ts` |
-| `pgPlayers`, roster tools (คัดชั่วคราว/ถอน/ดึงกลับ/ลงทะเบียนเพิ่ม) | `src/app/cards/[id]/players/page.tsx`, `player-termination.tsx`, `reopen-registration.tsx`, `pairing-tool.tsx` |
+| `pgGames`, grid กรอกผล, คีย์เร็ว, สลับผู้เล่น, colfilter | `src/ui/components/result-entry-grid.tsx`, `src/app/cards/[id]/games/page.tsx`, `direct-player-swap.tsx` |
+| `pgTables`, สลับผู้เล่น, Multi Switching, pairing draft | `src/app/cards/[id]/tables/page.tsx`, `direct-player-swap.tsx`, `pairing-tool.tsx`, `pairing-diff-sheet.tsx`, `pairing-ui-draft.ts` |
+| `pgPlayers`, roster tools (คัดชั่วคราว/ถอน/ดึงกลับ/ลงทะเบียนเพิ่ม) | `src/app/cards/[id]/players/page.tsx`, `player-termination.tsx`, `reopen-registration.tsx`, `pairing-tool.tsx`, `roster-block-scope.tsx` |
 | `operatorOverview`, `pgOverview`, `reportBlock`, `finalPanel` | `operator-round-summary.tsx`, `admin-card-overview.tsx`, `card-overview-view.tsx`, `prototype-spectator-report.tsx` |
 | `auditPage`, `auditRow` | `audit-activity.tsx` |
 | `pgCards` / `pgHome` / `pgDirector` / `pgAdmin` | `src/app/cards/page.tsx` / `src/app/page.tsx` / `src/app/director/page.tsx` + `card-create-form.tsx` / `src/app/admin/page.tsx` + `sport-colors-panel.tsx`, `realtime-settings-panel.tsx`, `archive-list.tsx` |

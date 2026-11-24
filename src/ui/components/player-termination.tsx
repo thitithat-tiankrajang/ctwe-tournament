@@ -5,6 +5,8 @@ import { useMemo, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import type { TournamentCard } from "@/domain/tournament/types";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
+import { rosterBlockScopes } from "@/domain/tournament/flow";
+import { RosterBlockScope } from "./roster-block-scope";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 
 
@@ -32,6 +34,10 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
   const [review, setReview] = useState(false);
   const [tab, setTab] = useState<"list" | "picked">("list");
 
+  const [chosenScope, setScope] = useState<number>();
+  const scopes = rosterBlockScopes(card);
+  const scope = scopes.find((option) => option.game === chosenScope) ?? scopes.at(-1);
+
   // Case detection mirrors the backend so the dialog explains what will actually happen.
   const preview = card.snapshots.find((s) => !s.confirmedAt);
   const pairingExists = card.runtimeStage === "PAIRING_PREVIEW" || card.runtimeStage === "RESULT_COLLECTION";
@@ -40,7 +46,10 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
 
   const pendingPlayers = new Set(preview?.pairings.filter((pair) => !pair.resultType)
     .flatMap((pair) => [pair.playerOneId,pair.playerTwoId]) ?? []);
-  const canPick = (id: string) => mode !== "terminate" || !pendingPlayers.has(id);
+  const canPick = (id: string) => mode !== "terminate" || (scope
+    ? !preview?.pairings.some((pair) => (pair.gameNumber ?? card.currentGame) >= scope.game && pair.resultType
+      && (pair.playerOneId === id || pair.playerTwoId === id))
+    : !pendingPlayers.has(id));
   const candidates = mode === "terminate" ? active : terminated;
   // Current-game pair of each player, shown on the row and searchable as "คู่ N".
   const pairOf = useMemo(() => {
@@ -65,7 +74,7 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
     return `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLowerCase().includes(term.toLowerCase());
   });
   const open = (next: "terminate" | "restore") => {
-    setQuery(""); setReview(false); setTab("list");
+    setQuery(""); setReview(false); setTab("list"); setScope(undefined);
     setMode(next); setSelected(new Set()); setPassword(""); setLossPoints("100"); setUnpair(false); setError("");
   };
   const close = () => {
@@ -87,7 +96,7 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
     setBusy(true); setError("");
     try {
       if (mode === "terminate") {
-        await terminatePlayers(card.id, ids, password);
+        await terminatePlayers(card.id, ids, password, scope?.game);
       } else {
         const points = Number(lossPoints);
         if (!Number.isInteger(points) || points < 0) { setError("แต้มปรับแพ้ต้องเป็นจำนวนเต็ม ≥ 0"); setBusy(false); return; }
@@ -110,7 +119,7 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
     if (mode === "restore" && (!lossPoints.trim() || !Number.isInteger(Number(lossPoints)) || Number(lossPoints) < 0)) {
       setError("แต้มปรับแพ้ต้องเป็นจำนวนเต็มตั้งแต่ 0"); return;
     }
-    if (chosen.some((player) => !canPick(player.id))) { setError("ผู้เล่นที่เลือกมีคู่ที่ยังรอผล"); return; }
+    if (chosen.some((player) => !canPick(player.id))) { setError(scope ? "มีผลในเกมที่จะถอนแล้ว กรุณาเลือกเกมถัดไป" : "ผู้เล่นที่เลือกมีคู่ที่ยังรอผล"); return; }
     setError("");
     setReview(true);
   };
@@ -124,7 +133,10 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
     <ConfirmDialog appearance="prototype" open={mode !== null && !review} title={title} eyebrow=""
       confirmLabel="ตรวจรายการ" confirmDisabled={chosen.length === 0} danger={mode === "terminate"} error={error || undefined}
       className="dialog--roster-tool dialog--roster-pick" onConfirm={startReview} onCancel={close}>
-      {mode === "terminate" && <p className="roster-effect">ผู้เล่นที่เลือกจะไม่ถูกจับคู่ในรอบถัดไป ประวัติการแข่งขันยังอยู่</p>}
+      {mode === "terminate" && <>
+        <RosterBlockScope scopes={scopes} game={scope?.game} action="ถอนผู้เล่น" onChange={setScope} />
+        <p className="roster-effect">{scope?.detail ?? "ผู้เล่นที่เลือกจะไม่ถูกจับคู่ในรอบถัดไป ประวัติการแข่งขันยังอยู่"}</p>
+      </>}
       <div className="roster-tool-tabs" role="group" aria-label="มุมมองรายชื่อ">
         <button type="button" aria-pressed={tab === "list"} onClick={() => setTab("list")}>รายชื่อ</button>
         <button type="button" aria-pressed={tab === "picked"} onClick={() => setTab("picked")}>ที่เลือก ({chosen.length})</button>
@@ -177,6 +189,7 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
       confirmLabel={`ยืนยัน${title}`} cancelLabel="กลับไปแก้ไข" danger={mode === "terminate"} busy={busy} error={error || undefined}
       className="dialog--roster-tool dialog--roster-review" onConfirm={() => void submit()}
       onCancel={() => { setReview(false); setPassword(""); setError(""); }}>
+      {mode === "terminate" && scope && <p className="roster-effect"><strong>{scope.label}</strong> · {scope.detail}</p>}
       <div className="msw-summary"><p className="msw-summary-count"><strong>{title} {chosen.length} คน</strong></p>
         <div className="msw-summary-scroll"><table className="dt screen-summary" aria-label="ผู้เล่นที่ยืนยันการเปลี่ยนแปลง"><thead><tr><th scope="col">รหัส</th><th scope="col">ผู้เล่น</th><th scope="col">โรงเรียน</th></tr></thead>
           <tbody>{chosen.map((player) => <tr key={player.id}><td className="code">{player.id}</td>
