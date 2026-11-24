@@ -14,6 +14,7 @@ import type {
 } from "@/domain/tournament/types";
 import { matchesPlayerCode, comparePlayerCodes } from "@/domain/tournament/player-code";
 import { clearPairingDraft, readPairingDraft, savePairingDraft } from "@/ui/components/pairing-ui-draft";
+import { PromptDialog } from "@/ui/components/prompt-dialog";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { ForceCommitConfirm } from "@/ui/components/force-commit-confirm";
@@ -56,6 +57,7 @@ interface Props {
 }
 
 export function PairingTool({ card, mode, open, onClose, initialGame }: Props) {
+  const terminatePlayers = useTournamentStore((state) => state.terminatePlayers);
   const validatePairingChange = useTournamentStore((state) => state.validatePairingChange);
   const commitPairingChange = useTournamentStore((state) => state.commitPairingChange);
   const announcePairingPresence = useTournamentStore((state) => state.announcePairingPresence);
@@ -76,18 +78,22 @@ export function PairingTool({ card, mode, open, onClose, initialGame }: Props) {
   /** Acknowledged warnings carried into the force confirmation, so nothing is re-asked there. */
   const [forcing, setForcing] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [withdrawHold, setWithdrawHold] = useState<string>();
+  const [withdrawError, setWithdrawError] = useState("");
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<"seat" | "code" | "name">("seat");
   const [descending, setDescending] = useState(false);
   const [lookup, setLookup] = useState<{ key: string; side: 1 | 2; term: string } | null>(null);
 
-  const dialog = useModalDialog({ open, onDismiss: onClose, dismissible: !busy });
+  const dialog = useModalDialog({ open, onDismiss: onClose, dismissible: !busy && !withdrawHold });
   const { baseline, conflicts, conflictOf, rebase } = usePairingBaseline(card, open);
 
   useEffect(() => {
     if (!open) return;
     setSelected(new Set());
+    setWithdrawHold(undefined);
+    setWithdrawError("");
     const saved = mode === "place" ? readPairingDraft(card) : null;
     setStaged(saved?.staged ?? new Map());
     setAvailableByGame(saved?.available ?? {});
@@ -514,6 +520,17 @@ export function PairingTool({ card, mode, open, onClose, initialGame }: Props) {
             placeholder="รหัส ชื่อ โรงเรียน หรือ คู่ 7" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
           <div className="roster-picker">
             <section className="roster-pick-list"><header className="roster-pick-header">รายชื่อผู้เล่น</header>
+              <details className="msw-pool roster-withdraw-pool" open={Boolean(card.screeningPool?.length)}>
+                <summary>ถังคัดชั่วคราว <span className="meta">{card.screeningPool?.length ?? 0} คน</span><ChevronDown className="i" size={15} /></summary>
+                <div className="roster-picker-scroll">
+                  {card.screeningPool?.filter(hold => matches(hold.player, search.trim())).map(hold => <div className="roster-screen-hold" key={hold.player}>
+                    <b className="code">{hold.player}</b><span className="roster-pick-person"><strong>{playerName(hold.player)}</strong><small>{players.get(hold.player)?.school}</small></span>
+                    <button type="button" className="btn btn--sm btn--ghost" aria-label={`ถอน ${playerName(hold.player)} ออกจากการแข่งขัน`}
+                      onClick={() => { setWithdrawError(""); setWithdrawHold(hold.player); }}>ถอนผู้เล่น</button>
+                  </div>)}
+                  {!card.screeningPool?.some(hold => matches(hold.player, search.trim())) && <p className="roster-picker-empty">{card.screeningPool?.length ? "ไม่พบผู้เล่นในถังตามตัวกรอง" : "ไม่มีผู้เล่นในถังคัดชั่วคราว"}</p>}
+                </div>
+              </details>
               <div className="roster-picker-scroll">{card.players.filter((player) => !player.terminated && !card.screeningPool?.some((hold) => hold.player === player.id)
                 && (fromGame != null || !baseline.length ? matches(player.id, search.trim()) || visible.some((slot) => occupants(slot).includes(player.id))
                   : visible.some((slot) => occupants(slot).includes(player.id))))
@@ -556,6 +573,19 @@ export function PairingTool({ card, mode, open, onClose, initialGame }: Props) {
           {busy && <LoaderCircle className="i loading-spinner" size={14} />}ตรวจการเปลี่ยนแปลง
         </button>
       </footer>
+      <PromptDialog appearance="prototype" open={Boolean(withdrawHold)} title="ถอนผู้เล่นจากการแข่งขัน"
+        description={withdrawHold ? `${withdrawHold} · ${playerName(withdrawHold)}` : undefined}
+        label="รหัสผ่านผู้อำนวยการ" type="password" confirmLabel="ถอนผู้เล่น" danger busy={busy} error={withdrawError}
+        onCancel={() => setWithdrawHold(undefined)} onSubmit={async password => {
+          if (!withdrawHold || busy) return;
+          setBusy(true); setWithdrawError("");
+          try {
+            await terminatePlayers(card.id, [withdrawHold], password);
+            setWithdrawHold(undefined);
+          } catch (failure) {
+            setWithdrawError(failure instanceof Error ? failure.message : "ถอนผู้เล่นไม่สำเร็จ");
+          } finally { setBusy(false); }
+        }} />
       {preview && forcing === null && <PairingDiffSheet validation={preview} players={players} busy={busy}
         onCancel={() => setPreview(null)} onConfirm={commit} onForce={(acknowledged) => void prepareForce(acknowledged)} />}
       {preview && forcing !== null && <ForceCommitConfirm results={preview.resultsToRemove} players={players} busy={busy}

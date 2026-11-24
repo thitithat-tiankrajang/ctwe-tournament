@@ -164,7 +164,14 @@ export function PrototypeViewerGameSelect({ value, options, theme, onChange }: {
     trigger.current?.focus({ preventScroll: true });
   };
   useEffect(() => {
-    if (open && active >= 0) document.getElementById(`${listId}-${active}`)?.scrollIntoView({ block: "nearest" });
+    if (!open || active < 0) return;
+    const option = document.getElementById(`${listId}-${active}`);
+    const list = option?.parentElement;
+    if (!option || !list) return;
+    const top = option.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    if (top < 0 || top + option.offsetHeight > list.clientHeight) {
+      list.scrollTop += top - (list.clientHeight - option.offsetHeight) / 2;
+    }
   }, [active, listId, open]);
   return <>
     <button ref={trigger} type="button" className="sm" aria-haspopup="listbox" aria-expanded={open} aria-label={`เลือกเกม: ${options[selected]?.label ?? "ยังไม่ประกาศคู่"}`}
@@ -188,7 +195,7 @@ export function PrototypeViewerGameSelect({ value, options, theme, onChange }: {
       <div className="lb" role="listbox" aria-label="เลือกเกม">{options.map((option, index) => <button key={option.value}
         type="button" role="option" id={`${listId}-${index}`} tabIndex={-1}
         className={`lb__opt${index === active ? " is-active" : ""}`} aria-selected={option.value === value}
-        aria-disabled={option.disabled || undefined} onClick={() => choose(index)} onMouseEnter={() => { if (!option.disabled) setActive(index); }}>
+        aria-disabled={option.disabled || undefined} onClick={() => choose(index)}>
         <span className="lb__l">{option.label}</span>{option.detail && <span className="lb__d">{option.detail}</span>}
         {option.value === value && <Check className="i lb__ck" size={14} />}
       </button>)}</div>

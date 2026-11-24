@@ -3,6 +3,8 @@ package com.ctwe.tournament.web.dto;
 import com.ctwe.tournament.domain.model.CardStatus;
 import com.ctwe.tournament.domain.model.PairingRuleType;
 import com.ctwe.tournament.domain.model.RuntimeStage;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -245,7 +247,8 @@ public final class CardDtos {
     public record GameResponse(String id, int number, String name, String status, int maxDiff) {}
     public record RuleResponse(int fromGame, int toGame, PairingRuleType type) {}
     public record PlayerResponse(String id, String firstName, String lastName, String school, String division,
-                                 int wins, int draws, int losses, int winPoints, int diff, boolean terminated, Integer withdrawnFromGame,
+                                 int wins, int draws, int losses, int winPoints, int diff, boolean terminated,
+                                 @JsonInclude(JsonInclude.Include.NON_NULL) Integer withdrawnFromGame,
                                  @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
                                  List<Integer> rankingExcludedGames) {
         public PlayerResponse(String id, String firstName, String lastName, String school, String division,
@@ -267,17 +270,29 @@ public final class CardDtos {
     public record PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
                                   String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
                                   boolean playerOneGibsonized, boolean playerTwoGibsonized,
-                                  boolean pairingPublished, boolean voided, boolean resultWithdrawn, boolean manualPairing) {
+                                  boolean pairingPublished, boolean voided, boolean resultWithdrawn,
+                                  @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean manualPairing,
+                                  @JsonInclude(JsonInclude.Include.NON_NULL) String pairingPublishedAt) {
         public PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
             String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
             boolean playerOneGibsonized, boolean playerTwoGibsonized, boolean pairingPublished, boolean voided, boolean resultWithdrawn) {
             this(id, gameNumber, tableNumber, playerOneId, playerTwoId, winnerId, scoreOne, scoreTwo, resultType, calculatedDiff,
-                playerOneGibsonized, playerTwoGibsonized, pairingPublished, voided, resultWithdrawn, false);
+                playerOneGibsonized, playerTwoGibsonized, pairingPublished, voided, resultWithdrawn, false, null);
+        }
+        public PairingResponse(String id, int gameNumber, int tableNumber, String playerOneId, String playerTwoId,
+            String winnerId, Integer scoreOne, Integer scoreTwo, String resultType, Integer calculatedDiff,
+            boolean playerOneGibsonized, boolean playerTwoGibsonized, boolean pairingPublished, boolean voided,
+            boolean resultWithdrawn, boolean manualPairing) {
+            this(id, gameNumber, tableNumber, playerOneId, playerTwoId, winnerId, scoreOne, scoreTwo, resultType, calculatedDiff,
+                playerOneGibsonized, playerTwoGibsonized, pairingPublished, voided, resultWithdrawn, manualPairing, null);
         }
     }
     public record SnapshotResponse(String id, List<Integer> gameNumbers, List<PairingResponse> pairings, String confirmedAt) {}
     /** Lightweight result-save response: changed source/destination rows only, plus the card version. */
-    public record ResultPatch(long version, List<PairingResponse> changedPairings) {}
+    public record ResultPatch(long version, List<PairingResponse> changedPairings,
+                              @JsonIgnore boolean holdPublicResults) {
+        public ResultPatch(long version, List<PairingResponse> changedPairings) { this(version, changedPairings, false); }
+    }
     public record AuditResponse(String id, String timestamp, String user, String action, String oldValue, String newValue) {}
 
     // Final / championship round

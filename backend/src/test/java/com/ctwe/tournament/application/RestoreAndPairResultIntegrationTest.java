@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Real-Postgres integration tests (localhost:5432) — every test runs inside a transaction that is
@@ -340,62 +341,54 @@ class RestoreAndPairResultIntegrationTest {
         assertThat(losses).isGreaterThanOrEqualTo(1);
     }
 
-    // ---- Bug 1: publishing the PAIR_RESULT destination confirms the source game as its own snapshot ----
     @Test
-    void publishNextConfirmsSourceGameSnapshotAndKeepsItEditable() {
+    void publishNextKeepsBothGamesEditableAndPublishesTheirResultsTogether() {
         UUID cardId = createCard(4, PairingRuleType.RANDOM,
             List.of(PairingRuleType.SWISS, PairingRuleType.SWISS, PairingRuleType.PAIR_RESULT));
         addPlayers(cardId, 8);
         service.finishRegistration(cardId, "ittest");
+        runGame(cardId);
+        runGame(cardId);
 
-        runGame(cardId); // game 1
-        runGame(cardId); // game 2
-        assertThat(currentGame(cardId)).isEqualTo(3);
-
-        // Game 3 is the PAIR_RESULT source: pair it and score every table (winner = player_one).
         service.generatePairingPreview(cardId, "ittest");
         service.confirmPairingPreview(cardId, "ittest");
+        assertThatThrownBy(() -> service.publishPairResultDestination(cardId, "ittest"))
+            .isInstanceOf(IllegalArgumentException.class);
         int sourceTables = jdbc.queryForObject(
             "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 3", Integer.class, cardId);
         for (int table = 1; table <= sourceTables; table++)
             service.submitResult(cardId, "g3t" + table, new CardDtos.ResultRequest(100, 72, false), "ittest");
 
-        // Before publish-next: nothing snapshotted, destination materialised but not published.
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ? AND game_from = 3", Long.class, cardId)).isZero();
-
+        // The open block can include an empty destination placeholder.
+        jdbc.update("INSERT INTO matches (card_id, game_number, table_number) VALUES (?, 4, 100)", cardId);
         service.publishPairResultDestination(cardId, "ittest");
+        assertThatThrownBy(() -> service.publishPairResultDestination(cardId, "ittest"))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(currentGame(cardId)).isEqualTo(3);
+        var publicBlock = service.get(cardId, false).snapshots().stream()
+            .filter(snapshot -> snapshot.confirmedAt().isBlank()).findFirst().orElseThrow();
+        assertThat(publicBlock.gameNumbers()).containsExactly(3, 4);
+        assertThat(publicBlock.pairings()).allSatisfy(pairing -> {
+            assertThat(pairing.pairingPublished()).isTrue();
+            assertThat(pairing.pairingPublishedAt()).isNotBlank();
+            assertThat(pairing.resultType()).isNull();
+            assertThat(pairing.scoreOne()).isNull();
+            assertThat(pairing.tableNumber()).isNotEqualTo(100);
+        });
 
-        // Source game 3 is now a confirmed single-game snapshot; the destination stays open for scoring.
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ? AND game_from = 3 AND game_to = 3 AND confirmed_at IS NOT NULL",
-            Long.class, cardId)).isEqualTo(1L);
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 3 AND snapshot_no IS NULL", Long.class, cardId)).isZero();
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 4 AND snapshot_no IS NULL", Long.class, cardId)).isGreaterThan(0L);
-        assertThat(currentGame(cardId)).isEqualTo(3); // still the source game until the destination publishes
-
-        // R2: the published source game stays editable via overrideResult (director "แก้เกมเก่า"),
-        // which does not hit the immutability guard and re-stamps the snapshot time.
-        int diffBefore = jdbc.queryForObject(
-            "SELECT calculated_diff FROM matches WHERE card_id = ? AND game_number = 3 AND table_number = 1", Integer.class, cardId);
-        service.overrideResult(cardId, "g3t1", new CardDtos.ResultRequest(120, 72, false), "ittest");
-        int diffAfter = jdbc.queryForObject(
-            "SELECT calculated_diff FROM matches WHERE card_id = ? AND game_number = 3 AND table_number = 1", Integer.class, cardId);
-        assertThat(diffAfter).isNotEqualTo(diffBefore); // edit took effect on a snapshotted (published) game
-        assertThat(jdbc.queryForObject(
-            "SELECT confirmed_at IS NOT NULL FROM pairing_snapshots WHERE card_id = ? AND game_from = 3", Boolean.class, cardId)).isTrue();
-
-        // Finishing the destination: it becomes its own snapshot (game 4), separate from game 3.
+        var patch = service.submitResult(cardId, "g3t1", new CardDtos.ResultRequest(110, 72, true), "ittest");
+        assertThat(patch.holdPublicResults()).isTrue();
+        assertThat(patch.changedPairings()).anySatisfy(pair -> assertThat(pair.scoreOne()).isEqualTo(110));
         service.autoResults(cardId, "ittest");
         service.reviewResults(cardId, "ittest");
         service.publishResults(cardId, "ittest");
+        var published = service.get(cardId, false);
+        var snapshot = published.snapshots().stream().filter(item -> item.gameNumbers().contains(3)).findFirst().orElseThrow();
+        assertThat(snapshot.gameNumbers()).containsExactly(3, 4);
+        assertThat(snapshot.confirmedAt()).isNotBlank();
+        assertThat(snapshot.pairings()).allSatisfy(pairing -> assertThat(pairing.resultType()).isNotNull());
         assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ? AND game_from = 4 AND game_to = 4", Long.class, cardId)).isEqualTo(1L);
-        // Game 4 is the last game, so the card finishes with two distinct snapshots (game 3, game 4).
+            "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 4 AND table_number = 100", Long.class, cardId)).isZero();
         assertThat(jdbc.queryForObject("SELECT status FROM tournament_cards WHERE id = ?", String.class, cardId)).isEqualTo("FINISHED");
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ? AND game_from IN (3, 4)", Long.class, cardId)).isEqualTo(2L);
     }
 }

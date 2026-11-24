@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowRight, LoaderCircle, LockKeyhole, Shuffle, Sparkles, Undo2 } from "lucide-react";
 import { useState } from "react";
-import { isBadPassword, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament } from "@/domain/tournament/roles";
 import type { Pairing, Player } from "@/domain/tournament/types";
@@ -16,6 +16,7 @@ import { SelectMenu } from "@/ui/components/select-menu";
 import { isVoidPairing } from "@/domain/tournament/pairing-slot";
 import { Button } from "@/ui/components/button";
 import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
+import { PromptDialog } from "@/ui/components/prompt-dialog";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { pairingRuleForGame } from "@/ui/components/game-flow";
 import { DirectPlayerSwap } from "@/ui/components/direct-player-swap";
@@ -37,6 +38,8 @@ export default function TablesPage() {
   const undoPairing = useTournamentStore((state) => state.undoPairing);
   const card = selectCard(cards, id);
   const [busy, setBusy] = useState(false);
+  const [undoOpen, setUndoOpen] = useState(false);
+  const [undoError, setUndoError] = useState("");
   const [browseGame, setBrowseGame] = useState<{ round: number; game: number } | null>(null);
   const filter = useWorkspaceListFilter();
 
@@ -143,23 +146,14 @@ export default function TablesPage() {
     finally { setBusy(false); }
   };
 
-  const undo = async () => {
-    if (!await appDialog.confirm(`ลบตัวอย่างคู่แข่งขันเกม ${card.currentGame} และกลับไปสร้างคู่เกมนี้ใหม่? ผลและอันดับของเกมก่อนหน้าจะไม่เปลี่ยนแปลง`, {
-      title: "สร้างคู่แข่งขันใหม่",
-      confirmLabel: "ดำเนินการต่อ",
-      danger: true,
-    })) return;
-    const password = await appDialog.prompt("กรอกรหัสผ่านผู้อำนวยการเพื่อยืนยันการยกเลิกการจับคู่", {
-      title: "ยืนยันการยกเลิกการจับคู่",
-      label: "รหัสผ่านผู้อำนวยการ",
-      type: "password",
-      confirmLabel: "ยืนยันยกเลิกการจับคู่",
-    });
-    if (!password) return;
-    setBusy(true);
-    try { await undoPairing(id, password); }
-    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ", "ยกเลิกการจับคู่ไม่สำเร็จ", true); }
-    finally { setBusy(false); }
+  const undo = async (password: string) => {
+    setBusy(true); setUndoError("");
+    try {
+      await undoPairing(id, password);
+      setUndoOpen(false);
+    } catch (error) {
+      setUndoError(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ");
+    } finally { setBusy(false); }
   };
   const canUndo = canManageTournament(auth) && preview;
   const scrollToFirstGibsonPair = () => {
@@ -177,6 +171,10 @@ export default function TablesPage() {
 
   return <div className="director-tables">
     <h1 className="sr">โต๊ะแข่งขัน</h1>
+    <PromptDialog appearance="prototype" open={undoOpen} title="ยกเลิกการจับคู่" danger busy={busy} error={undoError}
+      description={`ลบตัวอย่างคู่แข่งขันเกม ${card.currentGame} แล้วกลับไปสร้างคู่เกมนี้ใหม่`}
+      label="รหัสผ่านผู้อำนวยการ" type="password" confirmLabel="ยืนยันยกเลิกการจับคู่"
+      onSubmit={undo} onCancel={() => setUndoOpen(false)} />
     <div className="table-actions">
       <SelectMenu appearance="prototype" ariaLabel="เลือกเกม" options={gameOptions} value={String(selectedBrowseGame)}
         onChange={(value) => {
@@ -227,7 +225,7 @@ export default function TablesPage() {
         <Sparkles className="i" size={16} /><p><strong>มีผู้เล่น Gibsonized {gibsonPlayerIds.length} คนใน Pairing นี้</strong>
           <span>{gibsonPlayerIds.join(", ")} · กดเพื่อไปยังคู่ดังกล่าว</span></p><ArrowRight className="i" size={15} /></button>}
       <div className="pairing-approval">
-        {canUndo && <button type="button" className="btn btn--secondary" onClick={() => void undo()} disabled={busy}>
+        {canUndo && <button type="button" className="btn btn--secondary" onClick={() => { setUndoError(""); setUndoOpen(true); }} disabled={busy}>
           <Undo2 className="i" size={14} />ยกเลิกการจับคู่<LockKeyhole className="i" size={12} /></button>}
         <button type="button" className="btn btn--success" onClick={() => void confirm()} disabled={busy || !previewPairings.length}>
           ยืนยันคู่แข่งขัน {navPending ? <LoaderCircle className="i loading-spinner" size={14} /> : <ArrowRight className="i" size={14} />}</button>

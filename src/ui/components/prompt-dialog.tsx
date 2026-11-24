@@ -1,7 +1,7 @@
 "use client";
 
-import { KeyRound, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { KeyRound, LoaderCircle, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/ui/components/button";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
@@ -10,6 +10,7 @@ interface PromptDialogProps {
   open: boolean;
   title: string;
   description?: string;
+  children?: ReactNode;
   label: string;
   placeholder?: string;
   type?: "text" | "password";
@@ -45,6 +46,7 @@ export function PromptDialog({
   open,
   title,
   description,
+  children,
   label,
   placeholder,
   type = "text",
@@ -91,6 +93,7 @@ export function PromptDialog({
   const phraseId = `${dialog.titleId}-phrase`;
   const fields = <>
         {description && <p id={dialog.descriptionId}>{description}</p>}
+        {children}
         {confirmationPhrase && (
           <>
             <label className="form-label" htmlFor={phraseId}>
@@ -153,7 +156,11 @@ export function PromptDialog({
         {prototype ? <footer className="dlg-foot">
           <button className="btn btn--secondary" type="button" disabled={busy} onClick={onCancel}>ยกเลิก</button>
           {secondaryConfirmLabel && onSecondarySubmit && <button className="btn btn--secondary" type="button" disabled={busy || !valid} onClick={submitSecondary}>{secondaryConfirmLabel}</button>}
-          <button className={`btn ${danger ? "btn--danger" : "btn--primary"}`} type="button" disabled={busy || !valid} onClick={submit}>{busy ? "กำลังดำเนินการ…" : confirmLabel}</button>
+          <button className={`btn dlg-submit ${danger ? "btn--danger" : "btn--primary"}`} type="button"
+            disabled={busy || !valid} aria-busy={busy || undefined} aria-label={busy ? "กำลังดำเนินการ" : undefined} onClick={submit}>
+            <span className={busy ? "dlg-submit-label--busy" : undefined}>{confirmLabel}</span>
+            {busy && <LoaderCircle className="i spin" size={16} aria-hidden />}
+          </button>
         </footer> : (
         <footer>
           <Button variant="secondary" disabled={busy} onClick={onCancel}>ยกเลิก</Button>

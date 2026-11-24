@@ -1,12 +1,12 @@
 "use client";
 
-import { ArrowLeft, ChevronDown, ChevronRight, LockKeyhole, PowerOff, Search } from "lucide-react";
+import { ArrowLeft, Building2, ClipboardList, Users, ChevronDown, ChevronRight, LockKeyhole, PowerOff, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createSpectatorState } from "@/application/tournament/spectator-state";
 import { legacyPublicCard } from "@/application/tournament/spectator-read-model";
 import { attemptReportScroll, createReportScrollOwner } from "@/application/tournament/spectator-report-scroll";
 import { parseSpectatorHash, spectatorHash, spectatorReportContextFromHistory, SPECTATOR_HOME, type SpectatorReportContext, type SpectatorReportGame, type SpectatorReportView, type SpectatorRoute } from "@/application/tournament/spectator-route";
-import { searchCoverageComplete, searchParticipants, searchReports, type SpectatorReportSearchHit, type SpectatorSearchCriteria, type SpectatorSearchResult } from "@/application/tournament/spectator-search";
+import { searchCoverageComplete, searchParticipants, searchReports, spectatorQueryKind, type SpectatorReportSearchHit, type SpectatorSearchCriteria, type SpectatorSearchResult } from "@/application/tournament/spectator-search";
 import { fetchSystemState, systemIsOff, type SystemState } from "@/infrastructure/http/system-state";
 import { useSpectatorSync } from "@/application/tournament/use-spectator-sync";
 import { EmptyState } from "@/ui/components/page";
@@ -18,6 +18,13 @@ import { PrototypeSpectatorPlayer } from "./prototype-spectator-player";
 import { TournamentBrandMark } from "./tournament-brand-mark";
 import { sportThemeFor, useSportColorRevision } from "./sport-colors";
 import { PrototypeSpectatorReport } from "./prototype-spectator-report";
+
+const searchCategories = [
+  { id: "school", label: "โรงเรียน", Icon: Building2 },
+  { id: "player", label: "นักกีฬา", Icon: Users },
+  { id: "report", label: "เกมและตาราง", Icon: ClipboardList },
+] as const;
+const searchText = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase("th");
 
 const mobileViewport = "(max-width: 768px)";
 const listenViewport = (listener: () => void) => {
@@ -60,6 +67,8 @@ export function TournamentViewer({ token }: { token: string }) {
   const [systemState, setSystemState] = useState<SystemState | null>(null);
   const [route, setRoute] = useState<SpectatorRoute>(currentRoute);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [cardSearch, setCardSearch] = useState<{ cardId: string; query: string }>();
+  const [highlighted, setHighlighted] = useState<{ cardId: string; code: string }>();
   const [reportOverlay, setReportOverlay] = useState<{ background: SpectatorRoute; context?: SpectatorReportContext } | null>(null);
   const playerAnchor = useRef<HTMLElement | null>(null);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -258,6 +267,8 @@ export function TournamentViewer({ token }: { token: string }) {
   const navigateViewer = (next: SpectatorRoute, mode: "push" | "replace" = "push") => {
     setReportOverlay(null);
     setOpenReportDetails(false);
+    setHighlighted(undefined);
+    setCardSearch(undefined);
     navigate(next, mode);
     scroller?.scrollTo({ top: 0, behavior: "auto" });
   };
@@ -279,6 +290,8 @@ export function TournamentViewer({ token }: { token: string }) {
   };
   const openReportFromSearch = (hit: SpectatorReportSearchHit) => {
     setSearchOpen(false);
+    setHighlighted(undefined);
+    setCardSearch(undefined);
     const destination: SpectatorRoute = { kind: "card", cardId: hit.division.id };
     if (selectedCard?.id === hit.division.id) navigate(destination, "replace");
     else navigateViewer(destination);
@@ -290,32 +303,73 @@ export function TournamentViewer({ token }: { token: string }) {
     setReportRevision(revision => revision + 1);
   };
 
-  type Hit = { sport: string; division: string; label: string; player: SpectatorSearchResult } | { sport: string; division: string; label: string; report: SpectatorReportSearchHit };
+  type Hit = { kind: "player"; divisionId: string; sport: string; division: string; label: string; player: SpectatorSearchResult }
+    | { kind: "school" | "report"; divisionId: string; sport: string; division: string; label: string; report: SpectatorReportSearchHit; count?: number };
   const hits = (filters: SpectatorSearchCriteria, limit?: number): Hit[] => {
-    const reportScope = filters.divisionId ? divisions.filter(division => division.id === filters.divisionId) : divisions;
-    const nearby = selectedCard ? searchReports(reportScope.filter(division => division.id === selectedCard.id), filters.query, currentReport.current.game) : [];
-    const reports = nearby.length ? nearby : searchReports(reportScope, filters.query);
-    const scopedPlayers = searchParticipants(reportScope, filters, limit).results;
-    return [
-      ...reports.map(report => ({ report, sport: report.division.name, division: report.division.division, label: report.label })),
-      ...scopedPlayers.flatMap(player => {
-        const division = divisions.find(item => item.id === player.divisionId);
-        return division ? [{ player, sport: division.name, division: player.divisionLabel, label: player.name }] : [];
+    const divisionId = selectedCard?.id ?? filters.divisionId;
+    const scope = divisionId ? divisions.filter(division => division.id === divisionId) : divisions;
+    const activeGame = selectedCard ? currentReport.current.game : null;
+    const reports = searchReports(scope, filters.query, activeGame);
+    const terminology = searchText(filters.query).split(/\s+/).filter(Boolean);
+    const schools: Hit[] = terminology.length ? scope.flatMap(division => {
+      const counts = new Map<string, number>();
+      for (const { school } of division.participants) {
+        if (school && (!filters.school || filters.school === school) && terminology.every(word => searchText(school).includes(word))) {
+          counts.set(school, (counts.get(school) ?? 0) + 1);
+        }
+      }
+      return [...counts].map(([school, count]) => ({
+        kind: "school" as const, divisionId: division.id, sport: division.name, division: division.division,
+        label: school, count, report: { division, label: school, context: {
+          game: typeof activeGame === "number" ? activeGame : division.publication.publishedGames.at(-1) ?? null,
+          views: selectedCard ? currentReport.current.views : ["pairing"],
+          filter: { mode: "school", query: filters.query, playerIds: [], schools: [school] }, scrollY: 0,
+        } },
+      }));
+    }) : [];
+    const byDivision = new Map(scope.map(division => [division.id, division]));
+    const codeQuery = spectatorQueryKind(filters.query) === "code";
+    const athletes = searchParticipants(scope, filters, limit).results.filter(player =>
+      codeQuery || terminology.some(word => searchText(`${player.name} ${player.school}`).includes(word)));
+    const combined: Hit[] = [
+      ...schools,
+      ...athletes.flatMap(player => {
+        const division = byDivision.get(player.divisionId);
+        return division ? [{ kind: "player" as const, player, divisionId: division.id, sport: division.name, division: player.divisionLabel, label: player.name }] : [];
       }),
+      ...reports.map(report => ({ kind: "report" as const, report, divisionId: report.division.id, sport: report.division.name, division: report.division.division, label: report.label })),
     ];
+    const categories = searchCategories.map(category => category.id);
+    return combined.sort((a, b) => a.sport.localeCompare(b.sport, "th")
+      || a.division.localeCompare(b.division, "th", { numeric: true })
+      || a.divisionId.localeCompare(b.divisionId)
+      || categories.indexOf(a.kind) - categories.indexOf(b.kind)).slice(0, limit);
   };
   const pick = (hit: Hit, anchor?: HTMLElement | null) => {
-    if ("player" in hit) openPlayer(hit.player.divisionId, hit.player.code, anchor ?? searchTrigger.current);
-    else openReportFromSearch(hit.report);
+    if (hit.kind === "player") {
+      if (selectedCard?.id === hit.divisionId) setHighlighted({ cardId: hit.divisionId, code: hit.player.code });
+      openPlayer(hit.player.divisionId, hit.player.code, anchor ?? searchTrigger.current);
+    } else openReportFromSearch(hit.report);
   };
   const draft = draftQuery.trim();
   const suggestions = searchOpen && draft ? hits({ ...EMPTY_CRITERIA, query: draft }, 20) : [];
   const hasSuggestions = searchOpen && Boolean(draft);
-  const applied = background.kind === "find" ? background.query : reportContext?.filter.query || "";
+  const reportSearch = backgroundCard?.id === cardSearch?.cardId ? cardSearch?.query : undefined;
+  const applied = background.kind === "find" ? background.query : reportSearch || reportContext?.filter.query || "";
   const searchLabel = draft || applied;
+  const showSearchResults = () => {
+    setSearchOpen(false);
+    setHighlighted(undefined);
+    if (selectedCard) {
+      setCardSearch({ cardId: selectedCard.id, query: draft });
+      return;
+    }
+    navigateViewer({ kind: "find", ...EMPTY_CRITERIA, query: draft }, route.kind === "find" ? "replace" : "push");
+  };
   const submitHeaderSearch = () => {
     setSearchOpen(false);
     if (!draft) {
+      setCardSearch(undefined);
       if (route.kind === "find") navigateViewer(SPECTATOR_HOME);
       return;
     }
@@ -323,51 +377,48 @@ export function TournamentViewer({ token }: { token: string }) {
       pick(suggestions[activeSuggestion]);
       return;
     }
-    const outcome = searchParticipants(divisions, { ...EMPTY_CRITERIA, query: draft });
-    const activeDivision = selectedCard ? divisions.find(item => item.id === selectedCard.id) : undefined;
-    if (activeDivision) {
-      const matchingPlayers = searchParticipants([activeDivision], { ...EMPTY_CRITERIA, query: draft }, activeDivision.participants.length).results;
-      const report = searchReports([activeDivision], draft, currentReport.current.game)[0];
-      if (report?.context.filter.playerIds.length) { openReportFromSearch(report); return; }
-      if (matchingPlayers.length) {
-        const { game, views } = currentReport.current;
-        openReportFromSearch({
-          division: activeDivision, label: draft,
-          context: {
-            game: game === "final" ? activeDivision.publication.publishedGames.at(-1) ?? null : game,
-            views, scrollY: scroller?.scrollTop ?? 0,
-            filter: { mode: "player", playerIds: matchingPlayers.map(player => player.code), schools: [], query: draft },
-          },
-        });
-        return;
-      }
-      if (report) { openReportFromSearch(report); return; }
-    }
-    if (outcome.uniqueExactCode && searchCoverageComplete(divisions)) {
-      const player = outcome.uniqueExactCode;
-      openPlayer(player.divisionId, player.code, searchTrigger.current);
+    const only = suggestions.length === 1 ? suggestions[0] : undefined;
+    if (only && (only.kind !== "player" || selectedCard || searchCoverageComplete(divisions))) {
+      pick(only);
       return;
     }
-    if (suggestions.length === 1 && "report" in suggestions[0]) {
-      openReportFromSearch(suggestions[0].report);
-      return;
-    }
-    navigateViewer({ kind: "find", ...EMPTY_CRITERIA, query: draft }, route.kind === "find" ? "replace" : "push");
+    showSearchResults();
   };
   const searchResults = (results: Hit[], query: string, popup: boolean) => {
-    const groups = new Map<string, [Hit, number][]>();
-    results.forEach((hit, index) => groups.set(hit.sport, [...(groups.get(hit.sport) ?? []), [hit, index]]));
+    const groups = new Map<string, Map<string, [Hit, number][]>>();
+    results.forEach((hit, index) => {
+      const sport = groups.get(hit.sport) ?? new Map<string, [Hit, number][]>();
+      const entries = sport.get(hit.divisionId) ?? [];
+      entries.push([hit, index]);
+      sport.set(hit.divisionId, entries);
+      groups.set(hit.sport, sport);
+    });
     return <div className="lb vsearch-results" role={popup ? "listbox" : undefined} aria-label={popup ? "ผลการค้นหา" : undefined}>
+      {popup && <div className="vsearch-pop-head" aria-hidden><Search size={15} /><strong>ผลการค้นหา</strong><small>{selectedCard?.division || "ทุกรุ่น"}</small></div>}
       {groups.size === 0 ? <div className="lb__empty">ไม่พบ “{query}”</div> : [...groups].map(([sport, group]) =>
-        <div className="vsearch-group sport-theme" key={sport} role={popup ? "group" : undefined} aria-label={sport} style={sportThemeFor(tournament?.id, sport)}>
-          <div className="vsearch-group__head" aria-hidden>{sport}</div>
-          {group.map(([hit, index]) => <button type="button" className="lb__opt vsearch-hit" key={index}
-            id={popup ? `v-search-hit-${index}` : undefined} role={popup ? "option" : undefined} tabIndex={popup ? -1 : undefined}
-            aria-selected={popup ? activeSuggestion === index : undefined} onClick={event => pick(hit, popup ? searchTrigger.current : event.currentTarget)}>
-            {"player" in hit && <span className="code">{hit.player.code}</span>}
-            <span className="vsearch-hit__text"><b>{hit.label}</b><small>{"player" in hit ? `${hit.player.school} · ${hit.division}` : hit.division}</small></span>
-          </button>)}
+        <div className="vsearch-group" key={sport} role={popup ? "group" : undefined} aria-label={sport}>
+          <div className="vsearch-group__head">{sport}</div>
+          {[...group].map(([id, entries]) => <div className="vsearch-division" key={id}>
+            <div className="vsearch-division__head"><b>{entries[0][0].division}</b></div>
+            {searchCategories.map(({ id: category, label, Icon }) => {
+              const matches = entries.filter(([hit]) => hit.kind === category);
+              return matches.length > 0 && <div key={category} className="vsearch-category" role={popup ? "group" : undefined} aria-label={label}>
+                <div className="vsearch-category__label"><Icon size={13} aria-hidden />{label}</div>
+                {matches.map(([hit, index]) => <button type="button" className="lb__opt vsearch-hit" key={index}
+                  id={popup ? `v-search-hit-${index}` : undefined} role={popup ? "option" : undefined} tabIndex={popup ? -1 : undefined}
+                  aria-selected={popup ? activeSuggestion === index : undefined} onClick={event => pick(hit, popup ? searchTrigger.current : event.currentTarget)}>
+                  {hit.kind === "player" && <span className="code">{hit.player.code}</span>}
+                  <span className="vsearch-hit__text"><b>{hit.label}</b>{hit.kind === "player" && <small>{hit.player.school}</small>}</span>
+                  {hit.kind === "school" && <small className="vsearch-hit__count">{hit.count} คน</small>}
+                </button>)}
+              </div>;
+            })}
+          </div>)}
         </div>)}
+      {popup && results.length > 1 && <button type="button" className="lb__opt vsearch-all" role="option" tabIndex={-1}
+        id={`v-search-hit-${results.length}`} aria-selected={activeSuggestion === results.length} onClick={showSearchResults}>
+        ดูผลการค้นหาทั้งหมด <ChevronRight size={15} aria-hidden />
+      </button>}
     </div>;
   };
 
@@ -410,8 +461,9 @@ export function TournamentViewer({ token }: { token: string }) {
           if (!suggestions.length || !["ArrowDown", "ArrowUp"].includes(event.key)) return;
           event.preventDefault();
           const step = event.key === "ArrowDown" ? 1 : -1;
-          const next = activeSuggestion < 0 ? (step === 1 ? 0 : suggestions.length - 1)
-            : (activeSuggestion + step + suggestions.length) % suggestions.length;
+          const choices = suggestions.length + Number(suggestions.length > 1);
+          const next = activeSuggestion < 0 ? (step === 1 ? 0 : choices - 1)
+            : (activeSuggestion + step + choices) % choices;
           setActiveSuggestion(next);
           document.getElementById(`v-search-hit-${next}`)?.scrollIntoView({ block: "nearest" });
         }}>
@@ -432,7 +484,7 @@ export function TournamentViewer({ token }: { token: string }) {
               onChange={event => { setDraftQuery(event.target.value); setActiveSuggestion(-1); }} />
             <button type="submit" className="vsearch-submit">ค้นหา</button>
           </form>
-          {hasSuggestions && <PrototypeViewerPopover anchor={searchForm} kind="search" width={420} end label="ผลการค้นหา" style={backgroundCard ? theme : undefined}
+          {hasSuggestions && <PrototypeViewerPopover anchor={searchForm} kind="search" width={420} end label="ผลการค้นหา"
             id="v-search-list" onDismiss={() => setSearchOpen(false)} keyboard={false}>
             {searchResults(suggestions, draft, true)}
           </PrototypeViewerPopover>}
@@ -440,8 +492,15 @@ export function TournamentViewer({ token }: { token: string }) {
       </header>
       <div ref={setScroller} className="scroller" id="scroller"><div id="main-host">
         {freshnessNotice}
+        {reportSearch && <section className="panel vsearch-applied vsearch-applied--card" aria-label="ผลการค้นหา">
+          <div className="panel-head"><h2>ผลการค้นหา “{reportSearch}”</h2>
+            <button type="button" className="btn btn--sm btn--secondary" onClick={() => setCardSearch(undefined)}>ปิดผลค้นหา</button>
+          </div>
+          {searchResults(hits({ ...EMPTY_CRITERIA, query: reportSearch, divisionId: backgroundCard?.id ?? null }), reportSearch, false)}
+        </section>}
         {backgroundCard && division ? <PrototypeSpectatorReport key={`${backgroundCard.id}:${reportRevision}`}
           card={backgroundCard} division={division} mobile={mobile} theme={theme} bottom={bottom} scroller={scroller} onLens={rememberReportLens}
+          highlightedId={highlighted?.cardId === backgroundCard.id ? highlighted.code : undefined}
           initialContext={overlay?.context ?? reportContext} initiallyShowDetails={openReportDetails && reportContext?.cardId === backgroundCard.id}
           onPlayer={(player, target, context) => openPlayer(backgroundCard.id, player.id, target, context)} />
           : route.kind === "player" && playerDivision && playerCard && !overlay ? <div className="content">

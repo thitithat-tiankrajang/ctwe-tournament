@@ -989,19 +989,19 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
         )}
       </ConfirmDialog>
 
-      <div className="director-tools">
+      <div className="director-tools director-score-tools">
         <div className="dir-tool-head">
           {pairingEdit ? <div className="dir-tool-tabs" role="group" aria-label="เครื่องมือกรอกผล">
-            <button type="button" aria-pressed={!swapOpen} aria-controls={quickId} onClick={() => {
+            <button type="button" aria-label="คีย์เร็ว" aria-pressed={!swapOpen} aria-controls={quickId} onClick={() => {
               setSwapOpen(false);
               window.requestAnimationFrame(() => idARef.current?.focus({ preventScroll: true }));
-            }}><Gamepad2 className="i" size={15} />คีย์เร็ว</button>
-            <button type="button" aria-pressed={swapOpen} aria-controls={swapId} disabled={pairingEdit.swapDisabled}
+            }}><Gamepad2 className="i" size={15} /><span>คีย์เร็ว</span></button>
+            <button type="button" aria-label="สลับผู้เล่น" aria-pressed={swapOpen} aria-controls={swapId} disabled={pairingEdit.swapDisabled}
               title={pairingEdit.swapTitle} onClick={() => {
                 setSwapOpen(true);
 
-              }}><Shuffle className="i" size={15} />สลับผู้เล่น</button>
-          </div> : <span className="quick-entry-caption"><Gamepad2 className="i" size={15} />คีย์เร็ว</span>}
+              }}><Shuffle className="i" size={15} /><span>สลับผู้เล่น</span></button>
+          </div> : <span className="quick-entry-caption" aria-label="คีย์เร็ว"><Gamepad2 className="i" size={15} /><span>คีย์เร็ว</span></span>}
           <span><button type="button" className="help" aria-label={swapOpen ? "วิธีสลับผู้เล่น" : "วิธีคีย์เร็ว"} aria-haspopup="dialog"
             aria-expanded={menu?.kind === "help"} onClick={(event) => toggleMenu(event.currentTarget, "help")}>?</button></span>
         </div>
@@ -1020,12 +1020,9 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
             <span className="dir-field"><EntryScoreInput ref={scoreBRef} className="ksc" placeholder="คะแนน B" autoComplete="off" value={qScoreB} aria-label="คะแนนฝ่าย B"
               onChange={(event) => { clearFlash(); setQScoreB(event.target.value); }} onFocus={(event) => event.target.select()}
               onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void quickSave(); } }} /></span>
-            <button type="button" className="btn btn--success dir-tool-submit" disabled={quickSaving} onClick={() => void quickSave()}>
-              {quickSaving ? <LoaderCircle className="i spin" size={15} /> : <Save className="i" size={15} />}บันทึกคะแนน
+            <button type="button" className="btn btn--success dir-tool-submit" aria-label="บันทึกคะแนน" title="บันทึกคะแนน" disabled={quickSaving} onClick={() => void quickSave()}>
+              {quickSaving ? <LoaderCircle className="i spin" size={15} /> : <Save className="i" size={15} />}<span>บันทึกคะแนน</span>
             </button>
-            <span className="dir-tool-feedback" data-score-message="quick" role="status" title={quickFeedback?.message}>
-              {quickFeedback && <>{quickFeedback.type === "success" ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}{quickFeedback.message}</>}
-            </span>
           </div>
         </div>
         {pairingEdit && swapOpen && <div id={swapId} data-score-tool="swap">
@@ -1034,6 +1031,10 @@ export function ResultEntryGrid({ gameNumber, slots, players, maxDiff, storageKe
             lockReason={(pairing) => savingIds.has(pairing.id) ? "กำลังบันทึกผล" : rows.find((row) => row.pairing?.id === pairing.id)?.changed ? "มีร่างคะแนน" : undefined} />
         </div>}
       </div>
+
+      {!swapOpen && quickFeedback && <div className="score-tool-feedback" data-tone={quickFeedback.type} role="status">
+        {quickFeedback.type === "success" ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}{quickFeedback.message}
+      </div>}
 
       {menu?.kind === "help" && <ScorePopover menu={menu} title={swapOpen ? "สลับผู้เล่น" : "คีย์เร็ว"} width={300} onClose={closeMenu}>
         <div className="dir-filter-ui">

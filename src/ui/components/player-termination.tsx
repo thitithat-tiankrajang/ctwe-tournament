@@ -1,9 +1,9 @@
 "use client";
 
-import { LockKeyhole, Search, Undo2, X, UserMinus, Users } from "lucide-react";
+import { ChevronDown, LockKeyhole, Search, Undo2, X, UserMinus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
-import type { TournamentCard } from "@/domain/tournament/types";
+import type { Player, TournamentCard } from "@/domain/tournament/types";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { rosterBlockScopes } from "@/domain/tournament/flow";
 import { RosterBlockScope } from "./roster-block-scope";
@@ -44,35 +44,36 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
   const anyResultInBlock = Boolean(preview?.pairings.some((p) => Boolean(p.resultType)));
   const restoreCase: "A" | "B" | "C" = !pairingExists ? "A" : !anyResultInBlock ? "B" : "C";
 
-  const pendingPlayers = new Set(preview?.pairings.filter((pair) => !pair.resultType)
-    .flatMap((pair) => [pair.playerOneId,pair.playerTwoId]) ?? []);
-  const canPick = (id: string) => mode !== "terminate" || (scope
-    ? !preview?.pairings.some((pair) => (pair.gameNumber ?? card.currentGame) >= scope.game && pair.resultType
-      && (pair.playerOneId === id || pair.playerTwoId === id))
-    : !pendingPlayers.has(id));
-  const candidates = mode === "terminate" ? active : terminated;
-  // Current-game pair of each player, shown on the row and searchable as "คู่ N".
-  const pairOf = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const snapshot of card.snapshots) for (const pair of snapshot.pairings) {
-      if ((pair.gameNumber ?? snapshot.gameNumbers[0]) !== card.currentGame) continue;
-      for (const id of [pair.playerOneId, pair.playerTwoId]) if (id) map.set(id, pair.tableNumber);
+  const assignments = new Map<string, { game: number; table: number; recorded: boolean }[]>();
+  for (const pair of preview?.pairings ?? []) {
+    const game = pair.gameNumber ?? card.currentGame;
+    if (mode === "terminate" && scope && game < scope.game) continue;
+    for (const id of [pair.playerOneId, pair.playerTwoId]) {
+      if (!id) continue;
+      const rows = assignments.get(id) ?? [];
+      rows.push({ game, table: pair.tableNumber, recorded: Boolean(pair.resultType) });
+      assignments.set(id, rows);
     }
-    return map;
-  }, [card.snapshots, card.currentGame]);
+  }
+  const canPick = (id: string) => mode !== "terminate"
+    || !assignments.get(id)?.some(pair => scope ? pair.recorded : !pair.recorded);
+  const candidates = mode === "terminate" ? active : terminated;
+  const heldIds = new Set((card.screeningPool ?? []).map(hold => hold.player));
+  const heldPlayers = mode === "terminate" ? active.filter(player => heldIds.has(player.id)) : [];
   const [eligibleOnly, setEligibleOnly] = useState(false);
-  const matches = candidates.filter((player) => {
+  const matchesSearch = (player: Player) => {
     if (eligibleOnly && !canPick(player.id)) return false;
     const term = query.trim();
     const pairQuery = /^คู่(?:ที่)?\s*(\d+)$/.exec(term);
-    if (pairQuery) return pairOf.get(player.id) === Number(pairQuery[1]);
+    if (pairQuery) return Boolean(assignments.get(player.id)?.some(pair => pair.table === Number(pairQuery[1])));
     if (/^[A-Za-z]*\d+$/.test(term)) {
       const amount = Number(term.replace(/^[A-Za-z]+/,""));
       const prefix = term.match(/^[A-Za-z]+/)?.[0].toUpperCase();
       return Number(player.id.replace(/^[A-Za-z]+/,"")) === amount && (!prefix || player.id.startsWith(prefix));
     }
     return `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLowerCase().includes(term.toLowerCase());
-  });
+  };
+  const matches = candidates.filter(player => (mode !== "terminate" || !heldIds.has(player.id)) && matchesSearch(player));
   const open = (next: "terminate" | "restore") => {
     setQuery(""); setReview(false); setTab("list"); setScope(undefined);
     setMode(next); setSelected(new Set()); setPassword(""); setLossPoints("100"); setUnpair(false); setError("");
@@ -124,6 +125,16 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
     setReview(true);
   };
 
+  const pickRow = (player: Player) => {
+    const eligible = canPick(player.id);
+    const positions = assignments.get(player.id)?.map(pair => scope ? `เกม ${pair.game} คู่ ${pair.table}` : `คู่ ${pair.table}`).join(" · ");
+    return <label key={player.id} className={`roster-pick-row${eligible ? "" : " is-blocked"}`}>
+      <input type="checkbox" checked={selected.has(player.id)} disabled={!eligible} onChange={() => toggle(player.id)} />
+      <span className="code">{player.id}</span><span className="roster-pick-person"><strong>{player.firstName} {player.lastName}</strong><small>{player.school}</small></span>
+      {(positions || !eligible) && <span className="roster-pick-status">{positions}{!eligible && <small>{scope ? "บันทึกผลแล้ว" : "รอผล"}</small>}</span>}
+    </label>;
+  };
+
   return <>
     <button type="button" className="btn btn--danger" disabled={!active.length} onClick={() => open("terminate")}>
       <UserMinus className="i" size={15} />ถอนผู้เล่น<LockKeyhole className="i" size={12} /></button>
@@ -152,13 +163,18 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
             <button type="button" className="btn btn--sm btn--ghost" disabled={!matches.some((player) => canPick(player.id))}
               onClick={() => setSelected((previous) => new Set([...previous,...matches.filter((player) => canPick(player.id)).map((player) => player.id)]))}>เลือกผลค้นหาทั้งหมด</button>
           </header>
+          {mode === "terminate" && <details className="msw-pool roster-withdraw-pool" open={heldPlayers.length > 0}>
+            <summary>ถังคัดชั่วคราว <span className="meta">{heldPlayers.length} คน</span><ChevronDown className="i" size={15} /></summary>
+            <div className="roster-pick-header"><span>พบ {heldPlayers.filter(matchesSearch).length} คน</span>
+              <button type="button" className="btn btn--sm btn--ghost" disabled={!heldPlayers.some(player => canPick(player.id) && !selected.has(player.id))}
+                onClick={() => setSelected(previous => new Set([...previous, ...heldPlayers.filter(player => canPick(player.id)).map(player => player.id)]))}>เลือกทั้งหมดในถัง</button>
+            </div>
+            <div className="roster-picker-scroll">{heldPlayers.filter(matchesSearch).map(pickRow)}
+              {!heldPlayers.filter(matchesSearch).length && <p className="roster-picker-empty">{heldPlayers.length ? "ไม่พบผู้เล่นในถังตามตัวกรอง" : "ไม่มีผู้เล่นในถังคัดชั่วคราว"}</p>}
+            </div>
+          </details>}
           <div className="roster-picker-scroll">
-            {matches.map((player) => <label key={player.id} className={`roster-pick-row${canPick(player.id) ? "" : " is-blocked"}`}>
-              <input type="checkbox" checked={selected.has(player.id)} disabled={!canPick(player.id)} onChange={() => toggle(player.id)} />
-              <span className="code">{player.id}</span><span className="roster-pick-person"><strong>{player.firstName} {player.lastName}</strong><small>{player.school}</small></span>
-              {!canPick(player.id) ? <small className="roster-pick-status">รอผลคู่ {pairOf.get(player.id) ?? ""}</small>
-                : pairOf.has(player.id) && <small className="roster-pick-status roster-pick-pair">คู่ {pairOf.get(player.id)}</small>}
-            </label>)}
+            {matches.map(pickRow)}
             {!matches.length && <p className="roster-picker-empty">ไม่พบผู้เล่นตามเงื่อนไข</p>}
           </div>
         </section>

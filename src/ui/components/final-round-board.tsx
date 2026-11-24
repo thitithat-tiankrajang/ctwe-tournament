@@ -66,20 +66,21 @@ export function FinalRoundBoard({ card, readOnly = false, canManage = false, onS
         </div>
       )}
 
-      {final.slots.map((slot) => (
+      <div className="final-board-matches">{final.slots.map((slot) => (
         <FinalSlotCard
           key={slot.slot}
           slot={slot}
           name={name}
+          school={id => players.get(id)?.school ?? ""}
           editable={editable}
           editPassword={editPassword ?? undefined}
           onSubmitGame={onSubmitGame}
           onSetWinner={onSetWinner}
           onOpenHistory={onSlotHistory ? () => onSlotHistory(slot) : undefined}
         />
-      ))}
+      ))}</div>
 
-      <Panel title="สรุปผลรอบชิงชนะเลิศ" description={card.finalType === "CHAMPION_AND_THIRD" ? "ชิงที่ 1 และ 3 — summary เป็นค่าที่เจ้าหน้าที่กรอกเอง" : "ชิงที่ 1 — summary เป็นค่าที่เจ้าหน้าที่กรอกเอง"}>
+      <Panel title="สรุปผลรอบชิงชนะเลิศ">
         <div className="panel-padding">
           {placement.length === 0 ? <p className="muted">ยังไม่ได้สรุปผู้ชนะของคู่ชิง</p> : (
             <table className="data-table final-summary" aria-label="สรุปผลรอบชิงชนะเลิศ">
@@ -108,9 +109,10 @@ export function FinalRoundBoard({ card, readOnly = false, canManage = false, onS
   );
 }
 
-function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSetWinner, onOpenHistory }: {
+function FinalSlotCard({ slot, name, school, editable, editPassword, onSubmitGame, onSetWinner, onOpenHistory }: {
   slot: FinalSlot;
   name: NameFn;
+  school: (id: string) => string;
   editable: boolean;
   editPassword?: string;
   onSubmitGame?: (slot: number, gameIndex: number, scoreOne: number, scoreTwo: number, password?: string) => Promise<void>;
@@ -158,6 +160,7 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
     setGameDrafts((prev) => ({ ...prev, [gameIndex]: { ...(prev[gameIndex] ?? { one: "", two: "" }), [field]: value } }));
 
   const outcome = (oneText: string, twoText: string) => {
+    if (!oneText.trim() || !twoText.trim()) return null;
     const one = Number(oneText); const two = Number(twoText);
     if (!Number.isInteger(one) || !Number.isInteger(two) || one < 0 || two < 0) return null;
     if (one === two) return { label: "เสมอ · 0", diff: 0 };
@@ -169,7 +172,7 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
     const draft = gameDrafts[gameIndex];
     if (!draft) return;
     const one = Number(draft.one); const two = Number(draft.two);
-    if (!Number.isInteger(one) || !Number.isInteger(two) || one < 0 || two < 0) {
+    if (!draft.one.trim() || !draft.two.trim() || !Number.isInteger(one) || !Number.isInteger(two) || one < 0 || two < 0) {
       await appDialog.alert("คะแนนต้องเป็นจำนวนเต็ม ≥ 0", "บันทึกเกมรอบชิงไม่ได้", true);
       return;
     }
@@ -202,11 +205,14 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
     : name(playerId);
 
   return (
-    <Panel title={slotTitle(slot.slot)} description={`${name(slot.playerOneId)}  พบ  ${name(slot.playerTwoId)}`}>
+    <Panel title={slotTitle(slot.slot)} className="final-entry-match">
       <div className="final-slot">
+        <div className="final-entry-players">{[slot.playerOneId, slot.playerTwoId].map(id => <div key={id} data-winner={slot.winnerId === id}>
+          <span className="code">{id}</span><strong>{playerHeader(id)}</strong><small title={school(id)}>{school(id)}</small>
+        </div>)}</div>
         <table className="final-slot-table" aria-label={`ผลรายเกม ${slotTitle(slot.slot)}`}>
           <thead>
-            <tr><th scope="col">เกม</th><th scope="col">{playerHeader(slot.playerOneId)}</th><th scope="col">{playerHeader(slot.playerTwoId)}</th><th scope="col">ผลเกม</th>{editable && <th scope="col">บันทึก</th>}</tr>
+            <tr><th scope="col">เกม</th><th scope="col" title={name(slot.playerOneId)}>{slot.playerOneId}</th><th scope="col" title={name(slot.playerTwoId)}>{slot.playerTwoId}</th><th scope="col">ผลเกม</th>{editable && <th scope="col">บันทึก</th>}</tr>
           </thead>
           <tbody>
             {slot.games.map((game) => {
@@ -226,7 +232,7 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
         </table>
 
         <section className="final-slot-summary" aria-label={`สรุปผู้ชนะ ${slotTitle(slot.slot)}`}>
-          <header><Crown size={18} /><strong>สรุปผลผู้ชนะ</strong><span>กรอกเองทั้งหมด</span></header>
+          <header><Crown size={18} /><strong>สรุปผลผู้ชนะ</strong></header>
           <div className="final-summary-form">
             <label>ผู้ชนะ<select className="select" disabled={!editable} value={summary.winnerId} onChange={(event) => setSummary((prev) => ({ ...prev, winnerId: event.target.value }))}><option value="">เลือกผู้ชนะ</option><option value={slot.playerOneId}>{name(slot.playerOneId)}</option><option value={slot.playerTwoId}>{name(slot.playerTwoId)}</option></select></label>
             <label>ชนะ<ScoreInput className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.wins} onChange={(event) => setSummary((prev) => ({ ...prev, wins: event.target.value }))} /></label>

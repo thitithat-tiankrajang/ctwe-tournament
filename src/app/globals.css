@@ -2361,3 +2361,16 @@ tr.spectator-standrow--active td:first-child { box-shadow: inset 3px 0 0 var(--b
   .spectator-seat__figure { min-width: 78px; padding-right: var(--sp-3); }
   .spectator-standing__figures > div { padding: 0 3px; }
 }
+
+.final-board-matches { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr)); gap:12px; align-items:start; }
+.final-board-matches .final-entry-match { min-width:0; }
+.final-entry-match .final-slot { padding:10px clamp(6px,2vw,16px) 12px; }
+.final-entry-players { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
+.final-entry-players > div { display:grid; gap:3px; padding:9px; min-width:0; }
+.final-entry-players > div + div { border-inline-start:1px solid var(--border); text-align:end; }
+.final-entry-players small { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.final-entry-players [data-winner="true"] { background:#e9f6ef; }
+.final-entry-match .final-slot-table { min-width:0; width:100%; table-layout:fixed; }
+.final-entry-match .final-slot-table :is(th,td) { padding:6px 4px; white-space:normal; overflow-wrap:break-word; }
+.final-entry-match .final-slot-table :is(input,.input) { width:100%; min-width:0; }
+.final-entry-match .final-slot-table .btn { gap:4px; padding-inline:4px; }

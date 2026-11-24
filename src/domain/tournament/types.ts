@@ -83,6 +83,7 @@ export interface Pairing {
   playerOneGibsonized?: boolean;
   playerTwoGibsonized?: boolean;
   pairingPublished?: boolean;
+  pairingPublishedAt?: string | null;
   /**
    * The slot lost both players to screening. It keeps its table number so seat numbering and printed
    * table cards stay valid, but it holds nobody and needs no result — every completeness check skips

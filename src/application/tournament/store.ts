@@ -203,6 +203,7 @@ interface TournamentState {
   reviewResults: (cardId: string) => Promise<void>;
   reopenResults: (cardId: string) => Promise<void>;
   publishResults: (cardId: string) => Promise<void>;
+  terminatePublicationHolds: (cardId: string, playerIds: string[], password: string) => Promise<void>;
   startFinal: (cardId: string) => Promise<void>;
   submitFinalResult: (cardId: string, slot: number, gameIndex: number, scoreOne: number, scoreTwo: number, password?: string) => Promise<void>;
   setFinalWinner: (cardId: string, slot: number, winnerId: string, winnerWins: number, winnerLosses: number, totalDiff: number, password?: string) => Promise<void>;
@@ -1171,6 +1172,10 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     },
     async publishResults(cardId) {
       await mutateCard(`/api/cards/${cardId}/results/publish`, cardId, { method: "POST" });
+    },
+    async terminatePublicationHolds(cardId, playerIds, password) {
+      await mutateCard(`/api/cards/${cardId}/results/terminate-held`, cardId,
+        { method: "POST", body: JSON.stringify({ playerIds, password }) });
     },
     async startFinal(cardId) {
       await mutateCard(`/api/cards/${cardId}/final/start`, cardId, { method: "POST" });

@@ -13,6 +13,11 @@ import java.util.Map;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(com.ctwe.tournament.application.TournamentCardService.ScreeningPoolPending.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, Object> screeningPoolPending(com.ctwe.tournament.application.TournamentCardService.ScreeningPoolPending error) {
+        return Map.of("error", error.getMessage(), "code", "SCREENING_POOL_PENDING");
+    }
     @ExceptionHandler(IllegalArgumentException.class) @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Map<String, Object> invalidInput(IllegalArgumentException error) { return Map.of("timestamp", Instant.now(), "status", 400, "error", error.getMessage()); }
 

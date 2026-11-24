@@ -5,6 +5,7 @@ import com.ctwe.tournament.application.PairingSessionService;
 import com.ctwe.tournament.application.PublicCardQueryService;
 import com.ctwe.tournament.application.TournamentCardService;
 import com.ctwe.tournament.application.WebPushService;
+import com.ctwe.tournament.domain.model.PairingRuleType;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService.Capability;
 import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
@@ -14,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
@@ -285,6 +287,16 @@ public class CardController {
         return changed(cardId, () -> service.restorePlayers(cardId, request.playerIds(), request.lossPoints(), request.unpair(), authentication.getName()));
     }
 
+    @PostMapping("/{cardId}/results/terminate-held")
+    public CardDtos.CardResponse terminatePublicationHolds(@PathVariable UUID cardId,
+            @Valid @RequestBody CardDtos.TerminateRequest request, Authentication authentication) {
+        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        if (!authz.isDirector(authentication))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "การถอนผู้เล่นจากถังคัดชั่วคราวสงวนสำหรับผู้อำนวยการ");
+        reauthentication.requireCurrentPassword(authentication, request.password());
+        return changed(cardId, () -> service.terminatePublicationHolds(cardId, request.playerIds(), authentication.getName()));
+    }
+
     @PutMapping("/{cardId}/matches/{matchId}/result")
     public CardDtos.ResultPatch submitResult(@PathVariable UUID cardId, @PathVariable String matchId,
                                              @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
@@ -293,6 +305,10 @@ public class CardController {
         CardDtos.ResultPatch patch = service.submitResult(
             cardId, matchId, request, authentication.getName());
         events.publishResult(cardId, patch, authentication.getName(), rolesOf(authentication));
+        if (patch.holdPublicResults()) {
+            publishPublicIfBumped(cardId, publicVersionBefore);
+            return patch;
+        }
         List<CardDtos.PairingResponse> publicChanges = patch.changedPairings().stream()
             .filter(CardDtos.PairingResponse::pairingPublished)
             .toList();
@@ -352,9 +368,6 @@ public class CardController {
     @PostMapping("/{cardId}/pairings/publish-next")
     public CardDtos.CardResponse publishNextPairing(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        // Publishing the destination pairing ALSO confirms the source game's ranking snapshot. Those
-        // two facts change at the same version and can't ride two competing deltas, so nudge viewers to
-        // resync the (small) card once — they then hold the new pairing AND the source ranking together.
         return changedWithPublicDelta(cardId,
             () -> service.publishPairResultDestination(cardId, authentication.getName()),
             (result, version) -> {
@@ -382,14 +395,19 @@ public class CardController {
         CardDtos.CardResponse card = changedWithPublicDelta(cardId,
             () -> service.publishResults(cardId, authentication.getName()),
             (result, version) -> {
-                // Viewers hold every result already (streamed live); the publish delta is only the
-                // confirmation + the card's new public stage, read from the public projection.
+                // Grouped games release their scores with the snapshot. For ordinary games the
+                // viewer already has the live scores and only needs the confirmation.
                 CardDtos.CardResponse pub = publicCards.get(cardId);
                 CardDtos.SnapshotResponse confirmed = pub.snapshots().stream()
                     .filter(item -> item.confirmedAt() != null && !item.confirmedAt().isBlank())
                     .max(java.util.Comparator.comparingInt(item ->
                         item.gameNumbers().stream().mapToInt(Integer::intValue).max().orElse(0)))
                     .orElseThrow(() -> new IllegalStateException("published card has no confirmed snapshot"));
+                if (result.rules().stream().anyMatch(rule -> rule.type() == PairingRuleType.PAIR_RESULT
+                        && confirmed.gameNumbers().contains(rule.toGame()))) {
+                    events.publishPublic(cardId, version);
+                    return;
+                }
                 events.publishPublicSnapshot(cardId, version, new CardEventPublisher.SnapshotPublishEvent(
                     cardId, version, java.time.Instant.now(), confirmed.id(), confirmed.gameNumbers(),
                     confirmed.confirmedAt(), pub.runtimeStage(), pub.currentGame()));
