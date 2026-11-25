@@ -21,7 +21,7 @@ import { EmptyState } from "@/ui/components/page";
  * when somebody does not know which division they were entered in. Division and institution are
  * offered as OPTIONAL narrowing, and only once there is something to narrow.
  */
-export function SpectatorFind({ divisions, criteria, onCriteriaChange, onOpenPlayer, onSubmit, browse, hideSearch = false, hasReportResults = false }: {
+export function SpectatorFind({ divisions, criteria, onCriteriaChange, onOpenPlayer, onSubmit, browse }: {
   divisions: SpectatorDivision[];
   criteria: SpectatorSearchCriteria;
   onCriteriaChange: (criteria: SpectatorSearchCriteria) => void;
@@ -29,8 +29,6 @@ export function SpectatorFind({ divisions, criteria, onCriteriaChange, onOpenPla
   /** Enter / the search key. Jumping straight to a player happens HERE, never while typing. */
   onSubmit: () => void;
   browse: ReactNode;
-  hideSearch?: boolean;
-  hasReportResults?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const outcome = searchParticipants(divisions, criteria);
@@ -51,7 +49,7 @@ export function SpectatorFind({ divisions, criteria, onCriteriaChange, onOpenPla
 
   return (
     <>
-      {!hideSearch && <form className="spectator-find" role="search"
+      <form className="spectator-find" role="search"
         onSubmit={(event) => { event.preventDefault(); inputRef.current?.blur(); onSubmit(); }}>
         <div className="spectator-find__field">
           <Search size={18} aria-hidden />
@@ -97,13 +95,13 @@ export function SpectatorFind({ divisions, criteria, onCriteriaChange, onOpenPla
             </label>
           </div>
         )}
-      </form>}
+      </form>
 
       {!searching && (filtered ? (
         <p className="spectator-find__hint" role="status">ค้นหารหัสหรือชื่อในตัวกรองที่เลือก</p>
       ) : browse)}
 
-      {searching && (outcome.total === 0 ? !hasReportResults && (
+      {searching && (outcome.total === 0 ? (
         <div className="panel">
           <EmptyState
             icon={<UserRoundSearch size={25} />}

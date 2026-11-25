@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ClipboardCheck, Hourglass, Info, ListOrdered, LockKeyhole, Megaphone, Trophy, Users, X } from "lucide-react";
+import { ArrowRight, ClipboardCheck, Hourglass, LockKeyhole, Megaphone, Trophy, X } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { rankPlayers } from "@/domain/tournament/rank-player-list";
 import { appDialog } from "@/application/ui/dialog";
@@ -11,7 +11,6 @@ import type { FinalSlot, Pairing, PairingSnapshot, Player, RuntimeStage, SlotLab
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
-import { AdminCardOverview } from "@/ui/components/admin-card-overview";
 import { DataGrid, type DataColumn } from "@/ui/components/data-grid";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
@@ -20,15 +19,10 @@ import { DocumentDownloadPanel } from "@/ui/components/document-download-panel";
 import { PlayerHistoryTable } from "@/ui/components/player-history-table";
 import { SpectatorPairList, SpectatorStandingList } from "@/ui/components/spectator-report-lists";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
-import { CompetitionMatchTable, CompetitionRankingTable } from "@/ui/components/competition-report-tables";
-import { ConfirmDialog } from "@/ui/components/confirm-dialog";
-import { OperatorRoundSummary } from "@/ui/components/operator-round-summary";
 import { SelectMenu } from "@/ui/components/select-menu";
 import { stageLabels } from "@/ui/components/stage-info";
 import { OverviewRecordFilter, matchesRecordQuery, type OverviewRecordFilterValue } from "@/ui/components/overview-record-filter";
 import type { SpectatorReportContext } from "@/application/tournament/spectator-route";
-
-const pairingRuleName = { RANDOM: "Random", SWISS: "Swiss Pairing", PAIR_RESULT: "สลับในโต๊ะตามผล", KING_OF_THE_HILL: "King of the Hill" } as const;
 
 export type OverviewView = "ranking" | "pairing" | "result";
 
@@ -354,7 +348,7 @@ const spectatorViewLabel: Record<OverviewView, string> = {
 };
 
 /** Transitional presentation shared by isolated public reads and the operational wrapper. */
-export function CardOverviewView({ cardId: id, card, loading = false, canManage = false, resizableColumns = false, allowDownloads = false, spectator = false, operatorRole, initialSpectatorContext = null, initiallyShowDetails = false, onSpectatorGame, onSpectatorPlayer, onClose }: {
+export function CardOverviewView({ cardId: id, card, loading = false, canManage = false, resizableColumns = false, allowDownloads = false, spectator = false, initialSpectatorContext = null, onSpectatorPlayer, onClose }: {
   cardId: string;
   card?: TournamentCard;
   loading?: boolean;
@@ -363,13 +357,10 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
   allowDownloads?: boolean;
   /** Public viewer. Only presentation follows from it — the data, ordering and rules are identical. */
   spectator?: boolean;
-  operatorRole?: "director" | "staff";
   /** Public identity activation opens the one canonical Player destination. */
   onSpectatorPlayer?: (player: Player, context: SpectatorReportContext) => void;
   /** Context restored by Back or by the Player → division report action. */
   initialSpectatorContext?: SpectatorReportContext | null;
-  initiallyShowDetails?: boolean;
-  onSpectatorGame?: (game: SpectatorReportContext["game"]) => void;
   onClose?: (id: string) => Promise<void>;
 }) {
   const restoredContext = spectator ? initialSpectatorContext : null;
@@ -379,7 +370,6 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
   const [historyPlayerId, setHistoryPlayerId] = useState<string | null>(null);
   const [finalHistorySlot, setFinalHistorySlot] = useState<FinalSlot | null>(null);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(initiallyShowDetails);
   const [recordFilter, setRecordFilter] = useState<OverviewRecordFilterValue>(restoredContext?.filter ?? { mode: "player", playerIds: [], schools: [], query: "" });
   /** A publish the viewer has been TOLD about but has not chosen to follow yet (D15/UX-F3). */
   const [announcement, setAnnouncement] = useState<{ view: OverviewView; game: number } | null>(null);
@@ -400,8 +390,6 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
   useEffect(() => {
     setRecordFilter(restoredContext?.filter ?? { mode: "player", playerIds: [], schools: [], query: "" });
   }, [id]);
-
-  useEffect(() => { onSpectatorGame?.(historyGame); }, [historyGame, onSpectatorGame]);
 
   // Entering a card still applies the entry default (Result once a first score exists) — that is the
   // opening state, not a jump.
@@ -442,8 +430,6 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
 
   if (loading || card?.summaryOnly) return <div className="panel panel-padding">กำลังโหลดข้อมูลการแข่งขัน…</div>;
   if (!card) return <CardNotFound />;
-  // Back-office, non-operator (admin): the accepted design's read-only report.
-  if (!spectator && !operatorRole) return <AdminCardOverview card={card} allowDownloads={allowDownloads} />;
   const visibleSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt) || card.runtimeStage !== "PAIRING_PREVIEW" || !snapshot.gameNumbers.includes(card.currentGame));
   const publishedSnapshots = visibleSnapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const publishedGames = new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
@@ -520,17 +506,17 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
   // The championship round joins only on the final / result views, so a qualifying-game view
   // never folds championship score or diff into its cumulative totals.
   const historyScope: HistoryScope = {
-    throughGame: operatorRole ? Math.max(0, ...publishedGames) : selectedFinal || selectedResultSummary ? latestVisibleGame : selectedGame,
+    throughGame: selectedFinal || selectedResultSummary ? latestVisibleGame : selectedGame,
     includeFinal: selectedFinal || selectedResultSummary,
   };
   const final = card.runtimeStage === "FINAL_PUBLISHED" || card.status === "FINISHED" || card.status === "CLOSED";
   const canClose = card.status === "FINISHED" && canManage;
   // Final placings (bracket-aware) for the "ผลการแข่งขัน" view, shown once the card is finished.
   const finalResults = selectedResultSummary ? finalStandings(rankingCard, latestVisibleGame) : [];
-  const gameOptions = card.games.map((game) => ({
-    value: String(game.number), label: `เกม ${game.number}`, disabled: !visibleGames.has(game.number),
-  })).concat(finalConfigured ? [{ value: "final", label: "รอบชิงชนะเลิศ", disabled: !finalActive }] : [])
-    .concat(final ? [{ value: "result", label: "ผลการแข่งขัน", disabled: false }] : []);
+  const gameOptions = [...visibleGames].sort((a, b) => a - b)
+    .map((game) => ({ value: String(game), label: `เกม ${game}` }))
+    .concat(finalConfigured ? [{ value: "final", label: "รอบชิง" }] : [])
+    .concat(final ? [{ value: "result", label: "ผลการแข่งขัน" }] : []);
   // Desktop keeps multi-select: the panels sit side by side, and comparing Pairing against Ranking
   // is the whole reason a spectator opens both. A phone shows one panel per screenful, so "adding" a
   // second only buries the first under a scroll — there, picking a view REPLACES the current one
@@ -583,73 +569,60 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
   const openSpectatorPlayer = spectator && onSpectatorPlayer
     ? (player: Player) => onSpectatorPlayer(player, currentSpectatorContext())
     : undefined;
-  const showCompactRanking = spectator || Boolean(operatorRole);
-  const gamePicker = gameOptions.length ? <SelectMenu
-    ariaLabel="เลือกเกม" className="overview-game-menu"
-    value={selectedResultSummary ? "result" : selectedFinal ? "final" : String(selectedGame)} options={gameOptions}
-    onChange={(value) => setHistoryGame(value === "final" ? "final" : value === "result" ? "result" : Number(value))}
-    onOpenChange={setGameMenuOpen} /> : null;
-  const rankingTable = showCompactRanking
-    ? <CompetitionRankingTable rows={visibleRanking} emptyText={emptyRankingText} open={openSpectatorPlayer ?? ((player) => setHistoryPlayerId(player.id))} />
-    : <RankingTable players={visibleRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} emptyText={emptyRankingText} />;
-  const viewButtons = !selectedFinal && !selectedResultSummary && visibleSnapshots.length > 0 && (
-    <div className="segmented overview-view-picker" role={narrow ? "radiogroup" : "group"} aria-label="เลือกมุมมอง">
-      {(["ranking", "pairing", "result"] as const).map((view) => {
-        const active = views.has(view) && !viewUnavailable[view];
-        const Icon = view === "ranking" ? ListOrdered : view === "pairing" ? Users : ClipboardCheck;
-        return <button key={view} type="button" className={`segment${active ? " segment--on" : ""}`}
-          role={narrow ? "radio" : undefined} {...(narrow ? { "aria-checked": active } : { "aria-pressed": active })}
-          disabled={viewUnavailable[view]} title={viewUnavailable[view] ? viewUnavailableTitle[view] : undefined} onClick={() => toggleView(view)}>
-          <Icon size={15} aria-hidden />{view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result"}
-        </button>;
-      })}
-    </div>
-  );
-
-  const closeTournamentCard = async () => {
-    if (await appDialog.confirm("การ์ดที่ปิดแล้วจะไม่สามารถแก้ไขได้อีก", { title: "ปิดการ์ดถาวรหรือไม่?", confirmLabel: "ปิดการ์ด", danger: true })) await onClose?.(id);
-  };
 
   return (
     <>
-      {operatorRole ? <OperatorRoundSummary card={card} role={operatorRole} nextHref={workflowHref(id, card.runtimeStage)}
-        openPlayer={(player) => setHistoryPlayerId(player.id)}
-        closeCard={canClose ? () => void closeTournamentCard() : undefined}
-        finalBoard={card.finalRound ? <FinalRoundBoard card={card} readOnly onSlotHistory={setFinalHistorySlot} /> : undefined}
-        documents={allowDownloads ? <DocumentDownloadPanel card={card} appearance="prototype" /> : undefined} />
-      : <>
-      {spectator ? (
-        <div className="public-report-bar">
-          <button type="button" className="public-report-details" onClick={() => setDetailsOpen(true)} aria-haspopup="dialog">
-            <Info size={17} />รายละเอียดการแข่งขัน
-          </button>
-          {viewButtons}
-          <div className="public-report-game">{gamePicker}</div>
-        </div>
-      ) : (
-        <PageHeader className="overview-page-header" title={<>{card.name}<span className="page-title-inline-subtitle">{card.division}</span></>}
-          actions={<div className="overview-header-controls">
-            <OverviewRecordFilter players={card.players.filter((player) => !player.terminated)} value={recordFilter} onChange={setRecordFilter} />
-            {viewButtons}{gamePicker}
-          </div>} />
-      )}
-
-      {spectator && recordFilterActive && <div className="public-report-filter">
-        <Button variant="secondary" size="sm" onClick={() => setRecordFilter({ mode: "player", playerIds: [], schools: [], query: "" })}>แสดงทุกคู่</Button>
-      </div>}
-
-      <ConfirmDialog open={detailsOpen} title="รายละเอียดการแข่งขัน" eyebrow={`${card.name} · ${card.division}`} icon={<Info size={19} />}
-        confirmLabel="ปิด" hideCancel onConfirm={() => setDetailsOpen(false)} onCancel={() => setDetailsOpen(false)}>
-        <div className="competition-format">
-          <details open><summary>ลำดับ Pairing</summary><ul>
-            <li><span>เกม 1</span><strong>{pairingRuleName[card.initialPairingRule]}</strong></li>
-            {card.rules.map((rule) => <li key={rule.fromGame}><span>เกม {rule.fromGame} → เกม {rule.toGame}</span><strong>{pairingRuleName[rule.type]}</strong></li>)}
-            {card.games.length > 1 && card.rules.length === 0 && <li><span>เกม 2 เป็นต้นไป</span><span>ยังไม่มีข้อมูลวิธีจับคู่ในรายงานสาธารณะ</span></li>}
-          </ul></details>
-          <details><summary>Max diff รายเกม</summary><ul>{card.games.map((game) => <li key={game.number}><span>เกม {game.number}</span><strong>{game.maxDiff} คะแนน</strong></li>)}</ul></details>
-          <p>{card.finalType === "NONE" ? "ไม่มีรอบชิง" : `รอบชิงอันดับ 1–2${card.finalType === "CHAMPION_AND_THIRD" ? " และ 3–4" : ""} · สูงสุด ${card.finalGames} เกมต่อคู่`}</p>
-        </div>
-      </ConfirmDialog>
+      <PageHeader
+        className={`overview-page-header${final ? " overview-page-header--complete" : ""}`}
+        title={<>{card.name}{card.division && <span className="page-title-inline-subtitle">{card.division}</span>}</>}
+        actions={(visibleSnapshots.length > 0 || final || finalConfigured) ? (
+          <div className="overview-header-actions">
+            {visibleSnapshots.length > 0 && (
+              <div className="overview-header-controls">
+                <div className="overview-game-filter-row">
+                  {!selectedFinal && !selectedResultSummary && <OverviewRecordFilter players={card.players.filter((player) => !player.terminated)} value={recordFilter} onChange={setRecordFilter} />}
+                  <div className="overview-game-menu-wrap">
+                    <SelectMenu
+                      ariaLabel="เลือกเกม"
+                      className={`overview-game-menu${selectedFinal ? " overview-game-menu--final" : ""}`}
+                      value={selectedResultSummary ? "result" : selectedFinal ? "final" : String(selectedGame)}
+                      options={gameOptions}
+                      onChange={(value) => setHistoryGame(value === "final" ? "final" : value === "result" ? "result" : Number(value))}
+                      onOpenChange={setGameMenuOpen}
+                    />
+                  </div>
+                </div>
+                {/*
+                  The roles follow the behaviour rather than the other way round: a phone picks ONE
+                  view, which is a radio group, while desktop toggles several, which is aria-pressed.
+                  Announcing a multi-select as radios (or the reverse) is exactly the mismatch UX-F3
+                  filed — "a segmented picker that is really multi-select".
+                */}
+                {!selectedFinal && !selectedResultSummary && <div className="segmented overview-view-picker" role={narrow ? "radiogroup" : "group"} aria-label="เลือกมุมมอง">
+                  {(["ranking", "pairing", "result"] as const).map((view) => {
+                    const unavailable = viewUnavailable[view];
+                    const active = views.has(view) && !unavailable;
+                    const label = spectator ? spectatorViewLabel[view] : view === "ranking" ? "Ranking" : view === "pairing" ? "Pairing" : "Result";
+                    return (
+                      <button
+                        key={view}
+                        type="button"
+                        className={`segment${active ? " segment--on" : ""}`}
+                        role={narrow ? "radio" : undefined}
+                        {...(narrow ? { "aria-checked": active } : { "aria-pressed": active })}
+                        disabled={unavailable}
+                        title={unavailable ? viewUnavailableTitle[view] : undefined}
+                        onClick={() => toggleView(view)}
+                      >{label}</button>
+                    );
+                  })}
+                </div>}
+              </div>
+            )}
+            {final && <Badge tone="warning">จบแล้ว</Badge>}
+          </div>
+        ) : undefined}
+      />
 
       {/*
         D15/UX-F3: a publish used to swap the viewer's screen out from under them. It now announces
@@ -684,12 +657,12 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
         </Panel>
       )}
 
-      {canManage && !operatorRole && !final && (
+      {canManage && !final && (
         <div className="notice notice--info workflow-notice"><ClipboardCheck size={20} /><p><strong>ขั้นตอนปัจจุบัน: {stageLabels[card.runtimeStage]}</strong><span>เกม {card.currentGame} จาก {card.games.length} · ทำงานต่อในหน้าที่ระบบกำหนด</span></p><Link prefetch={false} href={workflowHref(id, card.runtimeStage)}><Button size="sm">ทำงานต่อ <ArrowRight size={15} /></Button></Link></div>
       )}
 
       {/* Spectators see why the latest game has nothing yet, instead of a silently stale screen. */}
-      {!canManage && !operatorRole && !final && !selectedFinal && visibleSnapshots.length > 0
+      {!canManage && !final && !selectedFinal && visibleSnapshots.length > 0
         && latestVisibleGame < card.currentGame && card.currentGame <= card.games.length && (
         <div className="notice notice--info"><Hourglass size={18} /><p>
           <strong>{card.runtimeStage === "TABLE_PAIRING" || card.runtimeStage === "PAIRING_PREVIEW"
@@ -702,7 +675,7 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
       {!selectedFinal && !selectedResultSummary && (visibleSnapshots.length === 0 ? (
         card.players.length > 0 ? <>
           <Panel className="overview-data-panel overview-ranking-panel" title={spectator ? "อันดับเริ่มต้น" : "Ranking เริ่มต้น"}>
-            {rankingTable}
+            <RankingTable players={visibleRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} emptyText={emptyRankingText} stacked={stacked} spectator={spectator} />
           </Panel>
           <Panel><EmptyState icon={<Trophy size={26} />} title={spectator ? "ยังไม่มีคู่แข่งขันที่เผยแพร่" : "ยังไม่มี Pairing ที่เผยแพร่"} description={spectator ? "คู่แข่งขันเกมแรกจะแสดงทันทีที่ผู้จัดเผยแพร่" : "เมื่อผู้อำนวยการยืนยัน Pairing เกมแรก ตารางคู่แข่งขันจะปรากฏที่นี่ทันที"} /></Panel>
         </> : <Panel><EmptyState icon={<Trophy size={26} />} title="กำลังรอรายชื่อผู้เล่น" description="รายชื่อและ Ranking เริ่มต้นจะปรากฏหลังผู้อำนวยการจบการลงทะเบียน" /></Panel>
@@ -710,30 +683,26 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
         <>
           {views.size === 0 && <Panel><EmptyState icon={<ClipboardCheck size={24} />} title="ยังไม่ได้เลือกมุมมอง" description={spectator ? "เลือกอันดับ คู่แข่งขัน หรือผลการแข่งขัน" : "เลือกมุมมอง ผลการจัดอันดับ / ผลประกบคู่ / ผลการแข่งขัน เพื่อแสดงข้อมูลที่ต้องการ"} /></Panel>}
 
-          <div className={spectator && views.size > 1 ? "report-views report-views--split" : "report-views"}>
           {views.has("ranking") && (
             <Panel id="overview-view-ranking" className="overview-data-panel overview-view-section overview-ranking-panel" title={spectator
               ? selectedResultsPublished ? `อันดับ · หลังจบเกม ${selectedGame}` : selectedHasResults ? `อันดับ · ก่อนจบเกม ${selectedGame}` : `อันดับ · ก่อนเริ่มเกม ${selectedGame}`
               : selectedResultsPublished ? `RANKING (ผลการจัดอันดับ หลังจบเกม ${selectedGame})` : selectedHasResults ? `RANKING (ผลการจัดอันดับ ก่อนจบเกม ${selectedGame})` : `RANKING (ผลการจัดอันดับ ก่อนเริ่มเกม ${selectedGame})`} description={selectedResultsPublished && selectedSnapshot?.confirmedAt ? publishedAtText(selectedSnapshot.confirmedAt) : undefined}>
-              {rankingTable}
+              <RankingTable players={visibleRanking} selectedId={selectedRankingPlayerId} onPlayerClick={selectRankingPlayer} resizableColumns={resizableColumns} emptyText={emptyRankingText} stacked={stacked} spectator={spectator} />
             </Panel>
           )}
 
           {views.has("pairing") && (
             <Panel id="overview-view-pairing" className="overview-data-panel overview-view-section" title={spectator ? `คู่แข่งขัน · เกม ${selectedGame}` : `PAIRING (ผลประกบคู่ เกม ${selectedGame})`}>
-              {spectator ? <CompetitionMatchTable rows={visiblePairings} players={players} slotLabel={viewerSlotLabel ?? "PAIR"} open={openSpectatorPlayer} emptyText={emptyPairingText} />
-                : <PairingGrid pairings={visiblePairings} players={players} resizableColumns={resizableColumns} emptyText={emptyPairingText} slotLabel={viewerSlotLabel} />}
+              <PairingGrid pairings={visiblePairings} players={players} resizableColumns={resizableColumns} emptyText={emptyPairingText} slotLabel={viewerSlotLabel} stacked={stacked} onPlayerClick={openSpectatorPlayer} />
             </Panel>
           )}
 
           {views.has("result") && selectedResultsVisible && (
             <Panel id="overview-view-result" className="overview-data-panel overview-view-section" title={spectator ? `ผลการแข่งขัน · เกม ${selectedGame}` : `RESULT (ผลการแข่งขัน เกม ${selectedGame})`} description={selectedSnapshot?.confirmedAt ? publishedAtText(selectedSnapshot.confirmedAt) : undefined}>
-              {spectator ? <CompetitionMatchTable rows={visiblePairings} players={players} slotLabel={viewerSlotLabel ?? "PAIR"} result open={openSpectatorPlayer} emptyText={emptyPairingText} />
-                : <ResultTable pairings={visiblePairings} players={players} storageKey={`${id}:overview:results`} resizableColumns={resizableColumns} emptyText={emptyPairingText} slotLabel={viewerSlotLabel} />}
+              <ResultTable pairings={visiblePairings} players={players} storageKey={`${id}:overview:results`} resizableColumns={resizableColumns} emptyText={emptyPairingText} slotLabel={viewerSlotLabel} stacked={stacked} onPlayerClick={openSpectatorPlayer} />
             </Panel>
           )}
 
-          </div>
           <nav className="overview-mobile-nav" aria-label="มุมมองข้อมูลการแข่งขัน">
             {(["ranking", "pairing", "result"] as const).map((view) => {
               const unavailable = viewUnavailable[view];
@@ -753,12 +722,12 @@ export function CardOverviewView({ cardId: id, card, loading = false, canManage 
       {canClose && (
         <Panel className="panel--danger" title="ปิดการ์ดถาวร" description="การ์ดที่ปิดแล้วจะแก้ไขข้อมูลใด ๆ ไม่ได้อีก — ทำเมื่อการแข่งขันจบสมบูรณ์แล้วเท่านั้น">
           <div className="panel-padding">
-            <Button variant="danger" onClick={() => void closeTournamentCard()}><LockKeyhole size={16} />ปิดการ์ดถาวร</Button>
+            <Button variant="danger" onClick={async () => {
+              if (await appDialog.confirm("การ์ดที่ปิดแล้วจะไม่สามารถแก้ไขได้อีก", { title: "ปิดการ์ดถาวรหรือไม่?", confirmLabel: "ปิดการ์ด", danger: true })) await onClose?.(id);
+            }}><LockKeyhole size={16} />ปิดการ์ดถาวร</Button>
           </div>
         </Panel>
       )}
-
-      </>}
 
       {!spectator && historyPlayer && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={historyDialog.onBackdropMouseDown}>

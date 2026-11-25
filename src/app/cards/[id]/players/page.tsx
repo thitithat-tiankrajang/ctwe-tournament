@@ -2,288 +2,277 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowRight, LockKeyhole, Save, Trash2, Undo2, Upload, UserPlus } from "lucide-react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ArrowRight, FilterX, LoaderCircle, LockKeyhole, Pencil, Plus, Save, Trash2, Users, X } from "lucide-react";
 import { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { rankPlayers, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
-import { toast } from "@/application/ui/toast";
-import { ApiError, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { comparePlayerCodes, matchesPlayerCode } from "@/domain/tournament/player-code";
+import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import { canManageTournament, hasStaffAccess } from "@/domain/tournament/roles";
 import { playerSchema, type PlayerForm } from "@/domain/tournament/schemas";
+import { rankingAfterGame } from "@/domain/tournament/history";
 import type { Player } from "@/domain/tournament/types";
 import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
+import { DataGrid, type DataColumn } from "@/ui/components/data-grid";
 import { ExcelPlayerImport } from "@/ui/components/excel-player-import";
-import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
+import { GameFlow } from "@/ui/components/game-flow";
 import { InstitutionCombobox } from "@/ui/components/institution-combobox";
-import { EmptyState } from "@/ui/components/page";
+import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { PairingToolButtons, canOpenScreening } from "@/ui/components/pairing-tool";
 import { PlayerTermination } from "@/ui/components/player-termination";
 import { ReopenRegistration } from "@/ui/components/reopen-registration";
-import { useWorkspaceListFilter, WorkspaceListFilter, WorkspaceListToolbar } from "@/ui/components/workspace-list-filter";
-import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
+import { stageLabels } from "@/ui/components/stage-info";
 
-const fields = { firstName: "ชื่อ", lastName: "นามสกุล", school: "โรงเรียน/สถาบัน" } as const;
-const fieldKeys = Object.keys(fields) as (keyof PlayerForm)[];
-const details = ({ firstName, lastName, school }: Player): PlayerForm => ({ firstName, lastName, school });
-type Draft = { before: PlayerForm; after: PlayerForm; displayName: string; version: number };
-
-const displayName = ({ firstName, lastName }: PlayerForm) => `${firstName} ${lastName}`;
-const splitName = (value: string, previous?: PlayerForm) => {
-  const full = value.trim();
-  const originalFirst = previous?.firstName.trim();
-  const originalLast = previous?.lastName.trim();
-  if (originalFirst && full.startsWith(`${originalFirst} `)) return { firstName: originalFirst, lastName: full.slice(originalFirst.length).trim() };
-  if (originalLast && full.endsWith(` ${originalLast}`)) return { firstName: full.slice(0, -(originalLast.length + 1)), lastName: originalLast };
-  const boundary = full.search(/\s/);
-  return boundary < 0 ? { firstName: full, lastName: "" } : { firstName: full.slice(0, boundary), lastName: full.slice(boundary).trim() };
-};
-type Review = { kind: "edit"; changes: [string, Draft][]; version: number } | { kind: "delete"; player: Player; version: number };
+type Confirmation = { kind: "update" | "delete"; player: Player } | null;
 
 export default function PlayersPage() {
   const { id } = useParams<{ id: string }>();
   const { pending: navPending, navigate } = useNavigateWithPending();
-  const card = useTournamentStore((state) => selectCard(state.cards, id));
+  const cards = useTournamentStore((state) => state.cards);
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
   const addPlayer = useTournamentStore((state) => state.addPlayer);
   const importPlayers = useTournamentStore((state) => state.importPlayers);
   const updatePlayer = useTournamentStore((state) => state.updatePlayer);
   const removePlayer = useTournamentStore((state) => state.removePlayer);
-  const syncCard = useTournamentStore((state) => state.syncCard);
   const finishRegistration = useTournamentStore((state) => state.finishRegistration);
-  const verifyPassword = useTournamentStore((state) => state.verifyPassword);
+  const card = selectCard(cards, id);
+  const [query, setQuery] = useState("");
+  const [rankingGame, setRankingGame] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<PlayerForm>({ firstName: "", lastName: "", school: "" });
+  const [rowError, setRowError] = useState("");
+  const [operationError, setOperationError] = useState("");
+  const [confirmation, setConfirmation] = useState<Confirmation>(null);
+  const [pending, setPending] = useState<"add" | "update" | "delete" | null>(null);
+  const { control, register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<PlayerForm>({
+    resolver: zodResolver(playerSchema),
+    defaultValues: { firstName: "", lastName: "", school: "" },
+  });
 
-  const filter = useWorkspaceListFilter();
-  const [drafts, setDrafts] = useState<Map<string, Draft>>(new Map());
-  const [review, setReview] = useState<Review | null>(null);
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [showAdd, setShowAdd] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newSchool, setNewSchool] = useState("");
-
-  if (loading || card?.summaryOnly) return <div className="panel panel-padding">กำลังโหลดรายชื่อผู้เล่น…</div>;
-  if (!hasStaffAccess(auth)) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="ดูผลที่เผยแพร่จากหน้าภาพรวมของรุ่น" action={<Link prefetch={false} href={`/cards/${id}`} className="button button--primary">กลับหน้าภาพรวม</Link>} /></div>;
+  if (loading) return <div className="panel panel-padding loading-state"><LoaderCircle className="loading-spinner" size={18} />กำลังตรวจสอบสิทธิ์…</div>;
+  const isStaff = hasStaffAccess(auth);
+  if (!isStaff) return <div className="panel"><EmptyState icon={<LockKeyhole size={25} />} title="สำหรับเจ้าหน้าที่เท่านั้น" description="บุคคลทั่วไปดูผลที่ประกาศแล้วได้จากหน้าภาพรวมของการ์ด" action={<Link prefetch={false} href={`/cards/${id}`}><Button>กลับหน้าภาพรวม</Button></Link>} /></div>;
   if (!card) return <CardNotFound />;
 
-  const director = canManageTournament(auth) && card.status !== "CLOSED" && card.status !== "FINISHED";
-  const registration = director && card.runtimeStage === "PLAYER_REGISTRATION";
-  const working = busy || navPending;
-  const held = new Set((card.screeningPool ?? []).map((entry) => entry.player));
-  const stateOf = (player: Player) => player.terminated ? "withdrawn" : held.has(player.id) ? "held" : "active";
-  const count = (state: string) => card.players.filter((player) => stateOf(player) === state).length;
-  const schools = [...new Set(card.players.map((player) => player.school))].sort((a,b) => a.localeCompare(b,"th"));
-  const { code, name, school, status } = filter.state;
-  const includes = (value: string, needle?: string) => !needle || value.toLocaleLowerCase().includes(needle.toLocaleLowerCase());
-  const rows = card.players.filter((player) => (!status || stateOf(player) === status)
-    && (!code || code.split(/[\s,]+/).some((value) => matchesPlayerCode(player.id, value)))
-    && includes(displayName(player), name) && includes(player.school, school)
-  ).sort((a, b) => comparePlayerCodes(a.id, b.id));
+  const registrationOpen = card.runtimeStage === "PLAYER_REGISTRATION";
+  const canManage = canManageTournament(auth);
+  const canEditRegistration = canManage && registrationOpen;
+  // Directors may correct a player's personal info (name/school) at any stage; add/remove stays registration-only.
+  const directorEdit = !registrationOpen && canManage;
+  const showEditableTable = canManage;
+  const schools = [...new Set(card.players.map((player) => player.school).filter(Boolean))].sort((a, b) => a.localeCompare(b, "th"));
+  const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
+  const latestPublishedGame = Math.max(0, ...publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers));
+  const selectedRankingGame = rankingGame && publishedSnapshots.some((snapshot) => snapshot.gameNumbers.includes(rankingGame)) ? rankingGame : latestPublishedGame;
+  // Terminated players are shown in the terminate/restore panel, not the active ranking table.
+  const terminatedIds = new Set(card.players.filter((player) => player.terminated).map((player) => player.id));
+  // During registration every stat is zero, so a "ranking" is meaningless — list by player code instead.
+  const ranked = (registrationOpen
+    ? [...card.players].sort((a, b) => comparePlayerCodes(a.id, b.id))
+    : selectedRankingGame > 0 ? rankingAfterGame({ ...card, snapshots: publishedSnapshots }, selectedRankingGame) : rankPlayers(card.players))
+    .filter((player) => !terminatedIds.has(player.id));
+  const rankingCard = { ...card, snapshots: publishedSnapshots };
+  const filtered = ranked.filter((player) => {
+    const term = query.trim();
+    if (/^[A-Za-z]*\d+$/.test(term)) return matchesPlayerCode(player.id, term);
+    return `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLowerCase().includes(term.toLowerCase());
+  });
+  const rankIndex = new Map(ranked.map((player, index) => [player.id, index + 1]));
+  // Preview the next code with the card's letter prefix, numbered after the current highest.
+  const codePrefix = card.codePrefix ?? card.players[0]?.id.replace(/\d+$/, "") ?? "P";
+  const nextCode = `${codePrefix}${String(Math.max(0, ...card.players.map((player) => Number(player.id.replace(/^[A-Za-z]+/, "")) || 0)) + 1).padStart(3, "0")}`;
+  const busy = pending !== null || isSubmitting;
 
-  const changedFields = ({ before, after }: Draft) => [
-    { label: "ชื่อ–นามสกุล", before: displayName(before), after: displayName(after) },
-    { label: fields.school, before: before.school, after: after.school },
-  ].filter((field) => field.before !== field.after);
+  const rankingColumns: DataColumn<{ player: Player; rank: number }>[] = [
+    { key: "rank", label: registrationOpen ? "ลำดับ" : "อันดับ", min: 48, width: 58, align: "right", value: ({ rank }) => rank, filterable: false, render: ({ rank }) => <strong>{rank}</strong> },
+    { key: "id", label: "รหัส", min: 50, width: 60, filterKind: "playerCode", cellClassName: "cell-id", value: ({ player }) => player.id, render: ({ player }) => player.id },
+    { key: "name", label: "ชื่อ-นามสกุล", min: 110, width: 200, cellClassName: "cell-person-name", value: ({ player }) => `${player.firstName} ${player.lastName}`, render: ({ player }) => <span title={`${player.firstName} ${player.lastName}`}>{player.firstName} {player.lastName}</span> },
+    { key: "school", label: "โรงเรียน/สถาบัน", min: 110, width: 200, cellClassName: "cell-person-school cell-ranking-school", value: ({ player }) => player.school, render: ({ player }) => <span title={player.school}>{player.school}</span> },
+    { key: "wp", label: "คะแนนสะสม", min: 76, width: 90, align: "right", value: ({ player }) => player.winPoints, render: ({ player }) => <strong>{player.winPoints}</strong> },
+    { key: "diff", label: "ผลต่างสะสม", min: 82, width: 96, align: "right", value: ({ player }) => player.diff, filterable: false, render: ({ player }) => `${player.diff > 0 ? "+" : ""}${player.diff}` },
+    { key: "wdl", label: "ชนะ / เสมอ / แพ้", min: 100, width: 142, align: "center", value: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}`, render: ({ player }) => `${player.wins} / ${player.draws} / ${player.losses}` },
+  ];
 
-  const change = (player: Player, field: "name" | "school", value: string) => {
-    setDrafts((previous) => {
-      const next = new Map(previous);
-      const current = previous.get(player.id);
-      const before = current?.before ?? details(player);
-      const after = current?.after ?? before;
-      const nextName = field === "name" ? value : current?.displayName ?? displayName(before);
-      const nextSchool = field === "school" ? value : after.school;
-      if (nextName === displayName(before) && nextSchool === before.school) next.delete(player.id);
-      else next.set(player.id, {
-        before,
-        displayName: nextName,
-        after: { ...splitName(nextName, before), school: nextSchool },
-        version: current?.version ?? card.version,
-      });
-      return next;
-    });
-  };
-
-  const askSave = () => {
-    setError("");
-    const changes: [string, Draft][] = [];
-    for (const [code, draft] of drafts) {
-      if (draft.version !== card.version) {
-        setError("ข้อมูลการแข่งขันเปลี่ยน กรุณายกเลิกฉบับร่างแล้วเลือกผู้เล่นอีกครั้ง");
-        return;
-      }
-      const parsed = playerSchema.safeParse(draft.after);
-      if (!parsed.success) {
-        setError(`${code} · ${parsed.error.issues[0]?.message ?? "ตรวจสอบข้อมูลผู้เล่น"}`);
-        return;
-      }
-      if (fieldKeys.some((key) => parsed.data[key] !== draft.before[key])) changes.push([code, { ...draft, after: parsed.data }]);
+  const onAdd = async (values: PlayerForm) => {
+    const normalized = `${values.firstName} ${values.lastName}`.trim().toLocaleLowerCase("th");
+    const duplicates = card.players.filter((player) => `${player.firstName} ${player.lastName}`.trim().toLocaleLowerCase("th") === normalized);
+    if (duplicates.length > 0) {
+      const codes = duplicates.map((player) => player.id).join(", ");
+      if (!await appDialog.confirm(`ชื่อนี้ซ้ำกับรหัส ${codes} นะ ยืนยันว่าจะเพิ่มผู้เล่นชื่อนี้หรือไม่?`, {
+        title: "พบชื่อผู้เล่นซ้ำ",
+        confirmLabel: "เพิ่มผู้เล่นต่อ",
+      })) return;
     }
-    if (!changes.length) { setDrafts(new Map()); return; }
-    setPassword("");
-    setReview({ kind: "edit", changes, version: card.version });
-  };
-
-  const confirm = async () => {
-    if (!review || !director) return;
-    setError("");
-    if (review.kind === "edit" && !password) { setError("กรอกรหัสผ่านผู้อำนวยการ"); return; }
-    setBusy(true);
-    let completed = 0;
-    try {
-      if (review.kind === "delete") {
-        if (!registration) throw new Error("ลบผู้เล่นได้ในช่วงลงทะเบียน");
-        const live = selectCard(useTournamentStore.getState().cards, id)?.players.find((player) => player.id === review.player.id);
-        if (!live || fieldKeys.some((key) => live[key] !== review.player[key])) throw new Error("ข้อมูลผู้เล่นเปลี่ยน กรุณาปิดแล้วเลือกผู้เล่นอีกครั้ง");
-        await removePlayer(id, review.player.id, review.version);
-      } else {
-        if (!await verifyPassword(password)) throw new Error("รหัสผ่านผู้อำนวยการไม่ถูกต้อง");
-        let expectedVersion = review.version;
-        for (const [code, draft] of review.changes) {
-          const live = selectCard(useTournamentStore.getState().cards,id)?.players.find((player) => player.id === code);
-          if (!live || fieldKeys.some((key) => live[key] !== draft.before[key])) throw new Error(`${code} มีข้อมูลเปลี่ยน กรุณาตรวจแถวนี้ก่อนบันทึกอีกครั้ง`);
-          expectedVersion = await updatePlayer(id, code, draft.after, expectedVersion);
-          ++completed;
-          setDrafts((previous) => {
-            const remaining = new Map(previous);
-            remaining.delete(code);
-            return remaining;
-          });
-        }
-      }
-      setReview(null);
-      setPassword("");
-      toast.success(review.kind === "delete" ? "ลบผู้เล่นแล้ว" : `บันทึกข้อมูล ${completed} คนแล้ว`);
-    } catch (failure) {
-      const versionConflict = failure instanceof ApiError && failure.status === 409;
-      if (versionConflict) void syncCard(id);
-      const message = versionConflict
-        ? "ข้อมูลการแข่งขันเปลี่ยน กรุณาปิดการยืนยันแล้วตรวจรายการผู้เล่นอีกครั้ง"
-        : failure instanceof Error ? failure.message : "ดำเนินการไม่สำเร็จ";
-      setError(`${completed ? `บันทึกแล้ว ${completed} คน · ` : ""}${message}`);
-      if (completed) { setReview(null); setPassword(""); }
-    } finally { setBusy(false); }
-  };
-
-  const onAdd = async () => {
-    if (!registration || working) return;
-    setError("");
-    const parsed = playerSchema.safeParse({ ...splitName(newName), school: newSchool });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "กรอกชื่อและโรงเรียนให้ครบ");
-      return;
-    }
-    const values = parsed.data;
-    const duplicate = card.players.find((player) => displayName(player).toLowerCase() === displayName(values).toLowerCase());
-    if (duplicate && !await appDialog.confirm(`ชื่อซ้ำกับ ${duplicate.id}`, { title: "พบชื่อผู้เล่นซ้ำ", confirmLabel: "เพิ่มผู้เล่นต่อ" })) return;
-    setBusy(true);
+    setOperationError("");
+    setPending("add");
     try {
       await addPlayer(id, values);
-      setNewName("");
-      setNewSchool("");
-      setShowAdd(false);
-      toast.success("เพิ่มผู้เล่นแล้ว");
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "เพิ่มผู้เล่นไม่สำเร็จ"); }
-    finally { setBusy(false); }
+      reset({ firstName: "", lastName: "", school: "" });
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "เพิ่มผู้เล่นไม่สำเร็จ");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const startEdit = (player: Player) => {
+    setEditingId(player.id);
+    setEditDraft({ firstName: player.firstName, lastName: player.lastName, school: player.school });
+    setRowError("");
+    setOperationError("");
+  };
+
+  const requestUpdate = (player: Player) => {
+    const validation = playerSchema.safeParse(editDraft);
+    if (!validation.success) {
+      setRowError(validation.error.issues[0]?.message ?? "กรุณาตรวจสอบข้อมูลให้ครบ");
+      return;
+    }
+    setEditDraft(validation.data);
+    setRowError("");
+    setConfirmation({ kind: "update", player });
+  };
+
+  const confirmMutation = async () => {
+    if (!confirmation) return;
+    setOperationError("");
+    setPending(confirmation.kind);
+    try {
+      if (confirmation.kind === "update") {
+        await updatePlayer(id, confirmation.player.id, editDraft);
+      } else {
+        await removePlayer(id, confirmation.player.id);
+      }
+      setEditingId(null);
+      setRowError("");
+      setConfirmation(null);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "ดำเนินการไม่สำเร็จ");
+    } finally {
+      setPending(null);
+    }
   };
 
   const finish = async () => {
-    if (!await appDialog.confirm(`จบการลงทะเบียน ${card.players.length} คนและไปหน้าสร้างคู่เกมแรก`, { title:"จบการลงทะเบียน", confirmLabel:"ยืนยัน" })) return;
-    setBusy(true);
-    try { await finishRegistration(id); navigate(`/cards/${id}/tables`); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : "จบการลงทะเบียนไม่สำเร็จ"); }
-    finally { setBusy(false); }
+    if (!await appDialog.confirm(`ยืนยันจบการลงทะเบียนผู้เล่น ${card.players.length} คน? หลังจากนี้จะแก้รายชื่อไม่ได้`, {
+      title: "จบการลงทะเบียน",
+      confirmLabel: "จบการลงทะเบียน",
+    })) return;
+    try {
+      await finishRegistration(id);
+      navigate(`/cards/${id}/tables`);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "จบการลงทะเบียนไม่สำเร็จ");
+    }
   };
 
-  return <div className="players-page">
-    <h1 className="sr">ผู้เล่น</h1>
-    {director && <div className="roster-actions">
-      <div className="roster-critical">{!registration && <PlayerTermination card={card} />}</div>
-      <div className="roster-work">
-        {!registration && canOpenScreening(card) && <PairingToolButtons card={card} modes={["screen"]} />}
-        {registration ? <>
-          <button type="button" className="btn btn--primary" onClick={() => { setError(""); setShowAdd(true); }} aria-haspopup="dialog"><UserPlus className="i" size={15} />เพิ่มผู้เล่น</button>
-          <button type="button" className="btn btn--secondary" onClick={() => setShowImport(true)} aria-haspopup="dialog"><Upload className="i" size={14} />นำเข้า Excel</button>
-          <button type="button" className="btn btn--success" disabled={working || drafts.size > 0 || card.players.length < 2} onClick={() => void finish()}>
-            จบการลงทะเบียน <ArrowRight className="i" size={15} /></button>
-        </> : <ReopenRegistration card={card} />}
-      </div>
-    </div>}
-    {error && !review && !showAdd && <div className="notice notice--danger" role="alert"><p>{error}</p></div>}
-    <section className="panel" aria-label="รายชื่อผู้เล่น">
-      <WorkspaceListToolbar status={<><strong>ลงทะเบียน {card.players.length} คน</strong><span className="meta">แข่งอยู่ {count("active")}</span>
-        <span className="meta">ถอนแล้ว {count("withdrawn")}</span>{held.size > 0 && <span className="meta">คัดชั่วคราว {held.size}</span>}
-        {filter.count > 0 && <span className="meta">แสดง {rows.length} คน</span>}</>}
-        actions={<>{filter.button}{director && <div className="roster-draft-bar">
-          <span id="roster-draft-count" className="sr" role="status">{drafts.size} คนยังไม่บันทึก</span>
-          <button type="button" className="btn btn--secondary roster-discard" disabled={!drafts.size || working} aria-label="ยกเลิกการแก้ไข"
-            onClick={() => setDrafts(new Map())}><Undo2 className="i" size={15} /></button>
-          <button type="button" className="btn btn--success" disabled={!drafts.size || working} onClick={askSave} aria-describedby="roster-draft-count">
-            <Save className="i" size={15} />บันทึก<span className="roster-draft-badge" aria-hidden>{drafts.size || ""}</span></button>
-        </div>}</>} />
-      <div className="gscroll" style={{ maxHeight:500 }}><table className="dt" aria-label="ทะเบียนผู้เล่น">
-        <thead><tr><th className="c" scope="col">#</th><th scope="col">{filter.heading("code")}</th>
-          <th scope="col">{filter.heading("name")}</th><th scope="col">{filter.heading("school")}</th><th scope="col">{filter.heading("status")}</th>
-          {registration && <th className="c" scope="col">ลบ</th>}</tr></thead>
-        <tbody>{rows.length ? rows.map((player, index) => {
-          const rowStatus = stateOf(player);
-          const draft = drafts.get(player.id);
-          return <tr key={player.id} data-roster-dirty={drafts.has(player.id) ? "" : undefined}>
-            <td className="c num">{index + 1}</td><td className="code">{player.id}</td>
-            <td className="roster-cell-td">{director ? <input aria-label={`ชื่อ–นามสกุล ${player.id}`} className="roster-cell" disabled={working}
-              value={draft?.displayName ?? displayName(player)} title={displayName(player)} onChange={(event) => change(player, "name", event.target.value)} autoComplete="off" /> : displayName(player)}</td>
-            <td className="roster-cell-td">{director ? <input aria-label={`${fields.school} ${player.id}`} className="roster-cell" disabled={working}
-              value={draft?.after.school ?? player.school} title={player.school} onChange={(event) => change(player, "school", event.target.value)} autoComplete="off" /> : player.school}</td>
-            <td><span className={`badge badge--${rowStatus === "withdrawn" ? "danger" : rowStatus === "held" ? "info" : "neutral"}`}>
-              {rowStatus === "withdrawn" ? "ถอนแล้ว" : rowStatus === "held" ? "คัดชั่วคราว" : "แข่งอยู่"}</span></td>
-            {registration && <td className="c"><button type="button" className="icon-btn roster-delete" aria-label={`ลบ ${player.id}`} disabled={working || drafts.size > 0}
-              onClick={() => { setError(""); setReview({ kind:"delete", player, version: card.version }); }}><Trash2 className="i" size={15} /></button></td>}
-          </tr>;
-        }) : <tr><td colSpan={registration ? 6 : 5}>{card.players.length ? "ไม่พบผู้เล่นตามตัวกรอง" : "ยังไม่มีผู้เล่น"}</td></tr>}</tbody>
-      </table></div>
-    </section>
-    <WorkspaceListFilter filter={filter} fields={["code","name","school"]} emptyStatus="ทุกสถานะ"
-      statuses={[["active","แข่งอยู่"],["held","คัดชั่วคราว"],["withdrawn","ถอนแล้ว"]]} />
+  const confirmationDescription = confirmation?.kind === "delete"
+    ? `ระบบจะลบ ${confirmation.player.id} · ${confirmation.player.firstName} ${confirmation.player.lastName} และเลื่อนรหัสของผู้เล่นถัดไป ${card.players.filter((player) => Number(player.id.slice(1)) > Number(confirmation.player.id.slice(1))).length} คนให้ต่อเนื่อง การทำรายการนี้จะถูกเก็บใน History Log`
+    : confirmation
+      ? `ยืนยันแก้ไข ${confirmation.player.id} เป็น “${editDraft.firstName} ${editDraft.lastName}” สถาบัน “${editDraft.school}” ระบบจะเก็บข้อมูลก่อนและหลังแก้ไขใน History Log`
+      : "";
 
-    <ConfirmDialog appearance="prototype" open={registration && showAdd} title="เพิ่มผู้เล่น" confirmLabel="บันทึก" busy={busy}
-      error={showAdd ? error : undefined} onConfirm={() => void onAdd()} onCancel={() => { setShowAdd(false); setError(""); }}>
-      <div className="field"><label htmlFor="roster-add-name">ชื่อ–นามสกุล</label><input id="roster-add-name" className="input" autoComplete="off" disabled={working}
-        value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void onAdd(); }} /></div>
-      <div className="field"><label htmlFor="roster-new-school">โรงเรียน/สถาบัน</label>
-        <InstitutionCombobox id="roster-new-school" value={newSchool} onChange={setNewSchool} options={schools} disabled={working} /></div>
-    </ConfirmDialog>
-    <ConfirmDialog appearance="prototype" open={registration && showImport} title="นำเข้าผู้เล่นจาก Excel" confirmLabel="ปิด" hideCancel
-      onConfirm={() => setShowImport(false)} onCancel={() => setShowImport(false)}>
-      <ExcelPlayerImport onImport={(players) => importPlayers(id, players)} />
-    </ConfirmDialog>
-    <ConfirmDialog appearance="prototype" open={Boolean(review)} title={review?.kind === "delete" ? `ลบผู้เล่น ${review.player.id}` : "ยืนยันการแก้ไขข้อมูลผู้เล่น"}
-      description={review?.kind === "delete" ? `${displayName(review.player)} · ระบบจะเรียงรหัสผู้เล่นที่เหลือใหม่` : undefined}
-      confirmLabel={review?.kind === "delete" ? "ลบและจัดรหัสใหม่" : "ยืนยันและบันทึก"} danger={review?.kind === "delete"} busy={busy} error={review ? error : undefined}
-      className={review?.kind === "edit" ? "dialog--roster-tool dialog--roster-edit" : undefined}
-      cancelLabel={review?.kind === "edit" ? "กลับไปแก้ไข" : undefined} onConfirm={() => void confirm()}
-      onCancel={() => { setReview(null); setPassword(""); setError(""); }}>
-      {review?.kind === "edit" && <>
-        <div className="msw-summary"><p className="msw-summary-count"><strong>{review.changes.length} คน</strong>
-          <span>{review.changes.reduce((total, [,draft]) => total + changedFields(draft).length, 0)} ช่องที่เปลี่ยน</span></p>
-          <div className="msw-summary-scroll roster-edit-scroll"><table className="dt roster-edit-diff" aria-label="รายการแก้ไขข้อมูลผู้เล่น">
-            <thead><tr><th scope="col">ผู้เล่น</th><th scope="col">ช่องที่แก้</th><th scope="col">ค่าเดิม</th><th scope="col">ค่าใหม่</th></tr></thead>
-            {review.changes.map(([code, draft]) => {
-              const changes = changedFields(draft);
-              return <tbody key={code}>{changes.map((change, index) => <tr key={change.label}>
-                {index === 0 && <th scope="rowgroup" rowSpan={changes.length}><span className="code">{code}</span><small>{displayName(draft.before)}</small></th>}
-                <td className="roster-review-field">{change.label}</td><td className="roster-review-before">{change.before}</td>
-                <td className="roster-review-after"><span className="roster-review-new">{change.after}</span></td>
-              </tr>)}</tbody>;
-            })}
-          </table></div>
-        </div>
-        <label className="field"><span>รหัสผ่านผู้อำนวยการ</span><FreshSecretInput className="input" value={password}
-          onChange={(event) => setPassword(event.target.value)} aria-label="รหัสผ่านผู้อำนวยการ" /></label>
-      </>}
-    </ConfirmDialog>
-  </div>;
+  return (
+    <>
+      <PageHeader
+        eyebrow={`${card.name} · ${stageLabels[card.runtimeStage]}`}
+        title="ผู้เล่น"
+        description={!canManage
+          ? "ดูรายชื่อผู้เล่นที่ผู้อำนวยการจัดเตรียมไว้เท่านั้น"
+          : registrationOpen
+            ? "เพิ่มผู้เล่นให้ครบก่อนจบการลงทะเบียน รหัสนักกีฬาจะสร้างโดยระบบอัตโนมัติ"
+            : "รายชื่อถูกล็อกแล้ว ผลการแข่งขันเรียงตาม Win Point และ Total Difference"}
+        actions={canManage
+          ? registrationOpen
+            ? <Button variant="success" disabled={busy || card.players.length < 2} onClick={finish}>จบการลงทะเบียน {navPending ? <LoaderCircle className="loading-spinner" size={16} /> : <ArrowRight size={16} />}</Button>
+            : <>{canOpenScreening(card) && <PairingToolButtons card={card} modes={["screen"]} />}<ReopenRegistration card={card} /><Link prefetch={false} href={`/cards/${id}/tables`}><Button>ไปขั้นตอนปัจจุบัน <ArrowRight size={16} /></Button></Link></>
+          : undefined}
+      />
+
+      {canEditRegistration && (
+        <Panel title="เพิ่มผู้เล่น" description={`รหัสถัดไปโดยประมาณ ${nextCode} · ระบบจะยืนยันรหัสจริงให้อัตโนมัติเมื่อบันทึก`}>
+          <form className="panel-padding form-grid" onSubmit={handleSubmit(onAdd)}>
+            <div className="form-field"><label className="form-label" htmlFor="firstName">ชื่อ <span className="required">*</span></label><input className="input" id="firstName" autoComplete="off" disabled={busy} {...register("firstName")} />{errors.firstName && <p className="form-error">{errors.firstName.message}</p>}</div>
+            <div className="form-field"><label className="form-label" htmlFor="lastName">นามสกุล <span className="required">*</span></label><input className="input" id="lastName" autoComplete="off" disabled={busy} {...register("lastName")} />{errors.lastName && <p className="form-error">{errors.lastName.message}</p>}</div>
+            <div className="form-field">
+              <label className="form-label" htmlFor="school">โรงเรียน/สถาบัน <span className="required">*</span></label>
+              <Controller name="school" control={control} render={({ field }) => <InstitutionCombobox id="school" value={field.value} onChange={field.onChange} options={schools} disabled={busy} aria-describedby={errors.school ? "school-error" : undefined} />} />
+              {errors.school && <p className="form-error" id="school-error">{errors.school.message}</p>}
+            </div>
+            <div className="form-field" style={{ justifyContent: "flex-end" }}><Button type="submit" disabled={busy}>{pending === "add" ? <LoaderCircle className="loading-spinner" size={16} /> : <Plus size={16} />}{pending === "add" ? "กำลังเพิ่ม…" : "เพิ่มผู้เล่น"}</Button></div>
+          </form>
+        </Panel>
+      )}
+
+      {canEditRegistration && <ExcelPlayerImport onImport={(players) => importPlayers(id, players)} />}
+
+      {canManage && pending && <div className="operation-loading" role="status"><LoaderCircle className="loading-spinner" size={17} /><span>{pending === "add" ? "กำลังเพิ่มผู้เล่นและสร้างรหัส…" : pending === "update" ? "กำลังบันทึกข้อมูลและ History Log…" : "กำลังลบ จัดรหัสใหม่ และบันทึก History Log…"}</span></div>}
+      {canManage && operationError && <div className="notice notice--danger" role="alert"><p><strong>ทำรายการไม่สำเร็จ</strong><span>{operationError}</span></p></div>}
+      {!canManage && <div className="notice notice--info"><LockKeyhole size={18} /><p><strong>เจ้าหน้าที่กรอกผลดูรายชื่อได้อย่างเดียว</strong><span>การเพิ่ม นำเข้า แก้ไข ลบ และจบการลงทะเบียนเป็นสิทธิ์ของผู้อำนวยการ</span></p></div>}
+      {directorEdit && <div className="notice notice--info"><Pencil size={18} /><p><strong>ผู้อำนวยการแก้ข้อมูลส่วนตัวได้ตลอดเวลา</strong><span>แก้ชื่อ–นามสกุล และโรงเรียน/สถาบันได้ทุกขั้นตอน · การเพิ่ม/ลบผู้เล่นทำได้เฉพาะช่วงลงทะเบียน</span></p></div>}
+
+      {directorEdit && <PlayerTermination card={card} />}
+
+      {publishedSnapshots.length > 0 && (
+        <Panel title="Ranking หลังจบแต่ละเกม" description="เลือกเกมเพื่อดูอันดับสะสม ณ เวลาที่เกมนั้น Publish โดยไม่ปะปนกับเกมถัดไป">
+          <div className="panel-padding archive-game-flow"><GameFlow card={rankingCard} selectedGame={selectedRankingGame} onSelect={setRankingGame} mode="ranking" /></div>
+          <div className="archive-rule-summary"><strong>อันดับหลังจบเกม {selectedRankingGame}</strong><span>เรียงตาม Win Point แล้ว Total Difference</span></div>
+        </Panel>
+      )}
+
+      {showEditableTable ? (
+        <>
+          <section className="player-filter-bar" style={{ gridTemplateColumns: "minmax(240px, 1fr) auto" }} aria-label="ค้นหาผู้เล่น">
+            <div className="compact-field"><label htmlFor="player-search">ค้นหารหัส ชื่อ หรือโรงเรียน</label><input id="player-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="เช่น 42, P042 หรือชื่อโรงเรียน" /></div>
+            <Button className="filter-reset" variant="secondary" size="sm" onClick={() => setQuery("")}><FilterX size={14} />ล้าง</Button>
+          </section>
+          <div className="dense-table-meta"><strong>{filtered.length.toLocaleString("th-TH")}</strong> จาก {card.players.length.toLocaleString("th-TH")} คน · {registrationOpen ? "รายชื่อก่อนเริ่มการแข่งขัน" : "ผู้อำนวยการแก้ข้อมูลส่วนตัวได้"}</div>
+          {/* Stat columns hide during registration — every value is still zero and only adds noise. */}
+          {filtered.length === 0 ? <div className="panel"><EmptyState icon={<Users size={24} />} title="ไม่พบผู้เล่น" description={registrationOpen ? "เพิ่มผู้เล่นคนแรกจากฟอร์มด้านบน" : "ลองล้างคำค้นหา"} /></div> : (
+            <div className="dense-table-wrap player-review-table"><table className="data-table dense-player-table" aria-label="ตรวจทานรายชื่อนักกีฬาที่นำเข้า"><thead><tr><th scope="col" className="numeric">ที่นั่ง</th><th scope="col">รหัส</th><th scope="col">ชื่อ-นามสกุล</th><th scope="col">โรงเรียน/สถาบัน</th>{!registrationOpen && <><th scope="col" className="numeric">คะแนนสะสม</th><th scope="col" className="numeric">ชนะ</th><th scope="col" className="numeric">เสมอ</th><th scope="col" className="numeric">แพ้</th><th scope="col" className="numeric">ผลต่างสะสม</th></>}<th scope="col">จัดการ</th></tr></thead><tbody>{filtered.map((player) => {
+              const editing = editingId === player.id;
+              return <tr key={player.id} className={editing ? "player-row--editing" : undefined}>
+                <td className="numeric rank-cell">{rankIndex.get(player.id)}</td>
+                <td className="mono">{player.id}</td>
+                <td className="cell-primary">{editing ? <div className="inline-name-fields"><input className="input" aria-label={`ชื่อ ${player.id}`} value={editDraft.firstName} disabled={busy} onChange={(event) => setEditDraft((draft) => ({ ...draft, firstName: event.target.value }))} /><input className="input" aria-label={`นามสกุล ${player.id}`} value={editDraft.lastName} disabled={busy} onChange={(event) => setEditDraft((draft) => ({ ...draft, lastName: event.target.value }))} />{rowError && <span className="form-error">{rowError}</span>}</div> : `${player.firstName} ${player.lastName}`}</td>
+                <td>{editing ? <InstitutionCombobox id={`school-${player.id}`} value={editDraft.school} onChange={(school) => setEditDraft((draft) => ({ ...draft, school }))} options={schools} disabled={busy} /> : player.school}</td>
+                {!registrationOpen && <><td className="numeric"><strong>{player.winPoints}</strong></td><td className="numeric">{player.wins}</td><td className="numeric">{player.draws}</td><td className="numeric">{player.losses}</td><td className="numeric">{player.diff}</td></>}
+                <td><div className="row-actions">{editing ? <><Button aria-label={`บันทึก ${player.id}`} size="sm" disabled={busy} onClick={() => requestUpdate(player)}><Save size={14} />ยืนยันแก้ไข</Button><Button aria-label={`ยกเลิกแก้ไข ${player.id}`} variant="secondary" size="sm" disabled={busy} onClick={() => { setEditingId(null); setRowError(""); }}><X size={14} /></Button></> : <><Button aria-label={`แก้ไข ${player.id}`} variant="secondary" size="sm" disabled={busy} onClick={() => startEdit(player)}><Pencil size={14} />แก้ไข</Button>{registrationOpen && <Button aria-label={`ลบ ${player.id}`} variant="danger" size="sm" disabled={busy} onClick={() => { setOperationError(""); setConfirmation({ kind: "delete", player }); }}><Trash2 size={14} /></Button>}</>}</div></td>
+              </tr>;
+            })}</tbody></table></div>
+          )}
+        </>
+      ) : ranked.length === 0 ? (
+        <div className="panel"><EmptyState icon={<Users size={24} />} title="ยังไม่มีผู้เล่น" description="รายชื่อจะปรากฏหลังผู้อำนวยการเพิ่มผู้เล่น" /></div>
+      ) : (
+        <DataGrid
+          ariaLabel="รายชื่อนักกีฬา"
+          columns={registrationOpen ? rankingColumns.filter((column) => !["wp", "diff", "wdl"].includes(column.key)) : rankingColumns}
+          rows={ranked.map((player, index) => ({ player, rank: index + 1 }))}
+          getRowKey={(row) => row.player.id}
+          storageKey={`${id}:players:ranking-v3`}
+          resetKey={String(selectedRankingGame)}
+          tableClassName="entry-grid--ranking"
+          emptyText="ไม่พบผู้เล่นตามตัวกรอง"
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmation !== null}
+        title={confirmation?.kind === "delete" ? `ยืนยันลบ ${confirmation.player.id}?` : `ยืนยันแก้ไข ${confirmation?.player.id}?`}
+        description={confirmationDescription}
+        confirmLabel={confirmation?.kind === "delete" ? "ลบและจัดรหัสใหม่" : "บันทึกการแก้ไข"}
+        danger={confirmation?.kind === "delete"}
+        busy={pending === "update" || pending === "delete"}
+        error={confirmation && operationError ? operationError : undefined}
+        onCancel={() => { if (!pending) { setConfirmation(null); setOperationError(""); } }}
+        onConfirm={() => void confirmMutation()}
+      />
+    </>
+  );
 }

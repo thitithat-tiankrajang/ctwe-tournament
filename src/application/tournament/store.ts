@@ -6,7 +6,6 @@ import { publicApiUrl } from "@/infrastructure/http/public-api";
 import { fetchSnapshotBundle } from "@/infrastructure/http/snapshot-api";
 import { hasStaffAccess } from "@/domain/tournament/roles";
 import { changedPairingSlots, changedResultPairings } from "./card-reconciliation";
-import { loginFailureMessage } from "./login-error";
 
 export interface AuthState {
   authenticated: boolean;
@@ -184,8 +183,8 @@ interface TournamentState {
   createCard: (input: CreateCardInput) => Promise<string>;
   addPlayer: (cardId: string, player: Pick<Player, "firstName" | "lastName" | "school">) => Promise<void>;
   importPlayers: (cardId: string, players: Pick<Player, "firstName" | "lastName" | "school">[]) => Promise<void>;
-  updatePlayer: (cardId: string, playerId: string, player: Pick<Player, "firstName" | "lastName" | "school">, expectedVersion: number) => Promise<number>;
-  removePlayer: (cardId: string, playerId: string, expectedVersion: number) => Promise<void>;
+  updatePlayer: (cardId: string, playerId: string, player: Pick<Player, "firstName" | "lastName" | "school">) => Promise<void>;
+  removePlayer: (cardId: string, playerId: string) => Promise<void>;
   finishRegistration: (cardId: string) => Promise<void>;
   /** Reopen registration before any game-1 result; the password is required once a game-1 pairing exists. */
   reopenRegistration: (cardId: string, password?: string) => Promise<void>;
@@ -195,7 +194,6 @@ interface TournamentState {
   confirmPairingPreview: (cardId: string) => Promise<void>;
   publishNextPairing: (cardId: string) => Promise<void>;
   submitResult: (cardId: string, pairingId: string, scoreOne: number, scoreTwo: number, editExisting?: boolean) => Promise<void>;
-  forceBye: (cardId: string, matchId: string, expectedPlayer: string, score: number, password: string) => Promise<void>;
   overrideResult: (cardId: string, matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
   applyPenalty: (cardId: string, matchId: string, points: number, password: string) => Promise<void>;
   revokePenalty: (cardId: string, matchId: string, password: string) => Promise<void>;
@@ -203,15 +201,13 @@ interface TournamentState {
   reviewResults: (cardId: string) => Promise<void>;
   reopenResults: (cardId: string) => Promise<void>;
   publishResults: (cardId: string) => Promise<void>;
-  terminatePublicationHolds: (cardId: string, playerIds: string[], password: string) => Promise<void>;
   startFinal: (cardId: string) => Promise<void>;
-  finishWithRegularResults: (cardId: string) => Promise<void>;
   submitFinalResult: (cardId: string, slot: number, gameIndex: number, scoreOne: number, scoreTwo: number, password?: string) => Promise<void>;
   setFinalWinner: (cardId: string, slot: number, winnerId: string, winnerWins: number, winnerLosses: number, totalDiff: number, password?: string) => Promise<void>;
   publishFinal: (cardId: string) => Promise<void>;
   undoPairing: (cardId: string, password: string) => Promise<void>;
   unpairCurrentPairing: (cardId: string, password: string) => Promise<void>;
-  terminatePlayers: (cardId: string, playerIds: string[], password: string, fromGame?: number) => Promise<void>;
+  terminatePlayers: (cardId: string, playerIds: string[], password: string) => Promise<void>;
   /**
    * Verify the director's password and open the pairing tool, returning the current pool.
    *
@@ -647,10 +643,9 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
   const mutateCard = async (path: string, cardId: string, init: RequestInit = {}) => {
     const card = get().cards.find((item) => item.id === cardId);
     const headers = new Headers(init.headers);
-    if (card && !headers.has("If-Match")) headers.set("If-Match", `\"${card.version}\"`);
+    if (card) headers.set("If-Match", `\"${card.version}\"`);
     const updated = await request<TournamentCard>(path, { ...init, headers });
     replaceCard(updated);
-    return updated;
   };
 
   const applyResultPatch = (cardId: string, version: number, changedPairings: Pairing[]) => {
@@ -1049,7 +1044,7 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         credentials: "same-origin",
         cache: "no-store",
       });
-      if (!response.ok) throw new Error(loginFailureMessage(response.status, response.headers.get("Retry-After")));
+      if (!response.ok) throw new Error(response.status === 401 ? "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" : `เข้าสู่ระบบไม่สำเร็จ (${response.status})`);
       await get().refreshAuth();
       if (!get().auth.authenticated) throw new Error("สร้าง session เจ้าหน้าที่ไม่สำเร็จ");
       await get().load();
@@ -1083,19 +1078,14 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async importPlayers(cardId, players) {
       await mutateCard(`/api/cards/${cardId}/players/bulk`, cardId, { method: "POST", body: JSON.stringify({ players }) });
     },
-    async updatePlayer(cardId, playerId, player, expectedVersion) {
-      const updated = await mutateCard(`/api/cards/${cardId}/players/${encodeURIComponent(playerId)}`, cardId, {
+    async updatePlayer(cardId, playerId, player) {
+      await mutateCard(`/api/cards/${cardId}/players/${encodeURIComponent(playerId)}`, cardId, {
         method: "PUT",
-        headers: { "If-Match": `"${expectedVersion}"` },
         body: JSON.stringify(player),
       });
-      return updated.version;
     },
-    async removePlayer(cardId, playerId, expectedVersion) {
-      await mutateCard(`/api/cards/${cardId}/players/${encodeURIComponent(playerId)}`, cardId, {
-        method: "DELETE",
-        headers: { "If-Match": `"${expectedVersion}"` },
-      });
+    async removePlayer(cardId, playerId) {
+      await mutateCard(`/api/cards/${cardId}/players/${encodeURIComponent(playerId)}`, cardId, { method: "DELETE" });
     },
     async finishRegistration(cardId) {
       await mutateCard(`/api/cards/${cardId}/registration/finish`, cardId, { method: "POST" });
@@ -1139,11 +1129,6 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
       const patched = applyResultPatch(cardId, patch.version, patch.changedPairings);
       if (!patched) await get().syncCard(cardId); // safety net: pull the full card if we couldn't patch in place
     },
-    async forceBye(cardId, matchId, expectedPlayer, score, password) {
-      await mutateCard(`/api/cards/${cardId}/matches/${matchId}/force-bye`, cardId, {
-        method: "POST", body: JSON.stringify({ expectedPlayer, score, password }),
-      });
-    },
     async overrideResult(cardId, matchId, scoreOne, scoreTwo) {
       await mutateCard(`/api/cards/${cardId}/matches/${matchId}/override`, cardId, {
         method: "PUT",
@@ -1180,15 +1165,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
     async publishResults(cardId) {
       await mutateCard(`/api/cards/${cardId}/results/publish`, cardId, { method: "POST" });
     },
-    async terminatePublicationHolds(cardId, playerIds, password) {
-      await mutateCard(`/api/cards/${cardId}/results/terminate-held`, cardId,
-        { method: "POST", body: JSON.stringify({ playerIds, password }) });
-    },
     async startFinal(cardId) {
       await mutateCard(`/api/cards/${cardId}/final/start`, cardId, { method: "POST" });
-    },
-    async finishWithRegularResults(cardId) {
-      await mutateCard(`/api/cards/${cardId}/final/finish-with-regular-results`, cardId, { method: "POST" });
     },
     async submitFinalResult(cardId, slot, gameIndex, scoreOne, scoreTwo, password) {
       await mutateCard(`/api/cards/${cardId}/final/${slot}/games/${gameIndex}`, cardId, { method: "PUT", body: JSON.stringify({ scoreOne, scoreTwo, ...(password ? { password } : {}) }) });
@@ -1231,8 +1209,8 @@ export const useTournamentStore = create<TournamentState>((set, get) => {
         body: JSON.stringify({ commitKey, password, force, ...changes }),
       });
     },
-    async terminatePlayers(cardId, playerIds, password, fromGame) {
-      await mutateCard(`/api/cards/${cardId}/players/terminate`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password, fromGame }) });
+    async terminatePlayers(cardId, playerIds, password) {
+      await mutateCard(`/api/cards/${cardId}/players/terminate`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password }) });
     },
     async restorePlayers(cardId, playerIds, password, lossPoints, unpair) {
       await mutateCard(`/api/cards/${cardId}/players/restore`, cardId, { method: "POST", body: JSON.stringify({ playerIds, password, lossPoints, unpair }) });

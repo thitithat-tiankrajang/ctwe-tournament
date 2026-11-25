@@ -2,88 +2,141 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Trophy } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { ChevronRight, DoorOpen, LoaderCircle, Plus, Trash2, Trophy } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { selectCardList, useTournamentStore, type CardListRow } from "@/application/tournament/store";
-import { isDirector, isOperator } from "@/domain/tournament/roles";
-import { EmptyState } from "@/ui/components/page";
-import { operatorStageLabels } from "@/ui/components/stage-info";
-
-function cardRoute(card: CardListRow, operator: boolean, director: boolean) {
-  const href = `/cards/${card.id}`;
-  if (!operator || card.status === "CLOSED" || card.status === "FINISHED" || card.runtimeStage === "FINAL_PUBLISHED")
-    return { href, step: "ภาพรวม" };
-  if (card.runtimeStage === "PLAYER_REGISTRATION") return director
-    ? { href: `${href}/players`, step: "ทำต่อ: ผู้เล่น" } : { href, step: "ภาพรวม" };
-  if (card.runtimeStage === "TABLE_PAIRING" || card.runtimeStage === "PAIRING_PREVIEW") return director
-    ? { href: `${href}/tables`, step: "ทำต่อ: โต๊ะแข่งขัน" } : { href, step: "ภาพรวม" };
-  return { href: `${href}/games`, step: "ทำต่อ: ผลการแข่งขัน" };
-}
-
-function cardStatus(card: CardListRow) {
-  if (card.status === "CLOSED") return ["closed", "ปิดการ์ดแล้ว"];
-  if (card.status === "FINISHED" || card.runtimeStage === "FINAL_PUBLISHED") return ["done", "จบการแข่งขันแล้ว"];
-  if (card.runtimeStage.startsWith("FINAL")) return ["final", "รอบชิงชนะเลิศ"];
-  if (card.runtimeStage === "PLAYER_REGISTRATION") return ["idle", "ยังไม่เริ่ม"];
-  return ["live", `เกม ${card.currentGame}/${card.gameCount} · ${operatorStageLabels[card.runtimeStage]}`];
-}
+import { canManageTournament, hasStaffAccess, isAdmin, isDirector, isOperator } from "@/domain/tournament/roles";
+import type { TournamentCard } from "@/domain/tournament/types";
+import { Badge } from "@/ui/components/badge";
+import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
+import { Button } from "@/ui/components/button";
+import { ConfirmDialog } from "@/ui/components/confirm-dialog";
+import { EmptyState, PageHeader } from "@/ui/components/page";
+import { cardStageInfo } from "@/ui/components/stage-info";
 
 export default function CardsPage() {
   const router = useRouter();
+  const { pending: navPending, navigate } = useNavigateWithPending();
   const cards = useTournamentStore((state) => state.cards);
+  // Select the two sources separately — both are stable references — and merge in a memo. Selecting
+  // the merged array inside the store selector would build a new array on every store read and
+  // re-render forever under zustand's Object.is equality.
   const summaries = useTournamentStore((state) => state.summaries);
+  const cardRows = useMemo(() => selectCardList(cards, summaries), [cards, summaries]);
   const auth = useTournamentStore((state) => state.auth);
   const loading = useTournamentStore((state) => state.loading);
   const error = useTournamentStore((state) => state.error);
-  const tournament = useTournamentStore((state) => state.activeTournament);
+  const deleteCard = useTournamentStore((state) => state.deleteCard);
+  const activeTournament = useTournamentStore((state) => state.activeTournament);
+  const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
+  const isStaff = hasStaffAccess(auth);
+  const admin = isAdmin(auth);
   const director = isDirector(auth);
   const operator = isOperator(auth);
-  const groups = useMemo(() => {
-    const rows = selectCardList(cards, summaries).filter((card) => card.tournamentId === tournament?.id)
-      .sort((left, right) => left.name.localeCompare(right.name, "th", { numeric: true })
-        || left.division.localeCompare(right.division, "th", { numeric: true }));
-    const grouped = new Map<string, CardListRow[]>();
-    for (const row of rows) {
-      const group = grouped.get(row.name) ?? [];
-      group.push(row);
-      grouped.set(row.name, group);
-    }
-    return { count: rows.length, grouped };
-  }, [cards, summaries, tournament?.id]);
-  const prefixes = useMemo(() => new Map(cards.flatMap((card) => card.codePrefix ? [[card.id, card.codePrefix]] : [])), [cards]);
+  // Only directors manage cards (create/delete); admins watch, staff/viewers only read.
+  const canManage = canManageTournament(auth);
+  const createHref = director ? "/director" : "/cards/create";
+  const [deleting, setDeleting] = useState<CardListRow | null>(null);
+  const [pending, setPending] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
+  // The card list only exists inside a tournament scope. Every role now enters a tournament
+  // explicitly (staff auto, director/admin pick from "/", viewers via link), so anyone here without
+  // one is sent back to the master landing.
   useEffect(() => {
-    if (!loading && !tournament) router.replace("/");
-  }, [loading, tournament, router]);
+    if (!loading && !activeTournament) router.replace("/");
+  }, [loading, activeTournament, router]);
 
-  return <>
-    <div className="page-head"><div className="ttl">
-      <span className="eyebrow">รายการแข่งขัน</span>
-      <h1>{tournament?.name ?? "รายการแข่งขันทั้งหมด"}</h1>
-      <span className="desc">{groups.count} การ์ด</span>
-    </div></div>
-    {error && <div className="notice notice--warning" role="alert"><p><strong>เชื่อมต่อฐานข้อมูลไม่สำเร็จ</strong><span>{error}</span></p></div>}
-    {loading ? <div className="panel panel-body" role="status">กำลังโหลดข้อมูลการแข่งขัน…</div> : groups.count === 0 ? (
-      <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้"
-        description={director ? "เพิ่มรุ่นการแข่งขันได้ในคอนโซลผู้อำนวยการ" : "รุ่นการแข่งขันจะปรากฏที่นี่เมื่อพร้อม"} />
-    ) : [...groups.grouped].map(([name, group]) => (
-      <section className="panel panel--blue" key={name} id={`sport-${encodeURIComponent(name)}`}>
-        <div className="panel-head"><h2 className="cards-sport-title">{name}</h2><span className="desc">{group.length} รุ่น</span></div>
-        {group.map((card) => {
-          const [status, label] = cardStatus(card);
-          const { href, step } = cardRoute(card, operator, director);
-          const prefix = prefixes.get(card.id);
-          return <div className="crow" key={card.id}>
-            <Link prefetch={false} href={href} className="crow__main">
-              <span className={`strip strip--${status}`} aria-hidden />
-              <span className="crow__name">{card.division}</span>
-              <span className="crow__meta">{prefix && <><span className="code">{prefix}</span> · </>}{card.playerCount} คน</span>
-              <span className="crow__stat">{label}</span>
-              <span className="crow__go">{step}<ArrowRight className="i" size={14} aria-hidden /></span>
-            </Link>
-          </div>;
-        })}
-      </section>
-    ))}
-  </>;
+  // Directors/admins exit a tournament from here (there is no exit button in the sidebar).
+  const exitTournament = () => { setActiveTournament(null); navigate("/"); };
+
+  // Back-office users must enter a tournament first; public viewers see all published cards.
+  const needsTournament = isStaff && !activeTournament;
+  const visibleCards = activeTournament ? cardRows.filter((card) => card.tournamentId === activeTournament.id) : cardRows;
+  const groupedCards = [...visibleCards]
+    .sort((a, b) => a.name.localeCompare(b.name, "th", { numeric: true })
+      || a.division.localeCompare(b.division, "th", { numeric: true }))
+    .reduce<Map<string, CardListRow[]>>((groups, card) => {
+      const group = groups.get(card.name) ?? [];
+      group.push(card);
+      groups.set(card.name, group);
+      return groups;
+    }, new Map());
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setPending(true); setDeleteError("");
+    try { await deleteCard(deleting.id); setDeleting(null); }
+    catch (failure) { setDeleteError(failure instanceof Error ? failure.message : "ลบการ์ดไม่สำเร็จ"); }
+    finally { setPending(false); }
+  };
+  const cardHref = (card: CardListRow) => {
+    // Only operators (director/staff) go straight to the workspace; admins and viewers watch the overview.
+    if (!operator || card.runtimeStage === "FINAL_PUBLISHED") return `/cards/${card.id}`;
+    if (card.runtimeStage === "PLAYER_REGISTRATION") return `/cards/${card.id}/players`;
+    if (["TABLE_PAIRING", "PAIRING_PREVIEW"].includes(card.runtimeStage)) return `/cards/${card.id}/tables`;
+    return `/cards/${card.id}/games`;
+  };
+
+  return (
+    <>
+      <PageHeader
+        className="cards-page-header"
+        eyebrow={activeTournament ? "รายการแข่งขัน" : "Tournament cards"}
+        title={activeTournament ? activeTournament.name : "ติดตามการแข่งขัน"}
+        description={activeTournament ? "รุ่นการแข่งขัน (card) ทั้งหมดของรายการนี้ — จัดการผู้เล่น เกม และผลลัพธ์แยกแต่ละรุ่น" : "หนึ่งการ์ดต่อหนึ่งรุ่นการแข่งขัน จัดการผู้เล่น เกม และผลลัพธ์แยกจากกันอย่างชัดเจน"}
+        actions={activeTournament && (admin || director) ? (
+          <div className="page-actions">
+            <Button variant="secondary" onClick={exitTournament}>{navPending ? <LoaderCircle className="loading-spinner" size={16} /> : <DoorOpen size={16} />}ออกจากรายการแข่งขัน</Button>
+            {director && <Link prefetch={false} href={createHref}><Button><Plus size={17} />สร้างการ์ด</Button></Link>}
+          </div>
+        ) : undefined}
+      />
+      {error && <div className="notice notice--warning"><p><strong>เชื่อมต่อฐานข้อมูลไม่สำเร็จ</strong><span>{error}</span></p></div>}
+      {loading ? <div className="panel panel-padding">กำลังโหลดข้อมูลจากฐานข้อมูล…</div> : needsTournament ? (
+        <EmptyState icon={<DoorOpen size={25} />} title="ยังไม่ได้เข้าสู่รายการแข่งขัน" description="กลับหน้าแรกเพื่อเลือกรายการแข่งขันของคุณ" action={<Link prefetch={false} href="/"><Button><Trophy size={16} />กลับหน้าแรก</Button></Link>} />
+      ) : visibleCards.length === 0 ? (
+        <EmptyState icon={<Trophy size={25} />} title="ยังไม่มีการ์ดในรายการนี้" description={activeTournament ? (director ? "สร้างรุ่นการแข่งขันแรกของรายการนี้ได้เลย" : "ยังไม่มีรุ่นการแข่งขันในรายการนี้") : "ยังไม่มีการแข่งขันที่เผยแพร่"} action={activeTournament && director ? <Link prefetch={false} href={createHref}><Button>สร้างการ์ด</Button></Link> : undefined} />
+      ) : (
+        <div className="card-groups">
+          {[...groupedCards.entries()].map(([name, group]) => (
+            <section className="card-group" key={name}>
+              <h2 className="card-group__title">{name}</h2>
+              <div className="card-group__rows">
+                {group.map((card) => {
+                  const stage = cardStageInfo(card, "staff");
+                  return (
+                    <article className="card-select-row" key={card.id}>
+                      <Link prefetch={false} href={cardHref(card)} className="card-select-row__link">
+                        <span className="card-select-row__name">{card.division}</span>
+                        <span className="card-select-row__stage"><Badge tone={stage.tone}>{stage.label}</Badge></span>
+                        <ChevronRight size={19} aria-hidden />
+                      </Link>
+                      {canManage && (
+                        <Button variant="ghost" size="sm" className="card-select-row__delete" aria-label={`ลบการ์ด ${card.name} ${card.division}`} title="ลบการ์ดและข้อมูลทั้งหมด" onClick={() => { setDeleteError(""); setDeleting(card); }}>
+                          <Trash2 size={15} />
+                        </Button>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={deleting !== null}
+        title={`ลบการ์ด “${deleting?.name}${deleting?.division ? ` ${deleting.division}` : ""}” ?`}
+        description="ระบบจะลบการ์ดนี้และข้อมูลที่เกี่ยวข้องทั้งหมดอย่างถาวร ทั้งผู้เล่น, pairing, ผลการแข่งขัน, อันดับ และบันทึกกิจกรรม (log) ทั้งหมด — ไม่สามารถกู้คืนได้"
+        confirmLabel="ลบถาวร"
+        danger
+        busy={pending}
+        error={deleteError || undefined}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => { if (!pending) { setDeleting(null); setDeleteError(""); } }}
+      />
+    </>
+  );
 }

@@ -53,8 +53,7 @@ public class ScreeningPoolStore {
         String screenedBy,
         Reason reason,
         String note,
-        Origin origin,
-        Integer fromGame
+        Origin origin
     ) {}
 
     private final JdbcTemplate jdbc;
@@ -69,21 +68,17 @@ public class ScreeningPoolStore {
      * @return true if this call created the hold, false if one was already open
      */
     public boolean open(UUID cardId, int playerCode, Reason reason, String note, Origin origin, String actor) {
-        return open(cardId, playerCode, reason, note, origin, actor, null);
-    }
-
-    public boolean open(UUID cardId, int playerCode, Reason reason, String note, Origin origin, String actor, Integer fromGame) {
         return jdbc.update("""
             INSERT INTO screening_pool (card_id, player_code, screened_by, reason, note,
-                                        origin_game, origin_table, origin_side, origin_opponent, excluded_from_game)
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                                        origin_game, origin_table, origin_side, origin_opponent)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE NOT EXISTS (
                 SELECT 1 FROM screening_pool
                 WHERE card_id = ? AND player_code = ? AND resolved_at IS NULL
             )
             """,
             cardId, playerCode, actor, reason.name(), blankToNull(note),
-            origin.game(), origin.table(), origin.side(), origin.opponent(), fromGame,
+            origin.game(), origin.table(), origin.side(), origin.opponent(),
             cardId, playerCode) > 0;
     }
 
@@ -93,15 +88,11 @@ public class ScreeningPoolStore {
      * @return true if a hold was closed, false if the player was not held
      */
     public boolean close(UUID cardId, int playerCode, Resolution resolution, String actor) {
-        return close(cardId, playerCode, resolution, actor, null);
-    }
-
-    public boolean close(UUID cardId, int playerCode, Resolution resolution, String actor, Integer fromGame) {
         return jdbc.update("""
             UPDATE screening_pool
-               SET resolved_at = now(), resolved_by = ?, resolution = ?, returned_from_game = ?
+               SET resolved_at = now(), resolved_by = ?, resolution = ?
              WHERE card_id = ? AND player_code = ? AND resolved_at IS NULL
-            """, actor, resolution.name(), fromGame, cardId, playerCode) > 0;
+            """, actor, resolution.name(), cardId, playerCode) > 0;
     }
 
     /** Close every open hold on a card. Used when a card's runtime data is reset. */
@@ -117,7 +108,7 @@ public class ScreeningPoolStore {
     public List<Hold> listOpen(UUID cardId) {
         return List.copyOf(jdbc.query("""
             SELECT player_code, screened_at, screened_by, reason, note,
-                   origin_game, origin_table, origin_side, origin_opponent, origin_stale, excluded_from_game
+                   origin_game, origin_table, origin_side, origin_opponent, origin_stale
               FROM screening_pool
              WHERE card_id = ? AND resolved_at IS NULL
              ORDER BY screened_at, player_code
@@ -181,8 +172,8 @@ public class ScreeningPoolStore {
                 nullableInt(rs, "origin_table"),
                 nullableInt(rs, "origin_side"),
                 nullableInt(rs, "origin_opponent"),
-                rs.getBoolean("origin_stale")
-            ), nullableInt(rs, "excluded_from_game"));
+                rs.getBoolean("origin_stale"))
+        );
     }
 
     private static Integer nullableInt(ResultSet rs, String column) throws SQLException {

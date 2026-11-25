@@ -34,8 +34,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import com.ctwe.tournament.application.WebPushService;
 
 /**
  * P4 SSE PROOF GATE — end to end, with two genuinely independent authenticated sessions.
@@ -55,9 +53,6 @@ import com.ctwe.tournament.application.WebPushService;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class SseDeliveryProofDatabaseTest {
-
-    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
-    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {

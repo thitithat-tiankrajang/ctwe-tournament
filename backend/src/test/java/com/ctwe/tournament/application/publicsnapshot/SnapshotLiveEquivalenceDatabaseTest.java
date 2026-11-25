@@ -40,8 +40,6 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import com.ctwe.tournament.application.WebPushService;
 
 /**
  * PHASE C against a real PostgreSQL — the same equivalence assertion as
@@ -68,9 +66,6 @@ import com.ctwe.tournament.application.WebPushService;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class SnapshotLiveEquivalenceDatabaseTest {
-
-    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
-    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {

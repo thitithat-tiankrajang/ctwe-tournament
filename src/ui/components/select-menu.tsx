@@ -1,13 +1,11 @@
 "use client";
 
-import { Check, ChevronDown, Gamepad2, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, Gamepad2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 export interface SelectMenuOption {
   value: string;
   label: string;
-  detail?: string;
-  disabled?: boolean;
 }
 
 export function SelectMenu({
@@ -17,9 +15,6 @@ export function SelectMenu({
   onOpenChange,
   ariaLabel,
   className = "",
-  icon,
-  disclosureIcon: DisclosureIcon = ChevronDown,
-  appearance,
 }: {
   value: string;
   options: SelectMenuOption[];
@@ -27,9 +22,6 @@ export function SelectMenu({
   onOpenChange?: (open: boolean) => void;
   ariaLabel: string;
   className?: string;
-  icon?: LucideIcon;
-  disclosureIcon?: LucideIcon;
-  appearance?: "prototype";
 }) {
   const listId = `${useId()}-listbox`;
   const rootRef = useRef<HTMLDivElement>(null);
@@ -40,9 +32,6 @@ export function SelectMenu({
   onOpenChangeRef.current = onOpenChange;
   const [activeIndex, setActiveIndex] = useState(selectedIndex);
   const selected = options[selectedIndex];
-  const prototype = appearance === "prototype";
-  // The accepted design shows a plain value + chevron; an icon appears only when a caller asks.
-  const Icon = icon ?? (prototype ? null : Gamepad2);
 
   useEffect(() => {
     onOpenChangeRef.current?.(open);
@@ -69,7 +58,7 @@ export function SelectMenu({
 
   const choose = (index: number) => {
     const option = options[index];
-    if (!option || option.disabled) return;
+    if (!option) return;
     onChange(option.value);
     setActiveIndex(index);
     setOpen(false);
@@ -108,7 +97,7 @@ export function SelectMenu({
     >
       <button
         type="button"
-        className={`select-menu__trigger${prototype ? " sm" : ""}`}
+        className="select-menu__trigger"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -119,13 +108,13 @@ export function SelectMenu({
           setOpen((current) => !current);
         }}
       >
-        {Icon && <Icon size={15} className={prototype ? "i" : undefined} aria-hidden />}
-        <span className={prototype ? "sm__v" : undefined}>{selected?.label ?? "เลือกเกม"}</span>
-        <DisclosureIcon className={prototype ? "i sm__chev" : "select-menu__chevron"} size={15} aria-hidden />
+        <Gamepad2 size={15} aria-hidden />
+        <span>{selected?.label ?? "เลือกเกม"}</span>
+        <ChevronDown className="select-menu__chevron" size={15} aria-hidden />
       </button>
 
       {open && (
-        <div className={`select-menu__list${prototype ? " lb prototype-select-list" : ""}`} id={listId} role="listbox" aria-label={ariaLabel}>
+        <div className="select-menu__list" id={listId} role="listbox" aria-label={ariaLabel}>
           {options.map((option, index) => (
             <button
               ref={(element) => { optionRefs.current[index] = element; }}
@@ -133,15 +122,13 @@ export function SelectMenu({
               type="button"
               role="option"
               aria-selected={option.value === value}
-              aria-disabled={option.disabled || undefined}
-              className={`select-menu__option${prototype ? " lb__opt" : ""}${index === activeIndex ? " select-menu__option--active" : ""}`}
+              className={`select-menu__option${index === activeIndex ? " select-menu__option--active" : ""}`}
               tabIndex={index === activeIndex ? 0 : -1}
               onPointerMove={() => setActiveIndex(index)}
               onClick={() => choose(index)}
             >
-              <span className={prototype ? "lb__l" : undefined}>{option.label}</span>
-              {option.detail && <small className={prototype ? "lb__d" : undefined}>{option.detail}</small>}
-              {option.value === value && <Check size={14} className={prototype ? "i lb__ck" : undefined} aria-hidden />}
+              <span>{option.label}</span>
+              {option.value === value && <Check size={14} aria-hidden />}
             </button>
           ))}
         </div>

@@ -1,14 +1,13 @@
 "use client";
 
-import { ChevronDown, LockKeyhole, Search, Undo2, X, UserMinus, Users } from "lucide-react";
+import { RotateCcw, UserMinus, UserPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
-import type { Player, TournamentCard } from "@/domain/tournament/types";
+import type { TournamentCard } from "@/domain/tournament/types";
+import { Button } from "@/ui/components/button";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
-import { rosterBlockScopes } from "@/domain/tournament/flow";
-import { RosterBlockScope } from "./roster-block-scope";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
-
+import { Panel } from "@/ui/components/page";
 
 /**
  * Director-only terminate / restore of players in a running card (per card, password-confirmed).
@@ -25,18 +24,11 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
 
   const [mode, setMode] = useState<"terminate" | "restore" | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [query, setQuery] = useState("");
   const [password, setPassword] = useState("");
   const [lossPoints, setLossPoints] = useState("100");
   const [unpair, setUnpair] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [review, setReview] = useState(false);
-  const [tab, setTab] = useState<"list" | "picked">("list");
-
-  const [chosenScope, setScope] = useState<number>();
-  const scopes = rosterBlockScopes(card);
-  const scope = scopes.find((option) => option.game === chosenScope) ?? scopes.at(-1);
 
   // Case detection mirrors the backend so the dialog explains what will actually happen.
   const preview = card.snapshots.find((s) => !s.confirmedAt);
@@ -44,44 +36,12 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
   const anyResultInBlock = Boolean(preview?.pairings.some((p) => Boolean(p.resultType)));
   const restoreCase: "A" | "B" | "C" = !pairingExists ? "A" : !anyResultInBlock ? "B" : "C";
 
-  const assignments = new Map<string, { game: number; table: number; recorded: boolean }[]>();
-  for (const pair of preview?.pairings ?? []) {
-    const game = pair.gameNumber ?? card.currentGame;
-    if (mode === "terminate" && scope && game < scope.game) continue;
-    for (const id of [pair.playerOneId, pair.playerTwoId]) {
-      if (!id) continue;
-      const rows = assignments.get(id) ?? [];
-      rows.push({ game, table: pair.tableNumber, recorded: Boolean(pair.resultType) });
-      assignments.set(id, rows);
-    }
-  }
-  const canPick = (id: string) => mode !== "terminate"
-    || !assignments.get(id)?.some(pair => scope ? pair.recorded : !pair.recorded);
-  const candidates = mode === "terminate" ? active : terminated;
-  const heldIds = new Set((card.screeningPool ?? []).map(hold => hold.player));
-  const heldPlayers = mode === "terminate" ? active.filter(player => heldIds.has(player.id)) : [];
-  const [eligibleOnly, setEligibleOnly] = useState(false);
-  const matchesSearch = (player: Player) => {
-    if (eligibleOnly && !canPick(player.id)) return false;
-    const term = query.trim();
-    const pairQuery = /^คู่(?:ที่)?\s*(\d+)$/.exec(term);
-    if (pairQuery) return Boolean(assignments.get(player.id)?.some(pair => pair.table === Number(pairQuery[1])));
-    if (/^[A-Za-z]*\d+$/.test(term)) {
-      const amount = Number(term.replace(/^[A-Za-z]+/,""));
-      const prefix = term.match(/^[A-Za-z]+/)?.[0].toUpperCase();
-      return Number(player.id.replace(/^[A-Za-z]+/,"")) === amount && (!prefix || player.id.startsWith(prefix));
-    }
-    return `${player.id} ${player.firstName} ${player.lastName} ${player.school}`.toLowerCase().includes(term.toLowerCase());
-  };
-  const matches = candidates.filter(player => (mode !== "terminate" || !heldIds.has(player.id)) && matchesSearch(player));
   const open = (next: "terminate" | "restore") => {
-    setQuery(""); setReview(false); setTab("list"); setScope(undefined);
     setMode(next); setSelected(new Set()); setPassword(""); setLossPoints("100"); setUnpair(false); setError("");
   };
   const close = () => {
     if (busy) return;
     setPassword("");
-    setReview(false);
     setMode(null);
   };
   const toggle = (id: string) => setSelected((prev) => {
@@ -97,14 +57,13 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
     setBusy(true); setError("");
     try {
       if (mode === "terminate") {
-        await terminatePlayers(card.id, ids, password, scope?.game);
+        await terminatePlayers(card.id, ids, password);
       } else {
         const points = Number(lossPoints);
         if (!Number.isInteger(points) || points < 0) { setError("แต้มปรับแพ้ต้องเป็นจำนวนเต็ม ≥ 0"); setBusy(false); return; }
         await restorePlayers(card.id, ids, password, points, restoreCase === "B" && unpair);
       }
       setPassword("");
-      setReview(false);
       setMode(null);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "ทำรายการไม่สำเร็จ");
@@ -113,108 +72,88 @@ export function PlayerTermination({ card }: { card: TournamentCard }) {
     }
   };
 
-  const title = mode === "terminate" ? "ถอนผู้เล่น" : "ดึงผู้เล่นกลับ";
-  const chosen = candidates.filter((player) => selected.has(player.id));
-  const startReview = () => {
-    if (!chosen.length) { setError("เลือกผู้เล่นอย่างน้อย 1 คน"); return; }
-    if (mode === "restore" && (!lossPoints.trim() || !Number.isInteger(Number(lossPoints)) || Number(lossPoints) < 0)) {
-      setError("แต้มปรับแพ้ต้องเป็นจำนวนเต็มตั้งแต่ 0"); return;
-    }
-    if (chosen.some((player) => !canPick(player.id))) { setError(scope ? "มีผลในเกมที่จะถอนแล้ว กรุณาเลือกเกมถัดไป" : "ผู้เล่นที่เลือกมีคู่ที่ยังรอผล"); return; }
-    setError("");
-    setReview(true);
-  };
-
-  const pickRow = (player: Player) => {
-    const eligible = canPick(player.id);
-    const positions = assignments.get(player.id)?.map(pair => scope ? `เกม ${pair.game} คู่ ${pair.table}` : `คู่ ${pair.table}`).join(" · ");
-    return <label key={player.id} className={`roster-pick-row${eligible ? "" : " is-blocked"}`}>
-      <input type="checkbox" checked={selected.has(player.id)} disabled={!eligible} onChange={() => toggle(player.id)} />
-      <span className="code">{player.id}</span><span className="roster-pick-person"><strong>{player.firstName} {player.lastName}</strong><small>{player.school}</small></span>
-      {(positions || !eligible) && <span className="roster-pick-status">{positions}{!eligible && <small>{scope ? "บันทึกผลแล้ว" : "รอผล"}</small>}</span>}
-    </label>;
-  };
-
-  return <>
-    <button type="button" className="btn btn--danger" disabled={!active.length} onClick={() => open("terminate")}>
-      <UserMinus className="i" size={15} />ถอนผู้เล่น<LockKeyhole className="i" size={12} /></button>
-    <button type="button" className="btn btn--restore" disabled={!terminated.length} onClick={() => open("restore")}>
-      <Undo2 className="i" size={15} />ดึงผู้เล่นกลับ<LockKeyhole className="i" size={12} /></button>
-
-    <ConfirmDialog appearance="prototype" open={mode !== null && !review} title={title} eyebrow=""
-      confirmLabel="ตรวจรายการ" confirmDisabled={chosen.length === 0} danger={mode === "terminate"} error={error || undefined}
-      className="dialog--roster-tool dialog--roster-pick" onConfirm={startReview} onCancel={close}>
-      {mode === "terminate" && <>
-        <RosterBlockScope scopes={scopes} game={scope?.game} action="ถอนผู้เล่น" onChange={setScope} />
-        <p className="roster-effect">{scope?.detail ?? "ผู้เล่นที่เลือกจะไม่ถูกจับคู่ในรอบถัดไป ประวัติการแข่งขันยังอยู่"}</p>
-      </>}
-      <div className="roster-tool-tabs" role="group" aria-label="มุมมองรายชื่อ">
-        <button type="button" aria-pressed={tab === "list"} onClick={() => setTab("list")}>รายชื่อ</button>
-        <button type="button" aria-pressed={tab === "picked"} onClick={() => setTab("picked")}>ที่เลือก ({chosen.length})</button>
+  return (
+    <Panel
+      title="ถอน / ดึงผู้เล่นกลับ (Terminate / Restore)"
+      description="ผู้อำนวยการถอนผู้เล่นออกจากการแข่งขันเป็นหมู่ได้ และดึงกลับภายหลัง โดยเกมที่ผู้เล่นหายไปจะถูกปรับแพ้ตามแต้มที่กำหนด · ต้องยืนยันด้วยรหัสผ่าน"
+    >
+      <div className="panel-padding termination-actions">
+        <Button variant="secondary" size="sm" disabled={active.length === 0} onClick={() => open("terminate")}>
+          <UserMinus size={15} />ถอนผู้เล่น (Terminate)
+        </Button>
+        <Button variant="secondary" size="sm" disabled={terminated.length === 0} onClick={() => open("restore")}>
+          <UserPlus size={15} />ดึงผู้เล่นกลับ ({terminated.length})
+        </Button>
       </div>
-      <div className="roster-picker" data-tab={tab}>
-        <section className="roster-pick-list">
-          <div className="roster-pick-filters"><div className="roster-search"><Search className="i" size={16} />
-            <input className="input" type="search" aria-label="ค้นหาผู้เล่น" placeholder="รหัส ชื่อ โรงเรียน หรือเลขคู่" autoComplete="off" value={query}
-              onChange={(event) => setQuery(event.target.value)} /></div>
-            {mode === "terminate" && <label className="roster-available"><input type="checkbox" checked={eligibleOnly}
-              onChange={(event) => setEligibleOnly(event.target.checked)} /> เฉพาะที่เลือกได้</label>}</div>
-          <header className="roster-pick-header"><span role="status">พบ {matches.length} คน</span>
-            <button type="button" className="btn btn--sm btn--ghost" disabled={!matches.some((player) => canPick(player.id))}
-              onClick={() => setSelected((previous) => new Set([...previous,...matches.filter((player) => canPick(player.id)).map((player) => player.id)]))}>เลือกผลค้นหาทั้งหมด</button>
-          </header>
-          {mode === "terminate" && <details className="msw-pool roster-withdraw-pool" open={heldPlayers.length > 0}>
-            <summary>ถังคัดชั่วคราว <span className="meta">{heldPlayers.length} คน</span><ChevronDown className="i" size={15} /></summary>
-            <div className="roster-pick-header"><span>พบ {heldPlayers.filter(matchesSearch).length} คน</span>
-              <button type="button" className="btn btn--sm btn--ghost" disabled={!heldPlayers.some(player => canPick(player.id) && !selected.has(player.id))}
-                onClick={() => setSelected(previous => new Set([...previous, ...heldPlayers.filter(player => canPick(player.id)).map(player => player.id)]))}>เลือกทั้งหมดในถัง</button>
-            </div>
-            <div className="roster-picker-scroll">{heldPlayers.filter(matchesSearch).map(pickRow)}
-              {!heldPlayers.filter(matchesSearch).length && <p className="roster-picker-empty">{heldPlayers.length ? "ไม่พบผู้เล่นในถังตามตัวกรอง" : "ไม่มีผู้เล่นในถังคัดชั่วคราว"}</p>}
-            </div>
-          </details>}
-          <div className="roster-picker-scroll">
-            {matches.map(pickRow)}
-            {!matches.length && <p className="roster-picker-empty">ไม่พบผู้เล่นตามเงื่อนไข</p>}
+
+      {terminated.length > 0 && (
+        <div className="panel-padding termination-summary">
+          <p>ผู้เล่นที่ถูกถอนออก <strong>{terminated.length} คน</strong> · เก็บประวัติเดิมไว้และดึงกลับได้</p>
+          <div className="termination-chips">
+            {terminated.map((p) => <span key={p.id}>{p.id} · {p.firstName} {p.lastName}</span>)}
           </div>
-        </section>
-        <section className="roster-pick-selected">
-          <header className="roster-pick-header"><strong>เลือกแล้ว {chosen.length} คน</strong>
-            <button type="button" className="btn btn--sm btn--ghost" disabled={!chosen.length} onClick={() => setSelected(new Set())}>ล้าง</button></header>
-          <div className="roster-picker-scroll">{chosen.map((player) => <div className="roster-picked-row" key={player.id}>
-            <b className="code">{player.id}</b><span>{player.firstName} {player.lastName}</span>
-            <button type="button" className="roster-remove" aria-label={`เอา ${player.id} ออกจากรายการ`} onClick={() => toggle(player.id)}><X className="i" size={15} /></button>
-          </div>)}
-          {!chosen.length && <div className="roster-picked-empty"><span><Users className="i" size={18} /></span>
-            <strong>ยังไม่ได้เลือกผู้เล่น</strong><small>เลือกจากรายชื่อเพื่อเพิ่มมาที่นี่</small></div>}</div>
-        </section>
-      </div>
-      {mode === "restore" && <div className="roster-tool-options">
-        {restoreCase === "A" && <p className="meta">ผู้เล่นจะกลับเข้าเกม {card.currentGame} และถูกปรับแพ้ในเกมที่ขาด</p>}
-        {restoreCase === "B" && <fieldset className="dir-filter-status"><legend>คู่เกม {card.currentGame} ถูกสร้างแล้ว</legend>
-          <label className="dir-filter-option"><input type="radio" name="unpair" checked={unpair} onChange={() => setUnpair(true)} />ยกเลิกการจับคู่เพื่อนำผู้เล่นเข้าเกมนี้</label>
-          <label className="dir-filter-option"><input type="radio" name="unpair" checked={!unpair} onChange={() => setUnpair(false)} />คงคู่เดิมและกลับเข้าเกมถัดไป</label>
-        </fieldset>}
-        {restoreCase === "C" && <p className="meta">เกม {card.currentGame} มีผลแล้ว ผู้เล่นจะถูกปรับแพ้เกมนี้และกลับในเกมถัดไป</p>}
-        <div className="field"><label htmlFor="loss-points">ผลต่างที่หักต่อเกมที่ขาด</label><input className="input"
-          id="loss-points" type="number" min={0} value={lossPoints} onChange={(event) => setLossPoints(event.target.value)} /></div>
-      </div>}
-    </ConfirmDialog>
+        </div>
+      )}
 
-    <ConfirmDialog appearance="prototype" open={mode !== null && review} title={`${title}ที่เลือก?`} eyebrow="ยืนยันการเปลี่ยนแปลง"
-      confirmLabel={`ยืนยัน${title}`} cancelLabel="กลับไปแก้ไข" danger={mode === "terminate"} busy={busy} error={error || undefined}
-      className="dialog--roster-tool dialog--roster-review" onConfirm={() => void submit()}
-      onCancel={() => { setReview(false); setPassword(""); setError(""); }}>
-      {mode === "terminate" && scope && <p className="roster-effect"><strong>{scope.label}</strong> · {scope.detail}</p>}
-      <div className="msw-summary"><p className="msw-summary-count"><strong>{title} {chosen.length} คน</strong></p>
-        <div className="msw-summary-scroll"><table className="dt screen-summary" aria-label="ผู้เล่นที่ยืนยันการเปลี่ยนแปลง"><thead><tr><th scope="col">รหัส</th><th scope="col">ผู้เล่น</th><th scope="col">โรงเรียน</th></tr></thead>
-          <tbody>{chosen.map((player) => <tr key={player.id}><td className="code">{player.id}</td>
-            <td>{player.firstName} {player.lastName}</td><td>{player.school}</td></tr>)}</tbody></table></div>
-        {mode === "restore" && <dl className="msw-summary-pool"><div><dt>ผลต่างที่หักต่อเกมที่ขาด</dt><dd>{Number(lossPoints).toLocaleString("th-TH")} คะแนน</dd></div></dl>}
-      </div>
-      <div className="field"><label htmlFor="term-password">รหัสผ่านผู้อำนวยการ</label>
-        <FreshSecretInput className="input" id="term-password" value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} />
-      </div>
-    </ConfirmDialog>
-  </>;
+      <ConfirmDialog
+        open={mode !== null}
+        eyebrow="ผู้อำนวยการเท่านั้น"
+        icon={mode === "terminate" ? <UserMinus size={20} /> : <RotateCcw size={20} />}
+        title={mode === "terminate" ? "ถอนผู้เล่นออกจากการแข่งขัน" : "ดึงผู้เล่นกลับเข้าการแข่งขัน"}
+        confirmLabel={mode === "terminate" ? `ถอน ${selected.size} คน` : `ดึงกลับ ${selected.size} คน`}
+        busyLabel="กำลังทำรายการ…"
+        danger={mode === "terminate"}
+        busy={busy}
+        error={error || undefined}
+        className="termination-dialog"
+        onConfirm={() => void submit()}
+        onCancel={close}
+      >
+        <div className="termination-dialog__body">
+          <div className="termination-picker__toolbar">
+            <div><strong>เลือกผู้เล่น</strong><span>{selected.size} จาก {(mode === "terminate" ? active : terminated).length} คน</span></div>
+            <div>
+              <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setSelected(new Set((mode === "terminate" ? active : terminated).map((p) => p.id)))}>เลือกทั้งหมด</Button>
+              <Button type="button" variant="ghost" size="sm" disabled={busy || selected.size === 0} onClick={() => setSelected(new Set())}>ล้าง</Button>
+            </div>
+          </div>
+          <div className="termination-picker">
+            {(mode === "terminate" ? active : terminated).map((p) => (
+              <label key={p.id} className={`termination-player${selected.has(p.id) ? " termination-player--selected" : ""}`}>
+                <input type="checkbox" checked={selected.has(p.id)} disabled={busy} onChange={() => toggle(p.id)} />
+                <span><strong>{p.id} · {p.firstName} {p.lastName}</strong><small>{p.school}</small></span>
+              </label>
+            ))}
+          </div>
+
+          {mode === "terminate" ? (
+            <div className="notice notice--warning termination-notice"><p><strong>ผลเดิมจะยังอยู่ครบ</strong><span>ผู้เล่นที่ถอนจะไม่ถูกจับคู่เกมถัดไป หากยังมีคู่ที่ยังไม่กรอกผลในเกมปัจจุบัน ต้องบันทึกผลคู่นั้นก่อน</span></p></div>
+          ) : (
+            <div className="termination-restore-options">
+            {restoreCase === "A" && <div className="notice notice--info"><p><span>ผู้เล่นเหล่านี้จะเข้าไปเล่นต่อในเกมที่ <strong>{card.currentGame}</strong> และผลการแข่งขันในเกมที่เขาหายไปจะถูกปรับแพ้เกมละแต้มที่กรอกด้านล่าง</span></p></div>}
+            {restoreCase === "B" && (
+              <>
+                <div className="notice notice--warning"><p><span>Pairing เกมปัจจุบัน (เกม {card.currentGame}) ถูกสร้างขึ้นแล้ว ต้องการ <strong>un-pairing</strong> เพื่อนำผู้เล่นเหล่านี้เข้าสู่ pairing ปัจจุบันหรือไม่?</span></p></div>
+                <div className="termination-radio-group">
+                  <label><input type="radio" name="unpair" checked={unpair} disabled={busy} onChange={() => setUnpair(true)} /><span><strong>Un-pairing</strong><small>นำผู้เล่นเข้าเกมปัจจุบัน</small></span></label>
+                  <label><input type="radio" name="unpair" checked={!unpair} disabled={busy} onChange={() => setUnpair(false)} /><span><strong>คง Pairing เดิม</strong><small>ปรับแพ้เกมนี้ แล้วเล่นเกมถัดไป</small></span></label>
+                </div>
+              </>
+            )}
+            {restoreCase === "C" && <div className="notice notice--warning"><p><span>Pairing เกมปัจจุบันมีการกรอกผลแล้ว จึง un-pairing ไม่ได้ · ผู้เล่นจะถูกปรับแพ้ในเกมที่ {card.currentGame} และเกมที่หายไป เกมละแต้มด้านล่าง แล้วกลับมาเล่นในเกมถัดไป</span></p></div>}
+            <div className="form-field">
+              <label className="form-label" htmlFor="loss-points">แต้มที่ปรับแพ้ต่อเกมที่หายไป</label>
+              <input className="input termination-points" id="loss-points" type="number" min={0} value={lossPoints} disabled={busy} onChange={(e) => setLossPoints(e.target.value)} />
+            </div>
+          </div>
+          )}
+
+          <div className="form-field termination-password">
+            <label className="form-label" htmlFor="term-password">รหัสผ่านผู้อำนวยการ</label>
+            <FreshSecretInput className="input" id="term-password" value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} placeholder="รหัสผ่านบัญชีของคุณ" />
+          </div>
+        </div>
+      </ConfirmDialog>
+    </Panel>
+  );
 }

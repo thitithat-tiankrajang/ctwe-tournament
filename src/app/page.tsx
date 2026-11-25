@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Link2, LoaderCircle, LogIn, Trophy } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { selectCardList, useTournamentStore, type TournamentArchive } from "@/application/tournament/store";
+import { Eye, LoaderCircle, LogIn, Settings, ShieldCheck, Trophy } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useTournamentStore, type TournamentArchive } from "@/application/tournament/store";
 import { isAdmin, isDirector, isResultStaff } from "@/domain/tournament/roles";
 import type { Tournament } from "@/domain/tournament/types";
 import { ArchiveList } from "@/ui/components/archive-list";
+import { Badge } from "@/ui/components/badge";
 import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
 import { Button } from "@/ui/components/button";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
@@ -26,17 +27,6 @@ export default function Home() {
   const { pending: navPending, navigate } = useNavigateWithPending();
   const auth = useTournamentStore((state) => state.auth);
   const authLoading = useTournamentStore((state) => state.loading);
-  const cards = useTournamentStore((state) => state.cards);
-  const summaries = useTournamentStore((state) => state.summaries);
-  const sports = useMemo(() => {
-    const grouped = new Map<string, Set<string>>();
-    for (const card of selectCardList(cards, summaries)) {
-      const names = grouped.get(card.tournamentId) ?? new Set<string>();
-      names.add(card.name);
-      grouped.set(card.tournamentId, names);
-    }
-    return grouped;
-  }, [cards, summaries]);
   const setActiveTournament = useTournamentStore((state) => state.setActiveTournament);
   const loadTournaments = useTournamentStore((state) => state.loadTournaments);
   const loadPublicArchives = useTournamentStore((state) => state.loadPublicArchives);
@@ -101,26 +91,9 @@ export default function Home() {
     }
     // Director/admin land on their tournament list, un-scoped (sidebar folders stay hidden until entry).
     setActiveTournament(null);
-    if (director && !admin) {
-      // A director with a single tournament works inside it, as in the accepted design: straight to
-      // its card list. The rail's tournament switcher still lists every assignment.
-      (async () => {
-        const mine = await loadTournaments().catch(() => [] as Tournament[]);
-        if (!active) return;
-        if (mine.length === 1) {
-          setActiveTournament({ id: mine[0].id, name: mine[0].name });
-          router.replace("/cards");
-          return;
-        }
-        setMyTournaments(mine);
-        setArchives(await loadPublicArchives().catch(() => []));
-        setLoading(false);
-      })();
-      return () => { active = false; };
-    }
     void refresh();
     return () => { active = false; };
-  }, [authLoading, staff, director, admin, auth.authenticated, refresh, loadTournaments, loadPublicArchives, setActiveTournament, router]);
+  }, [authLoading, staff, auth.authenticated, refresh, loadTournaments, setActiveTournament, router]);
 
   // §20's system-off panel. Read once per mount; the file carries max-age=30 of its own.
   const [systemState, setSystemState] = useState<SystemState | null>(null);
@@ -173,30 +146,61 @@ export default function Home() {
     );
   }
 
-  return <>
-    <div className="page-head"><div className="ttl"><h1>รายการแข่งขันทั้งหมด</h1></div></div>
-    <section className="panel" aria-label="รายการแข่งขันทั้งหมด">
-      {loading ? <p className="panel-body meta" role="status">กำลังโหลด…</p> : myTournaments.length === 0 ? (
-        <EmptyState icon={<Trophy size={25} />} title={admin ? "ยังไม่มีรายการแข่งขัน" : "ยังไม่ได้รับมอบหมายรายการแข่งขัน"}
-          description={admin ? "สร้างรายการแข่งขันได้จากคอนโซลผู้ดูแล" : "ติดต่อผู้ดูแลระบบเพื่อมอบหมายรายการแข่งขันให้คุณ"} />
-      ) : <div className="gscroll"><table aria-label="รายการแข่งขันทั้งหมด" className="dt">
-        <thead><tr><th scope="col">รายการแข่งขัน</th><th scope="col">กีฬา · รุ่น</th><th scope="col">ลิงก์</th><th scope="col"><span className="sr">เปิดรายการแข่งขัน</span></th></tr></thead>
-        <tbody>{myTournaments.map((tour) => <tr key={tour.id}>
-          <td><b>{tour.name}</b></td>
-          <td className="meta">{sports.get(tour.id)?.size ?? 0} กีฬา · {tour.cardCount} รุ่น</td>
-          <td><span className={`badge badge--${tour.status === "OPEN" ? "info" : "neutral"}`}>
-            <Link2 className="i" size={11} aria-hidden />{tour.status === "OPEN" ? "ลิงก์เปิด" : "ลิงก์ปิด"}
-          </span></td>
-          <td className="n"><button className="btn btn--sm btn--secondary" type="button" onClick={() => enterTournament(tour)}>
-            {admin ? "เข้าชม" : "จัดการ"}{navPending && enteringId === tour.id
-              ? <LoaderCircle size={13} className="i spin" aria-hidden /> : <ArrowRight size={13} className="i" aria-hidden />}
-          </button></td>
-        </tr>)}</tbody>
-      </table></div>}
-    </section>
-    {archives.length > 0 && <section className="panel">
-      <div className="panel-head"><h2>คลังผลการแข่งขัน (Excel)</h2></div>
-      <ArchiveList archives={archives} downloadHref={(archive) => `/api/public/archives/${archive.id}/download`} />
-    </section>}
-  </>;
+  return (
+    <>
+      <PageHeader
+        eyebrow={admin ? "Admin" : "Director"}
+        title="รายการแข่งขัน"
+        description={admin
+          ? "เลือกรายการแข่งขันเพื่อเข้าชมข้อมูลการ์ดและผลการแข่งขัน (โหมดดูอย่างเดียว)"
+          : "เลือกรายการแข่งขันที่คุณดูแลเพื่อเข้าไปจัดการการ์ดและผลการแข่งขัน"}
+        actions={
+          <div className="page-actions">
+            <Badge tone={admin ? "warning" : "success"}>{admin ? "ADMIN" : "DIRECTOR"}</Badge>
+            {admin && <Link prefetch={false} href="/admin"><Button variant="secondary"><ShieldCheck size={16} />คอนโซลผู้ดูแล</Button></Link>}
+          </div>
+        }
+      />
+
+      <Panel
+        title={admin ? "รายการแข่งขันทั้งหมด" : "รายการแข่งขันที่คุณดูแล"}
+        description={admin ? "กดเข้าชมเพื่อดูการ์ดและผลของรายการนั้น" : "กดจัดการเพื่อเข้าไปทำงานในการ์ดของรายการนั้น"}
+      >
+        <div className="panel-padding">
+          {loading ? (
+            <p className="muted">กำลังโหลด…</p>
+          ) : myTournaments.length === 0 ? (
+            <EmptyState
+              icon={<Trophy size={25} />}
+              title={admin ? "ยังไม่มีรายการแข่งขัน" : "ยังไม่ได้รับมอบหมายรายการแข่งขัน"}
+              description={admin ? "สร้างรายการแข่งขันได้จากคอนโซลผู้ดูแล" : "ติดต่อผู้ดูแลระบบเพื่อมอบหมายรายการแข่งขันให้คุณ"}
+            />
+          ) : (
+            <div className="card-grid">
+              {myTournaments.map((t) => (
+                <article className={`competition-card${admin ? "" : " competition-card--manage"}`} key={t.id}>
+                  <div className="competition-card__header">
+                    <div><h2>{t.name}</h2><span className="competition-card__division">{t.cardCount} รุ่นการแข่งขัน</span></div>
+                    <Badge tone={t.status === "OPEN" ? "success" : "danger"}>{t.status === "OPEN" ? "ลิงก์เปิด" : "ลิงก์ปิด"}</Badge>
+                  </div>
+                  <div className="competition-card__footer">
+                    <small>{t.directors.length > 0 ? `ผู้อำนวยการ ${t.directors.length} คน` : (admin ? "รายการแข่งขัน" : "รายการที่คุณดูแล")}</small>
+                    {admin
+                      ? <Button variant="secondary" size="sm" onClick={() => enterTournament(t)}>{navPending && enteringId === t.id ? <LoaderCircle className="loading-spinner" size={15} /> : <Eye size={15} />}เข้าชม</Button>
+                      : <Button variant="success" size="sm" onClick={() => enterTournament(t)}>{navPending && enteringId === t.id ? <LoaderCircle className="loading-spinner" size={15} /> : <Settings size={15} />}จัดการ</Button>}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </Panel>
+
+      <Panel title="คลังผลการแข่งขัน (Excel)" description="ไฟล์สรุปผลของการแข่งขันที่จบและเก็บถาวรแล้ว ดาวน์โหลดได้ตลอด">
+        <div className="panel-padding">
+          <ArchiveList archives={archives} downloadHref={(archive) => `/api/public/archives/${archive.id}/download`} />
+        </div>
+      </Panel>
+    </>
+  );
 }

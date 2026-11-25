@@ -110,9 +110,9 @@ export function spectatorDivision(card: PublicDivisionPayload): SpectatorDivisio
   // Map insertion order preserves the public snapshot/table order used by reports; replacing a
   // repeated locator updates its value without moving it or perturbing existing row order.
   const contests = [...byLocator.values()].map(candidate => candidate.contest);
+  const publishedGames = [...new Set(contests.map(contest => contest.game))].sort((a, b) => a - b);
   const officialGames = [...new Set(card.snapshots.filter(snapshot => snapshot.confirmedAt)
     .flatMap(snapshot => snapshot.gameNumbers))].sort((a, b) => a - b);
-  const publishedGames = [...new Set([...contests.map(contest => contest.game), ...officialGames])].sort((a, b) => a - b);
   const officialThroughGame = officialGames.at(-1) ?? null;
   const currentGame = Math.max(card.currentGame, ...publishedGames);
   const complete = card.status === "FINISHED" || card.status === "CLOSED" || card.runtimeStage === "FINAL_PUBLISHED";
@@ -123,7 +123,7 @@ export function spectatorDivision(card: PublicDivisionPayload): SpectatorDivisio
   return {
     id: card.id, tournamentId: card.tournamentId, name: card.name, division: card.division, version: card.version,
     participants: card.players.map(player => ({ key: key(player.id)!, code: player.id, divisionId: card.id,
-      name: `${player.firstName} ${player.lastName}`, school: player.school, listedInStandings: !player.terminated || (player.withdrawnFromGame ?? 0) > currentGame })),
+      name: `${player.firstName} ${player.lastName}`, school: player.school, listedInStandings: !player.terminated })),
     slotLabel: card.slotLabel ?? "PAIR",
     contests,
     publication: {

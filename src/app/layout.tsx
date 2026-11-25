@@ -1,9 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import "./competition-ui.css";
-import "./prototype-workspace.css";
-import "./prototype-shell.css";
-import "./prototype-viewer.css";
 import { AppProviders } from "@/infrastructure/query/provider";
 import { AppShell } from "@/ui/layout/app-shell";
 

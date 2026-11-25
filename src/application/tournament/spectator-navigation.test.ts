@@ -9,23 +9,11 @@ import { SpectatorPairList, SpectatorStandingList, SpectatorHistoryRows } from "
 import { legacyPublicCard, spectatorDivision, type PublicDivisionPayload } from "./spectator-read-model";
 import { spectatorHash, parseSpectatorHash, spectatorReportContextFromHistory, type SpectatorReportContext } from "./spectator-route";
 import { w1PlayerFixture, W1_DIVISION } from "./fixtures/spectator-player-fixtures";
-import { searchParticipants, searchReports } from "./spectator-search";
 
 Object.assign(globalThis, { React });
 
 const fixture = (): PublicDivisionPayload => w1PlayerFixture();
 const playersOf = (card: PublicDivisionPayload) => new Map(card.players.map((player) => [player.id, player]));
-
-test("header search accepts code lists and locates published seats within the selected game", () => {
-  const card = fixture();
-  card.snapshots[1].pairings[1].pairingPublished = false;
-  const division = spectatorDivision(card);
-  assert.deepEqual(searchParticipants([division], { query: "A001, 3", divisionId: null, school: null }).results.map((row) => row.code), ["A001", "A003"]);
-  assert.deepEqual(searchReports([division], "เกม 3"), []);
-  assert.deepEqual(searchReports([division], "คู่ที่ 3"), []);
-  assert.deepEqual(searchReports([division], "ที่นั่ง 3", 2)[0].context.filter.playerIds, ["A001", "A003"]);
-  assert.deepEqual(searchReports([division], "คู่ที่ 1", 1)[0].context.views, ["pairing"]);
-});
 
 test("standing identity is a single deliberate canonical Player action", () => {
   const markup = renderToStaticMarkup(React.createElement(SpectatorStandingList, {
@@ -91,7 +79,7 @@ test("public CardOverview has no competing spectator history dialog", () => {
     initialSpectatorContext: { game: 3, views: ["ranking"], filter: { mode: "player", playerIds: [], schools: [], query: "" }, scrollY: 0 },
   }));
   assert.doesNotMatch(markup, /history-table-dialog/);
-  assert.match(markup, /report-identity/);
+  assert.match(markup, /spectator-player-identity-link|spectator-who/);
 });
 
 test("report context is validated and preserves game, lens, filters and scroll", () => {

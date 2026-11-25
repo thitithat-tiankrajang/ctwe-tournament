@@ -19,9 +19,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Anonymous, link-scoped entry point. The root landing lists OPEN tournaments; a shared access
@@ -63,53 +63,27 @@ public class PublicTournamentController {
     /**
      * Everything a viewer page needs in ONE request: the tournament plus the full public payload
      * of every card. Viewers switch between cards without any further request; a browser refresh
-     * revalidates by ETag and usually costs a 304.
-     *
-     * <p><b>Validator contract.</b> A {@code bundle-v2} validator is a pure function of the
-     * tournament metadata and the ordered {@code (card id, public_version)} list it describes, and a
-     * 200 is always tagged from the card payloads it actually carries — never from a separately cached
-     * catalog. (Tagging from the catalog let a response leave with a newer catalog's validator over an
-     * older cached card body; every later revalidation then answered 304 and the browser kept the old
-     * body until the next version bump.) A card's public payload is determined by its
-     * {@code public_version}, which every publicly visible change bumps.
-     *
-     * <p><b>Cost.</b> The 304 decision reads the tournament row and the uncached version manifest —
-     * one indexed query, no card payloads — so an unchanged refresh stays cheap however many cards
-     * exist or compete for the detail cache. Only a 200 reads card payloads (through the cache).
-     *
-     * <p><b>Skew repair.</b> If a cached payload is older than the manifest (the instant between a
-     * commit and its cache eviction), it is repaired once — sharing any repair another request has
-     * already made or is making (see {@link PublicCardQueryService#reload}). Never more than once:
-     * if it is still older, the response is tagged from what it carries. That validator always
-     * describes the body actually sent; if a later request assembles the identical (still lagging)
-     * body, Spring MVC may answer 304 against it — correct, because the representation is the same —
-     * and the first request that assembles a newer body gets a 200.
+     * revalidates by ETag and usually costs a 304. Composed entirely from the Caffeine-backed
+     * read cache, so refresh storms never amplify into database load.
      */
     @GetMapping("/{token}/bundle")
     public ResponseEntity<TenantDtos.PublicTournamentBundle> bundle(@PathVariable String token, HttpServletRequest request) {
         TenantDtos.PublicTournamentResponse tournament = tenant.resolveOpenTournament(token);
-        List<PublicCardDtos.CardVersion> manifest = cards.manifest(tournament.id());
+        List<PublicCardDtos.CardSummary> summaries = cards.summaries(tournament.id());
+        String etag = etag(tournament.id(), summaries);
 
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.CACHE_CONTROL, LIVE_POLICY);
-        String current = etag(tournament, manifest);
-        if (current.equals(request.getHeader(HttpHeaders.IF_NONE_MATCH))) {
-            headers.setETag(current);
+        headers.setETag(etag);
+        if (etag.equals(request.getHeader(HttpHeaders.IF_NONE_MATCH)))
             return new ResponseEntity<>(null, headers, HttpStatus.NOT_MODIFIED);
-        }
 
-        List<CardDtos.CardResponse> details = new ArrayList<>(manifest.size());
-        for (PublicCardDtos.CardVersion entry : manifest) {
-            CardDtos.CardResponse card = cards.get(entry.id());
-            if (card.version() < entry.version()) card = cards.reload(entry.id(), entry.version());
-            details.add(card);
-        }
-        headers.setETag(etag(tournament, details.stream()
-            .map(card -> new PublicCardDtos.CardVersion(card.id(), card.version()))
-            .toList()));
+        List<CardDtos.CardResponse> details = summaries.stream()
+            .map(summary -> cards.get(summary.id()))
+            .toList();
         return new ResponseEntity<>(new TenantDtos.PublicTournamentBundle(
             tournament.id(), tournament.name(), tournament.accessToken(),
-            tournament.cardCount(), tournament.publishedCardCount(), List.copyOf(details)), headers, HttpStatus.OK);
+            tournament.cardCount(), tournament.publishedCardCount(), details), headers, HttpStatus.OK);
     }
 
     /**
@@ -125,21 +99,10 @@ public class PublicTournamentController {
         return events.subscribeTournament(tournament.id(), () -> cards.catalogFingerprint(tournament.id()));
     }
 
-    /**
-     * The {@code bundle-v2} validator: tournament metadata plus the ordered card identity/version
-     * list. Strings are length-prefixed so no name can collide with a different field split.
-     *
-     * <p>The {@code bundle-v2-} namespace is deliberate. The previous catalog-derived {@code bundle-}
-     * validators may already be cached by browsers over an older body; a new namespace guarantees
-     * none of them can ever match again, so each such browser gets one full 200 and recovers.
-     */
-    static String etag(TenantDtos.PublicTournamentResponse tournament, List<PublicCardDtos.CardVersion> cards) {
-        StringBuilder value = new StringBuilder("bundle-v2");
-        for (String field : List.of(String.valueOf(tournament.id()), tournament.name(), tournament.accessToken(),
-                Integer.toString(tournament.cardCount()), Integer.toString(tournament.publishedCardCount())))
-            value.append('|').append(field.length()).append(':').append(field);
-        for (PublicCardDtos.CardVersion card : cards)
-            value.append('|').append(card.id()).append(':').append(card.version());
-        return "\"bundle-v2-" + UUID.nameUUIDFromBytes(value.toString().getBytes(StandardCharsets.UTF_8)) + "\"";
+    private String etag(UUID tournamentId, List<PublicCardDtos.CardSummary> summaries) {
+        String value = "bundle|" + tournamentId + "|" + summaries.stream()
+            .map(card -> card.id() + ":" + card.version())
+            .collect(Collectors.joining("|"));
+        return "\"bundle-" + UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8)) + "\"";
     }
 }

@@ -75,7 +75,7 @@ class TournamentCardReopenRegistrationTest {
 
         verify(jdbc).update(eq("DELETE FROM matches WHERE card_id = ?"), eq(cardId));
         verify(jdbc).update(eq("DELETE FROM table_seats WHERE card_id = ?"), eq(cardId));
-        verify(jdbc).update(eq("UPDATE games SET status = 'PENDING', pair_result_deferred_tables = NULL WHERE card_id = ?"), eq(cardId));
+        verify(jdbc).update(eq("UPDATE games SET status = 'PENDING' WHERE card_id = ?"), eq(cardId));
         verify(jdbc).update(argThat(sql -> sql.contains("terminated_at = NULL") && sql.contains("carry_losses = 0")), eq(cardId));
         assertThat(mockingDetails(jdbc).getInvocations())
             .anyMatch(invocation -> invocation.getMethod().getName().equals("update")

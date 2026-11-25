@@ -62,7 +62,6 @@ class CardControllerCacheRoutingTest {
 
         assertThat(controller.get(cardId, authentication)).isSameAs(response);
 
-        verify(authz).requireTournamentAccess(eq(authentication), org.mockito.ArgumentMatchers.any());
         verify(cards).get(cardId, true);
         verify(publicCards, never()).get(cardId);
     }
@@ -215,10 +214,10 @@ class CardControllerCacheRoutingTest {
         CardDtos.CardResponse response = card(cardId);
         var request = new CardDtos.PlayerRequest(null, "First", "Last", "School");
         when(authz.isDirector(authentication)).thenReturn(true);
-        when(cards.updatePlayer(cardId, "P001", request, "director", true, 4L)).thenReturn(response);
+        when(cards.updatePlayer(cardId, "P001", request, "director", true)).thenReturn(response);
         when(publicCards.version(cardId)).thenReturn(4L);
 
-        controller.updatePlayer(cardId, "P001", "\"4\"", request, authentication);
+        controller.updatePlayer(cardId, "P001", request, authentication);
 
         verify(events).publish(response);
         verify(events, never()).publishPublic(org.mockito.ArgumentMatchers.eq(cardId), org.mockito.ArgumentMatchers.anyLong());

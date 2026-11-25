@@ -35,13 +35,11 @@ export function useModalDialog({
   open,
   onDismiss,
   dismissible = true,
-  focusDialog = false,
 }: {
   open: boolean;
   onDismiss: () => void;
   /** False while a submit is in flight: Escape and the backdrop must not cancel a running action. */
   dismissible?: boolean;
-  focusDialog?: boolean;
 }) {
   const ref = useRef<HTMLElement | null>(null);
   const base = useId();
@@ -65,7 +63,7 @@ export function useModalDialog({
       const root = ref.current;
       if (!root) return;
       const focusable = [...root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)]
-        .filter((el) => (el.offsetParent !== null || el === document.activeElement) && !el.closest("details:not([open]) > :not(summary)"));
+        .filter((el) => el.offsetParent !== null || el === document.activeElement);
       if (focusable.length === 0) { event.preventDefault(); root.focus(); return; }
       const current = focusable.indexOf(document.activeElement as HTMLElement);
       const next = nextTrapIndex(focusable.length, current, event.shiftKey);
@@ -84,7 +82,7 @@ export function useModalDialog({
     if (!open) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const root = ref.current;
-    const first = focusDialog ? root : root?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+    const first = root?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
     (first ?? root)?.focus();
     return () => {
       // Only restore if focus is still somewhere in the dialog; if the operator has already clicked
@@ -92,7 +90,7 @@ export function useModalDialog({
       const active = document.activeElement;
       if (!active || active === document.body || root?.contains(active)) previouslyFocused?.focus?.();
     };
-  }, [open, focusDialog]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

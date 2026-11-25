@@ -8,7 +8,7 @@ Base path: `/api`
 - Every `POST`, `PUT`, and `DELETE` requires an authenticated `ROLE_STAFF` server session and a valid CSRF token.
 - Staff login uses `POST /login` and returns `204` on success or `401` on invalid credentials; the frontend performs navigation without relying on a cross-origin redirect.
 - Staff logout uses `POST /logout` and returns `204`; `GET /api/auth/me` returns membership, roles, and the CSRF request token.
-- Roster edits, roster deletions, and developer tools use `If-Match: "<card.version>"`. Roster edits and deletions require that header, return `428` if it is missing, and return `409` if the roster's card version has changed.
+- Mutations on an existing card require `If-Match: "<card.version>"`; stale versions return `409 Conflict`.
 - Audit data and `/api/dev/**` are staff-only. Developer endpoints exist only when `DEV_TOOLS_ENABLED=true`.
 
 ## Cards
@@ -39,7 +39,6 @@ Create body:
 - `GET|POST /cards/{cardId}/players`
 - `PUT|DELETE /cards/{cardId}/players/{playerId}`
 - `POST /cards/{cardId}/registration/finish`
-  - Requires at least four active players for a championship and third-place bracket, and at least two for other formats.
 - `POST /cards/{cardId}/registration/reopen` — director-only late registration ("ลงทะเบียนเพิ่ม"), allowed until the first game-1 result is saved. Optional body `{ "password": "..." }`: required (re-auth) when a game-1 pairing already exists, since reopening discards that pairing.
 - `POST /cards/{cardId}/players/import` — multipart CSV.
 - `GET /cards/{cardId}/players/export` — CSV.
@@ -47,8 +46,6 @@ Create body:
 - `POST /cards/{cardId}/tables/swap` with `{ "firstPlayerId": "...", "secondPlayerId": "...", "confirmSchoolConflict": true }`.
 
 ## Runtime
-
-- `POST /cards/{cardId}/final/finish-with-regular-results` — a scoped Director can finish a card from `FINAL_SEEDING` if fewer than the required players are eligible. The existing regular-round snapshots remain final, and the audit records the original bracket and eligibility counts.
 
 - `GET /cards/{cardId}/games/{gameNumber}/pairings`
 - `PUT /cards/{cardId}/matches/{matchId}/result`

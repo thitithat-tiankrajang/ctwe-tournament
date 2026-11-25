@@ -266,8 +266,7 @@ export function rankingAfterGame(card: TournamentCard, gameNumber: number): Rank
   // Terminated players are scored (so their past opponents' wins/losses stay correct) but never
   // shown in the standings — once withdrawn they live only in the director's restore "trash". They
   // are dropped BEFORE ranking so they never occupy a rank number.
-  const active = [...ranking.values()].filter((player) =>
-    (!player.terminated || (player.withdrawnFromGame ?? 0) > gameNumber) && !player.rankingExcludedGames?.includes(gameNumber));
+  const active = [...ranking.values()].filter((player) => !player.terminated);
   const byId = new Map(active.map((player) => [player.id, player]));
   const inputs: RankInput[] = active.map((player) => ({
     playerId: player.id, winPoints: player.winPoints, diff: player.diff, scoreFor: player.scoreFor, games: player.games,

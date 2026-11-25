@@ -1,15 +1,17 @@
 "use client";
 
-import { SaveAll, ShieldCheck, Undo2 } from "lucide-react";
+import { Save, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
+import { Badge } from "@/ui/components/badge";
+import { Button } from "@/ui/components/button";
 import { appDialog } from "@/application/ui/dialog";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
+import { Panel } from "@/ui/components/page";
 import { ScoreInput } from "@/ui/components/score-input";
-import { MAX_SCORE, MIN_SCORE, ResultViewGrid } from "@/ui/components/result-entry-grid";
 
-const validScore = (value: string) => /^-?\d+$/.test(value) && Number(value) >= MIN_SCORE && Number(value) <= MAX_SCORE;
+const validScore = (value: string) => value.trim() !== "" && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 1_000_000_000;
 
 /**
  * Director backdated-result editor: edits are buffered (not saved per keystroke). "บันทึกการแก้ไขทั้งหมด"
@@ -58,41 +60,55 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
 
   return (
     <>
-      <div className="notice notice--warning"><p><strong>ผลย้อนหลัง · เกม {block.join("–")}</strong><span>การแก้ไขมีผลต่ออันดับทันที</span></p>
-        <button type="button" className="btn btn--secondary" disabled={committing} onClick={onDone}>ออกจากโหมดแก้ไข</button>
+      {block.map((game) => {
+        const pairings = pairingsForGame(game);
+        return (
+          <Panel key={game} title={`แก้ไขผล เกม ${game} (ย้อนหลัง)`} description="แก้คะแนนได้หลายคู่ แล้วกด “บันทึกการแก้ไขทั้งหมด” ครั้งเดียว · standing จะคำนวณใหม่ตอนยืนยัน">
+            <div className="dense-table-wrap">
+              <table className="data-table" aria-label={`ผลการแข่งขัน เกม ${game} (แก้ไขย้อนหลัง)`}>
+                <thead><tr><th scope="col" className="numeric">คู่</th><th scope="col">ฝ่ายที่ 1</th><th scope="col">ฝ่ายที่ 2</th><th scope="col" className="numeric">เดิม</th><th scope="col" className="numeric">คะแนน 1</th><th scope="col" className="numeric">คะแนน 2</th></tr></thead>
+                <tbody>
+                  {pairings.length === 0 ? <tr><td colSpan={6} className="egrid-empty"><strong>ยังไม่มีผลที่เผยแพร่</strong></td></tr> : pairings.map((pairing) => {
+                    const penalty = pairing.resultType === "PENALTY";
+                    const draft = draftOf(pairing);
+                    const dirty = !penalty && Boolean(edits[pairing.id]) && (draft.one !== (pairing.scoreOne?.toString() ?? "") || draft.two !== (pairing.scoreTwo?.toString() ?? ""));
+                    return (
+                      <tr key={pairing.id} className={penalty ? "egrid-row--locked egrid-row--penalty" : dirty ? "player-row--editing" : undefined}>
+                        <td className="numeric">{pairing.tableNumber}</td>
+                        <td title={nameOf(pairing.playerOneId)}>{nameOf(pairing.playerOneId)}</td>
+                        <td title={nameOf(pairing.playerTwoId)}>{nameOf(pairing.playerTwoId)}</td>
+                        <td className="numeric">{penalty ? <Badge tone="danger">ลงดาบ −{pairing.calculatedDiff ?? 0}</Badge> : <>{pairing.scoreOne ?? "—"} : {pairing.scoreTwo ?? "—"}</>}</td>
+                        <td>{penalty ? <Badge tone="danger">ล็อก</Badge> : <ScoreInput className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 1 คู่ ${pairing.tableNumber}`} value={draft.one} disabled={committing} onChange={(event) => setScore(pairing, "one", event.target.value)} />}</td>
+                        <td>{penalty ? <Button size="sm" variant="secondary" disabled={committing} onClick={() => onRevokePenalty(pairing)}>ถอนดาบ</Button> : <ScoreInput className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 2 คู่ ${pairing.tableNumber}`} value={draft.two} disabled={committing} onChange={(event) => setScore(pairing, "two", event.target.value)} />}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        );
+      })}
+
+      <div className="form-actions">
+        <Button variant="secondary" disabled={committing} onClick={onDone}><X size={16} />ออกจากโหมดแก้ไข</Button>
+        <Button disabled={committing || changes.length === 0} onClick={() => setConfirmOpen(true)}><Save size={16} />บันทึกการแก้ไขทั้งหมด ({changes.length})</Button>
       </div>
-      {block.map((game, index) => <section className="panel director-grid-panel" key={game} aria-label={`แก้ไขผลย้อนหลัง เกม ${game}`}>
-        {block.length > 1 && <div className="panel-head"><h2>เกม {game}</h2></div>}
-        <ResultViewGrid pairings={pairingsForGame(game)} players={players} renderScore={(pairing, side, fallback) => {
-          if (pairing.resultType === "PENALTY") return side === "one" ? fallback : <button type="button" className="btn btn--sm btn--secondary dir-row-icon"
-            title="ถอนดาบ" aria-label="ถอนดาบ" disabled={committing} onClick={() => onRevokePenalty(pairing)}><Undo2 size={15} /></button>;
-          if (!pairing.playerOneId || !pairing.playerTwoId || pairing.resultWithdrawn) return fallback;
-          const value = draftOf(pairing)[side];
-          return <ScoreInput className="sc score-override-input" type="text" inputMode="numeric" aria-label={`คะแนนฝ่าย ${side === "one" ? 1 : 2} คู่ ${pairing.tableNumber}`}
-            value={value} disabled={committing} onFocus={(event) => event.currentTarget.select()}
-            onChange={(event) => { if (/^-?\d*$/.test(event.target.value)) { event.currentTarget.removeAttribute("aria-invalid"); setScore(pairing, side, event.target.value); } }}
-            onBlur={(event) => { if (!validScore(event.target.value)) event.currentTarget.setAttribute("aria-invalid", "true"); }} />;
-        }} />
-        {index === block.length - 1 && <div className="gmeta"><span className="acts">
-          <button type="button" className="btn btn--sm btn--success" disabled={committing || changes.length === 0} onClick={() => setConfirmOpen(true)}><SaveAll className="i" size={13} />บันทึกการแก้ไขทั้งหมด</button>
-        </span></div>}
-      </section>)}
 
       <ConfirmDialog
-        appearance="prototype"
         open={confirmOpen}
         eyebrow="ตรวจสอบก่อนเผยแพร่"
         icon={<ShieldCheck size={20} />}
         title={`ยืนยันการแก้ไขผล ${changes.length} รายการ`}
         description="รายการที่จะถูกบันทึกและเผยแพร่สาธารณะ · standing จะคำนวณใหม่ทุกเกม"
         confirmLabel="ยืนยันและเผยแพร่"
-        className="dialog--wide"
+        className="confirm-dialog--wide"
         busy={committing}
         onConfirm={() => void commit()}
         onCancel={() => { if (!committing) setConfirmOpen(false); }}
       >
-        <div className="gscroll">
-          <table className="dt" aria-label="สรุปผลที่จะถูกแก้ไข">
+        <div className="dense-table-wrap">
+          <table className="data-table" aria-label="สรุปผลที่จะถูกแก้ไข">
             <thead><tr><th scope="col" className="numeric">เกม</th><th scope="col" className="numeric">คู่</th><th scope="col">ฝ่ายที่ 1</th><th scope="col">ฝ่ายที่ 2</th><th scope="col" className="numeric">เดิม</th><th scope="col" className="numeric">ใหม่</th></tr></thead>
             <tbody>
               {changes.map((change) => (
@@ -102,7 +118,7 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
                   <td title={nameOf(change.pairing.playerOneId)}>{nameOf(change.pairing.playerOneId)}</td>
                   <td title={nameOf(change.pairing.playerTwoId)}>{nameOf(change.pairing.playerTwoId)}</td>
                   <td className="numeric">{change.oldOne || "—"} : {change.oldTwo || "—"}</td>
-                  <td className="numeric"><strong>{change.newOne} : {change.newTwo}</strong></td>
+                  <td className="numeric"><Badge tone="success">{change.newOne} : {change.newTwo}</Badge></td>
                 </tr>
               ))}
             </tbody>

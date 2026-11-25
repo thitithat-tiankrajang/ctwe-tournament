@@ -5,18 +5,15 @@ import com.ctwe.tournament.application.PairingSessionService;
 import com.ctwe.tournament.application.PublicCardQueryService;
 import com.ctwe.tournament.application.TournamentCardService;
 import com.ctwe.tournament.application.WebPushService;
-import com.ctwe.tournament.domain.model.PairingRuleType;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService;
 import com.ctwe.tournament.infrastructure.security.AuthorizationService.Capability;
 import com.ctwe.tournament.infrastructure.security.ReauthenticationService;
 import com.ctwe.tournament.web.dto.CardDtos;
 import jakarta.validation.Valid;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
@@ -27,8 +24,9 @@ import java.util.function.Supplier;
 
 /**
  * Card operations are designed for concurrent multi-user editing (several staff/directors on the
- * same card from different machines). Mutations lock the card row and revalidate the stage.
- * Roster edits and deletions also check a version because registration can reassign player codes.
+ * same card from different machines). There is no card-level optimistic If-Match gate: every
+ * mutation locks the card row ({@code SELECT ... FOR UPDATE}) and re-validates stage/snapshot
+ * invariants, so concurrent writes serialize and all apply with nothing dropped.
  */
 @RestController
 @RequestMapping("/api/cards")
@@ -64,12 +62,7 @@ public class CardController {
 
     @GetMapping("/{cardId}")
     public CardDtos.CardResponse get(@PathVariable UUID cardId, Authentication authentication) {
-        if (!backOffice(authentication)) return publicCards.get(cardId);
-        // The internal view (roster, unpublished pairings, seats, Screening Pool) is tournament-scoped,
-        // the same read rule as this card's staff SSE stream. Deliberately not requireCardCapability:
-        // that also demands OPEN, and a CLOSED tournament must stay readable to its own operators.
-        authz.requireTournamentAccess(authentication, authz.tournamentOfCard(cardId));
-        return service.get(cardId, true);
+        return backOffice(authentication) ? service.get(cardId, true) : publicCards.get(cardId);
     }
 
     /** On-demand audit log (kept out of the card payload). Role-gated to ADMIN/DIRECTOR by SecurityConfiguration. */
@@ -134,29 +127,16 @@ public class CardController {
 
     @PutMapping("/{cardId}/players/{playerId}")
     public CardDtos.CardResponse updatePlayer(@PathVariable UUID cardId, @PathVariable String playerId,
-        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
-        @Valid @RequestBody CardDtos.PlayerRequest request, Authentication authentication) {
+                                               @Valid @RequestBody CardDtos.PlayerRequest request, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PLAYERS);
-        long expectedVersion = rosterVersion(ifMatch);
         boolean operator = authz.isAdmin(authentication) || authz.isDirector(authentication);
-        return changed(cardId, () -> service.updatePlayer(cardId, playerId, request, authentication.getName(), operator, expectedVersion));
+        return changed(cardId, () -> service.updatePlayer(cardId, playerId, request, authentication.getName(), operator));
     }
 
     @DeleteMapping("/{cardId}/players/{playerId}")
-    public CardDtos.CardResponse removePlayer(@PathVariable UUID cardId, @PathVariable String playerId,
-        @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch, Authentication authentication) {
+    public CardDtos.CardResponse removePlayer(@PathVariable UUID cardId, @PathVariable String playerId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.MANAGE_PLAYERS);
-        long expectedVersion = rosterVersion(ifMatch);
-        return changed(cardId, () -> service.removePlayer(cardId, playerId, authentication.getName(), expectedVersion));
-    }
-
-    private static long rosterVersion(String ifMatch) {
-        if (ifMatch == null)
-            throw new ResponseStatusException(HttpStatus.PRECONDITION_REQUIRED, "ระบุเวอร์ชันรายชื่อผู้เล่น");
-        String tag = ifMatch.strip();
-        if (!tag.matches("\"[0-9]+\""))
-            throw new IllegalArgumentException("Invalid If-Match header");
-        return Long.parseLong(tag.substring(1, tag.length() - 1));
+        return changed(cardId, () -> service.removePlayer(cardId, playerId, authentication.getName()));
     }
 
     @PostMapping("/{cardId}/registration/finish")
@@ -293,7 +273,7 @@ public class CardController {
                                                   Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(cardId, () -> service.terminatePlayers(cardId, request.playerIds(), request.fromGame(), authentication.getName()));
+        return changed(cardId, () -> service.terminatePlayers(cardId, request.playerIds(), authentication.getName()));
     }
 
     /** Director batch-restores terminated players (password-confirmed), charging missed games as losses. */
@@ -305,16 +285,6 @@ public class CardController {
         return changed(cardId, () -> service.restorePlayers(cardId, request.playerIds(), request.lossPoints(), request.unpair(), authentication.getName()));
     }
 
-    @PostMapping("/{cardId}/results/terminate-held")
-    public CardDtos.CardResponse terminatePublicationHolds(@PathVariable UUID cardId,
-            @Valid @RequestBody CardDtos.TerminateRequest request, Authentication authentication) {
-        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        if (!authz.isDirector(authentication))
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "การถอนผู้เล่นจากถังคัดชั่วคราวสงวนสำหรับผู้อำนวยการ");
-        reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(cardId, () -> service.terminatePublicationHolds(cardId, request.playerIds(), authentication.getName()));
-    }
-
     @PutMapping("/{cardId}/matches/{matchId}/result")
     public CardDtos.ResultPatch submitResult(@PathVariable UUID cardId, @PathVariable String matchId,
                                              @Valid @RequestBody CardDtos.ResultRequest request, Authentication authentication) {
@@ -323,10 +293,6 @@ public class CardController {
         CardDtos.ResultPatch patch = service.submitResult(
             cardId, matchId, request, authentication.getName());
         events.publishResult(cardId, patch, authentication.getName(), rolesOf(authentication));
-        if (patch.holdPublicResults()) {
-            publishPublicIfBumped(cardId, publicVersionBefore);
-            return patch;
-        }
         List<CardDtos.PairingResponse> publicChanges = patch.changedPairings().stream()
             .filter(CardDtos.PairingResponse::pairingPublished)
             .toList();
@@ -336,14 +302,6 @@ public class CardController {
             // A result on an unpublished pairing can still change public data (e.g. a stage flip).
             publishPublicIfBumped(cardId, publicVersionBefore);
         return patch;
-    }
-
-    @PostMapping("/{cardId}/matches/{matchId}/force-bye")
-    public CardDtos.CardResponse forceBye(@PathVariable UUID cardId, @PathVariable String matchId,
-                                           @Valid @RequestBody CardDtos.ForceByeRequest request, Authentication authentication) {
-        authz.requireCardCapability(authentication, cardId, Capability.FORCE_BYE);
-        reauthentication.requireCurrentPassword(authentication, request.password());
-        return changed(cardId, () -> service.forceBye(cardId, matchId, request.expectedPlayer(), request.score(), authentication.getName()));
     }
 
     @PutMapping("/{cardId}/matches/{matchId}/override")
@@ -386,6 +344,9 @@ public class CardController {
     @PostMapping("/{cardId}/pairings/publish-next")
     public CardDtos.CardResponse publishNextPairing(@PathVariable UUID cardId, Authentication authentication) {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
+        // Publishing the destination pairing ALSO confirms the source game's ranking snapshot. Those
+        // two facts change at the same version and can't ride two competing deltas, so nudge viewers to
+        // resync the (small) card once — they then hold the new pairing AND the source ranking together.
         return changedWithPublicDelta(cardId,
             () -> service.publishPairResultDestination(cardId, authentication.getName()),
             (result, version) -> {
@@ -413,19 +374,14 @@ public class CardController {
         CardDtos.CardResponse card = changedWithPublicDelta(cardId,
             () -> service.publishResults(cardId, authentication.getName()),
             (result, version) -> {
-                // Grouped games release their scores with the snapshot. For ordinary games the
-                // viewer already has the live scores and only needs the confirmation.
+                // Viewers hold every result already (streamed live); the publish delta is only the
+                // confirmation + the card's new public stage, read from the public projection.
                 CardDtos.CardResponse pub = publicCards.get(cardId);
                 CardDtos.SnapshotResponse confirmed = pub.snapshots().stream()
                     .filter(item -> item.confirmedAt() != null && !item.confirmedAt().isBlank())
                     .max(java.util.Comparator.comparingInt(item ->
                         item.gameNumbers().stream().mapToInt(Integer::intValue).max().orElse(0)))
                     .orElseThrow(() -> new IllegalStateException("published card has no confirmed snapshot"));
-                if (result.rules().stream().anyMatch(rule -> rule.type() == PairingRuleType.PAIR_RESULT
-                        && confirmed.gameNumbers().contains(rule.toGame()))) {
-                    events.publishPublic(cardId, version);
-                    return;
-                }
                 events.publishPublicSnapshot(cardId, version, new CardEventPublisher.SnapshotPublishEvent(
                     cardId, version, java.time.Instant.now(), confirmed.id(), confirmed.gameNumbers(),
                     confirmed.confirmedAt(), pub.runtimeStage(), pub.currentGame()));
@@ -451,16 +407,6 @@ public class CardController {
         authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
         CardDtos.CardResponse card = changed(cardId, () -> service.startFinalRound(cardId, authentication.getName()));
         push.finalStarted(cardId);
-        return card;
-    }
-
-    @PostMapping("/{cardId}/final/finish-with-regular-results")
-    public CardDtos.CardResponse finishWithRegularResults(@PathVariable UUID cardId, Authentication authentication) {
-        authz.requireCardCapability(authentication, cardId, Capability.RUN_TOURNAMENT);
-        if (!authz.isDirector(authentication))
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "การจบด้วยอันดับรอบปกติสงวนสำหรับผู้อำนวยการ");
-        CardDtos.CardResponse card = changed(cardId, () -> service.finishWithRegularResults(cardId, authentication.getName()));
-        push.competitionCompleted(cardId);
         return card;
     }
 

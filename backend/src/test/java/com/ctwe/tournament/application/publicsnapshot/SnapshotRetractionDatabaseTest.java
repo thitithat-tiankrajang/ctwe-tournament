@@ -29,8 +29,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import com.ctwe.tournament.application.WebPushService;
 
 /**
  * Phase F — retraction — against a real PostgreSQL.
@@ -54,9 +52,6 @@ import com.ctwe.tournament.application.WebPushService;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class SnapshotRetractionDatabaseTest {
-
-    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
-    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {

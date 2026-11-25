@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { allResultBlocks, editableResultGames, resultBlockGames, rosterBlockScopes } from "./flow";
+import { allResultBlocks, resultBlockGames } from "./flow";
 import type { TournamentCard } from "./types";
 
 function flowCard(currentGame: number): TournamentCard {
@@ -38,24 +38,4 @@ test("PAIR_RESULT edges form two-game result blocks", () => {
   assert.deepEqual(resultBlockGames(flowCard(1)), [1, 2]);
   assert.deepEqual(resultBlockGames(flowCard(3)), [3]);
   assert.deepEqual(resultBlockGames(flowCard(4)), [4, 5]);
-});
-
-test("roster operations can apply to both active games or start after one of them", () => {
-  const card: TournamentCard = { ...flowCard(1), runtimeStage: "RESULT_COLLECTION" };
-  assert.deepEqual(rosterBlockScopes(card).map(({ game }) => game), [1, 2, 3]);
-});
-
-test("a published source game is preserved when selecting where to withdraw a player", () => {
-  const card: TournamentCard = {
-    ...flowCard(1),
-    runtimeStage: "RESULT_COLLECTION",
-    snapshots: [{ id: "source-game", gameNumbers: [1], pairings: [], confirmedAt: "2026-07-13T01:00:00Z" }],
-  };
-  assert.deepEqual(editableResultGames(card), [2]);
-  assert.deepEqual(rosterBlockScopes(card).map(({ game }) => game), [2, 3]);
-});
-
-test("roster block scopes are unavailable outside result collection or in a standalone game", () => {
-  assert.deepEqual(rosterBlockScopes(flowCard(1)), []);
-  assert.deepEqual(rosterBlockScopes({ ...flowCard(3), runtimeStage: "RESULT_COLLECTION" }), []);
 });

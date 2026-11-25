@@ -1,8 +1,9 @@
 "use client";
 
-import { Ban, CircleAlert, LoaderCircle, ShieldAlert } from "lucide-react";
+import { ArrowRight, Ban, CircleAlert, LoaderCircle, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import type { PairingValidation, Player } from "@/domain/tournament/types";
+import { Button } from "@/ui/components/button";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
 import { useModalDialog } from "@/ui/overlay/use-modal-dialog";
 
@@ -26,7 +27,6 @@ const CONSEQUENCE_LABELS: Record<string, string> = {
   POOL_ADD: "เข้า Screening Pool",
   POOL_REMOVE: "ออกจาก Screening Pool",
   RESULT_REMOVED: "ลบผลที่บันทึกไว้แล้ว",
-  PAIR_RESULT_REBUILD: "คู่ปลายทางที่ต้องตรวจใหม่จากผลเกมก่อนหน้า",
 };
 
 interface Props {
@@ -47,10 +47,7 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
   const dialog = useModalDialog({ open: true, onDismiss: onCancel, dismissible: !busy });
 
   const blocked = validation.blocks.length > 0 || validation.drift.length > 0;
-  const warningKey = ({ game, table, code }: PairingValidation["warnings"][number]) => `${game}:${table}:${code}`;
-  const allAcknowledged = validation.warnings.every((warning) => acknowledged.has(warningKey(warning)));
-  const acceptedCodes = [...new Set(validation.warnings.filter((warning) => acknowledged.has(warningKey(warning))).map((warning) => warning.code))];
-  const games = [...new Set(validation.changes.map((change) => change.game))];
+  const allAcknowledged = validation.warnings.every((warning) => acknowledged.has(warning.code));
   const canCommit = !blocked && allAcknowledged && password.length > 0 && !busy;
 
   // Loose null check on purpose: the API serializes with non_null inclusion, so an empty seat
@@ -69,35 +66,32 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
     });
 
   return (
-    <div className="scrim prototype-dialog-scrim" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
       <section
         ref={dialog.ref as React.RefObject<HTMLElement>}
         tabIndex={-1}
-        className="dialog dialog--consequential dialog--msw-confirm"
+        className="confirm-dialog diff-sheet"
         role="dialog"
         aria-modal="true"
         aria-labelledby={dialog.titleId}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="dlg-head"><span className="dlg-eyebrow">ยืนยันการเปลี่ยนแปลง</span><h2 id={dialog.titleId}>ตรวจผลกระทบก่อนบันทึก</h2></header>
-        <div className="dlg-body">
-        <div className="msw-impact-games">
-          {games.map((game) => {
-            const changes = validation.changes.filter((change) => change.game === game);
-            return <section key={game} className="msw-summary" aria-label={`ผลกระทบเกม ${game}`}>
-              <p className="msw-summary-count"><strong>เกม {game}</strong><span>{changes.length} คู่ที่เปลี่ยน</span></p>
-              <div className="msw-summary-scroll"><table className="dt" aria-label="คู่แข่งขันก่อนและหลังสลับ">
-                <thead><tr><th scope="col">คู่</th><th scope="col">ก่อนสลับ</th><th scope="col">หลังสลับ</th></tr></thead>
-                <tbody>{changes.map((change) => <tr key={change.table}>
-                  <td><strong>{change.table}</strong></td>
-                  <td className="msw-summary-players"><span>{name(change.beforeOne)}</span><span>{name(change.beforeTwo)}</span></td>
-                  <td className="msw-summary-players"><span className={change.beforeOne === change.afterOne ? undefined : "msw-summary-change"}>{name(change.afterOne)}</span>
-                    <span className={change.beforeTwo === change.afterTwo ? undefined : "msw-summary-change"}>{name(change.afterTwo)}</span></td>
-                </tr>)}</tbody>
-              </table></div>
-            </section>;
-          })}
-        </div>
+        <h2 id={dialog.titleId}>ตรวจสอบก่อนบันทึก</h2>
+
+        <section className="diff-sheet__section">
+          <h3>การเปลี่ยนแปลงคู่</h3>
+          {validation.changes.length === 0 && <p className="page-description">ไม่มีคู่ที่เปลี่ยน</p>}
+          <ul className="diff-sheet__list">
+            {validation.changes.map((change) => (
+              <li key={`${change.game}-${change.table}`}>
+                <span className="diff-sheet__slot">เกม {change.game} คู่ที่ {change.table}</span>
+                <span className="diff-sheet__before">{name(change.beforeOne)} พบ {name(change.beforeTwo)}</span>
+                <ArrowRight size={13} aria-label="เปลี่ยนเป็น" />
+                <span className="diff-sheet__after">{name(change.afterOne)} พบ {name(change.afterTwo)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
 
         {validation.consequences.length > 0 && (
           <section className="diff-sheet__section">
@@ -106,7 +100,7 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
               {validation.consequences.map((consequence, index) => (
                 <li key={index}>
                   {CONSEQUENCE_LABELS[consequence.kind] ?? consequence.kind}
-                  {consequence.game != null && ` · เกม ${consequence.game}`}{consequence.table != null && ` คู่ที่ ${consequence.table}`}
+                  {consequence.table != null && ` · เกม ${consequence.game} คู่ที่ ${consequence.table}`}
                   {consequence.player && ` · ${name(consequence.player)}`}
                 </li>
               ))}
@@ -118,13 +112,13 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
           <section className="diff-sheet__section diff-sheet__section--warn">
             <h3><CircleAlert size={14} /> คำเตือน — ต้องยืนยันทีละข้อ</h3>
             {validation.warnings.map((warning) => (
-              <label key={warningKey(warning)} className="diff-sheet__ack">
+              <label key={`${warning.code}-${warning.table}`} className="diff-sheet__ack">
                 <input
                   type="checkbox"
-                  checked={acknowledged.has(warningKey(warning))}
-                  onChange={() => toggle(warningKey(warning))}
+                  checked={acknowledged.has(warning.code)}
+                  onChange={() => toggle(warning.code)}
                 />
-                <span>เกม {warning.game} · คู่ที่ {warning.table} · {warning.message}</span>
+                <span>คู่ที่ {warning.table} · {warning.message}</span>
               </label>
             ))}
           </section>
@@ -165,30 +159,29 @@ export function PairingDiffSheet({ validation, players, busy, onCancel, onConfir
         )}
 
         {!blocked && (
-          <label className="field"><span>รหัสผ่านผู้อำนวยการ</span><FreshSecretInput className="input"
+          <FreshSecretInput
             placeholder="รหัสผ่านผู้อำนวยการเพื่อยืนยัน"
             value={password}
             aria-label="รหัสผ่านผู้อำนวยการเพื่อบันทึกการเปลี่ยนแปลงคู่"
             onChange={(event) => setPassword(event.target.value)}
-          /></label>
+          />
         )}
 
-        </div>
-        <footer className="dlg-foot">
-          <button className="btn btn--secondary" type="button" onClick={onCancel}>กลับไปแก้ไข</button>
+        <footer>
+          <Button variant="secondary" onClick={onCancel}>กลับไปแก้ไข</Button>
           {/* Offered only when every colliding result can actually be unwound — never as a button
               that would fail after the operator has already committed to it. */}
           {blocked && onForce && validation.resultsToRemove.length > 0 && validation.forceAvailable && (
-            <button type="button" className="btn btn--danger" onClick={() => onForce(acceptedCodes)} disabled={busy || !allAcknowledged}>
+            <Button variant="danger" onClick={() => onForce([...acknowledged])} disabled={busy}>
               <ShieldAlert size={14} />
               ลบผล {validation.resultsToRemove.length} คู่ แล้วบันทึก…
-            </button>
+            </Button>
           )}
           {!blocked && (
-            <button type="button" className="btn btn--primary" onClick={() => onConfirm(password, acceptedCodes)} disabled={!canCommit}>
+            <Button onClick={() => onConfirm(password, [...acknowledged])} disabled={!canCommit}>
               {busy ? <LoaderCircle className="loading-spinner" size={14} /> : null}
               บันทึกการเปลี่ยนแปลง
-            </button>
+            </Button>
           )}
         </footer>
       </section>

@@ -1,14 +1,13 @@
 "use client";
 
-import "../../../prototype-results.css";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, CheckCircle2, Eye, Gamepad2, Globe, LoaderCircle, LockKeyhole, Megaphone, Trophy, Undo2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, Gamepad2, Gavel, LoaderCircle, LockKeyhole, Megaphone, Trophy } from "lucide-react";
 import { useState } from "react";
-import { ApiError, selectCard, useTournamentStore } from "@/application/tournament/store";
+import { isBadPassword, selectCard, useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { canManageTournament, isOperator } from "@/domain/tournament/roles";
-import { allResultBlocks, editableResultGames, resultBlockGames } from "@/domain/tournament/flow";
+import { allResultBlocks, isPairResultBlock, resultBlockGames } from "@/domain/tournament/flow";
 import { rankingAfterGame } from "@/domain/tournament/history";
 import { blockCompletion, isRecordedPairing, isVoidPairing } from "@/domain/tournament/pairing-slot";
 import { useNavigateWithPending } from "@/ui/layout/use-navigate-with-pending";
@@ -18,16 +17,33 @@ import { Button } from "@/ui/components/button";
 import { CardNotFound } from "@/ui/components/card-not-found";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
 import { PromptDialog } from "@/ui/components/prompt-dialog";
+import { GameFlow } from "@/ui/components/game-flow";
 import { EmptyState, PageHeader, Panel } from "@/ui/components/page";
 import { PlayerHistoryTable } from "@/ui/components/player-history-table";
-import { PenaltySword, ResultEntryGrid, ResultViewGrid, type EntrySlot } from "@/ui/components/result-entry-grid";
+import { ResultEntryGrid, ResultViewGrid, type EntrySlot } from "@/ui/components/result-entry-grid";
 import { FreshSecretInput } from "@/ui/components/fresh-secret-input";
-import { RankingGrid } from "@/ui/components/standings-grids";
+import { PairingGrid, RankingGrid } from "@/ui/components/standings-grids";
 import { OverrideEditor } from "@/ui/components/override-editor";
 import { FinalRoundBoard } from "@/ui/components/final-round-board";
 import { SelectMenu } from "@/ui/components/select-menu";
 import { operatorStageLabels } from "@/ui/components/stage-info";
 
+function OperationsStatus({ reviewing, blockLabel, allComplete }: { reviewing: boolean; blockLabel: string; allComplete: boolean }) {
+  const state = reviewing
+    ? { tone: "warning" as const, label: "ตรวจผลก่อนเผยแพร่", detail: "ผลยังไม่ขึ้นหน้าภาพรวม" }
+    : allComplete
+      ? { tone: "success" as const, label: "กรอกผลครบแล้ว", detail: "พร้อมให้ผู้อำนวยการตรวจผล" }
+      : { tone: "info" as const, label: "กำลังรวบรวมผล", detail: "บันทึกผลได้ทีละคู่" };
+  return (
+    <div className="operator-state-strip" role="status" aria-label="สถานะการดำเนินงาน">
+      <Badge tone={state.tone}>{state.label}</Badge>
+      <strong>{blockLabel}</strong>
+      <span>{state.detail}</span>
+    </div>
+  );
+}
+
+/** Non-active view: ranking per game (window-slide); click a player row to see their history. */
 function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
   card: TournamentCard;
   players: Map<string, Player>;
@@ -36,23 +52,8 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
   onRevokePenalty: (pairing: Pairing) => void;
 }) {
   const [rankingGame, setRankingGame] = useState<number | null>(null);
+  const [editGame, setEditGame] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Published results are read-only until the director re-enters the password for that game.
-  const verifyPassword = useTournamentStore((state) => state.verifyPassword);
-  const [unlocked, setUnlocked] = useState<number | null>(null);
-  const [asking, setAsking] = useState<number | null>(null);
-  const [pwBusy, setPwBusy] = useState(false);
-  const [pwError, setPwError] = useState("");
-  const askUnlock = (game: number) => { setPwError(""); setAsking(game); };
-  const confirmUnlock = async (password: string) => {
-    if (!password || asking === null) return;
-    setPwBusy(true); setPwError("");
-    try {
-      if (await verifyPassword(password)) { setUnlocked(asking); setAsking(null); }
-      else setPwError("รหัสผ่านไม่ถูกต้อง");
-    } catch { setPwError("ตรวจสอบรหัสผ่านไม่สำเร็จ"); }
-    finally { setPwBusy(false); }
-  };
   const publishedSnapshots = card.snapshots.filter((snapshot) => Boolean(snapshot.confirmedAt));
   const games = [...new Set(publishedSnapshots.flatMap((snapshot) => snapshot.gameNumbers))].sort((a, b) => a - b);
   const latest = games[games.length - 1] ?? 0;
@@ -60,38 +61,36 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
   const rankingCard = { ...card, snapshots: publishedSnapshots };
   const ranked = selected > 0 ? rankingAfterGame(rankingCard, selected) : [];
   const selectedPlayer = selectedId ? players.get(selectedId) : undefined;
-  const publishedPairingsForGame = (game: number) => {
-    const snapshot = publishedSnapshots.find((item) => item.gameNumbers.includes(game));
-    return snapshot?.pairings.filter((pairing) => (pairing.gameNumber ?? game) === game) ?? [];
-  };
 
   return (
     <>
       {games.length > 0 ? (
-        <section className="panel" aria-label="อันดับหลังจบเกม">
-          <div className="panel-head"><h2>อันดับ · หลังเกม {selected}</h2><span className="desc">คะแนนชัยชนะและผลต่างสะสม</span>
-            <span className="actions"><SelectMenu appearance="prototype" ariaLabel="เลือกเกมสำหรับอันดับ" value={String(selected)}
-              options={games.map((game) => ({ value: String(game), label: `เกม ${game}${game === latest ? " · ล่าสุด" : ""}` }))}
-              onChange={(value) => { const game = Number(value); setRankingGame(game); setUnlocked(null); if (canEdit && game !== latest) askUnlock(game); }} /></span></div>
+        <Panel title="อันดับประจำแต่ละเกม" description="เลือกเกมเพื่อดูคะแนนชัยชนะและผลต่างสะสม · คลิกผู้เล่นเพื่อดูประวัติการเล่นรายเกม">
+          <div className="panel-padding archive-game-flow"><GameFlow card={rankingCard} selectedGame={selected} onSelect={setRankingGame} mode="ranking" /></div>
+          <div className="archive-rule-summary"><strong>อันดับหลังจบเกม {selected}</strong><span>เรียงตาม Win Point แล้ว Total Difference</span></div>
           <RankingGrid ranked={ranked} storageKey={`${card.id}:games:ranking`} resetKey={String(selected)} onRowClick={(player) => setSelectedId(player.id)} activeId={selectedId} />
-        </section>
+        </Panel>
       ) : (
-        <div className="notice notice--quiet"><p>ยังไม่มีอันดับที่เผยแพร่</p></div>
+        <Panel><EmptyState icon={<Gamepad2 size={25} />} title="ยังไม่มีอันดับที่เผยแพร่" description="อันดับและประวัติการเล่นจะปรากฏที่นี่หลังผู้อำนวยการเผยแพร่ผลเกมแรก" /></Panel>
       )}
 
-      {games.length > 0 && <section className="panel director-grid-panel" aria-label={`ผล เกม ${selected}`}>
-        <div className="panel-head"><h2>ผล เกม {selected}</h2><span className="desc">{canEdit && unlocked === selected ? "โหมดแก้ไข" : "ดูอย่างเดียว"}</span>
-          {canEdit && unlocked !== selected && <span className="actions"><button type="button" className="btn btn--sm btn--secondary" onClick={() => askUnlock(selected)}>
-            <LockKeyhole className="i" size={13} />แก้ไขผล</button></span>}</div>
-        {canEdit && unlocked === selected
-          ? <OverrideEditor key={selected} block={[selected]} pairingsForGame={publishedPairingsForGame} players={players} onCommit={onOverride}
-              onRevokePenalty={onRevokePenalty} onDone={() => setUnlocked(null)} />
-          : <ResultViewGrid pairings={publishedPairingsForGame(selected)} players={players} />}
-      </section>}
-      {canEdit && <PromptDialog appearance="prototype" open={asking !== null} eyebrow="ยืนยันตัวตน" title="ยืนยันรหัสผ่านผู้อำนวยการ"
-        description={`กรอกรหัสผ่านเพื่อแก้ไขผลเกม ${asking ?? ""} ที่เผยแพร่แล้ว · อันดับจะคำนวณใหม่ทันทีและระบบบันทึกกิจกรรม`}
-        label="รหัสผ่าน" type="password" confirmLabel="ยืนยัน" busy={pwBusy} error={pwError || undefined}
-        onSubmit={(value) => void confirmUnlock(value)} onCancel={() => { if (!pwBusy) { setAsking(null); setPwError(""); } }} />}
+      {canEdit && games.length > 0 && (() => {
+        const target = editGame && games.includes(editGame) ? editGame : selected;
+        const snap = publishedSnapshots.find((s) => s.gameNumbers.includes(target));
+        const editPairings = snap?.pairings.filter((p) => (p.gameNumber ?? target) === target) ?? [];
+        const slots: EntrySlot[] = [...editPairings].sort((a, b) => a.tableNumber - b.tableNumber).map((p) => ({ tableNumber: p.tableNumber, pairing: p, isVoid: isVoidPairing(p) }));
+        const maxDiff = card.games.find((g) => g.number === target)?.maxDiff ?? 350;
+        return (
+          <Panel
+            title="แก้ไขผลเกมที่เผยแพร่แล้ว"
+            description="ผู้อำนวยการแก้ผลย้อนหลังได้ทุกเวลา · ระบบคำนวณอันดับใหม่ แต่ไม่จับคู่เดิมใหม่ (ถ้าต้องการจับคู่ใหม่ ให้ยกเลิกการจับคู่ที่หน้าโต๊ะแข่งขัน)"
+            actions={<div className="overview-game-select"><label htmlFor="override-game">เลือกเกม</label><select id="override-game" className="select" value={target} onChange={(event) => setEditGame(Number(event.target.value))}>{games.map((g) => <option key={g} value={g}>เกม {g}</option>)}</select></div>}
+          >
+            <div className="notice notice--warning" style={{ margin: 18 }}><LockKeyhole size={18} /><p><strong>การแก้ผลที่เผยแพร่แล้วมีผลต่ออันดับทันที</strong><span>ระบบบันทึก audit log ทุกครั้ง · กรอกคะแนนแล้วกด Enter เพื่อบันทึก</span></p></div>
+            <ResultEntryGrid gameNumber={target} slots={slots} players={players} maxDiff={maxDiff} storageKey={`${card.id}:override:${target}`} onSubmit={(pairing, scoreOne, scoreTwo) => onOverride(pairing.id, scoreOne, scoreTwo)} onRevokePenalty={onRevokePenalty} />
+          </Panel>
+        );
+      })()}
 
       {selectedPlayer && (
         <Panel
@@ -107,11 +106,10 @@ function GamesBrowse({ card, players, canEdit, onOverride, onRevokePenalty }: {
 }
 
 /** Final / championship round: seeding review (director starts) then the entry + summary board. */
-function FinalRoundView({ card, canManage, onStart, onFinishWithRegularResults, onSubmitGame, onSetWinner, onPublish }: {
+function FinalRoundView({ card, canManage, onStart, onSubmitGame, onSetWinner, onPublish }: {
   card: TournamentCard;
   canManage: boolean;
   onStart: () => Promise<void>;
-  onFinishWithRegularResults: () => Promise<void>;
   onSubmitGame: (slot: number, gameIndex: number, scoreOne: number, scoreTwo: number, password?: string) => Promise<void>;
   onSetWinner: (slot: number, winnerId: string, winnerWins: number, winnerLosses: number, totalDiff: number, password?: string) => Promise<void>;
   onPublish: () => Promise<void>;
@@ -119,12 +117,7 @@ function FinalRoundView({ card, canManage, onStart, onFinishWithRegularResults, 
   const [busy, setBusy] = useState(false);
   const seeding = card.runtimeStage === "FINAL_SEEDING";
   const needed = card.finalType === "CHAMPION_AND_THIRD" ? 4 : 2;
-  const seedIds = card.finalRound?.seedPlayerIds;
-  const seeds = seedIds
-    ? seedIds.flatMap((id) => card.players.filter((player) => player.id === id))
-    : card.players.filter((player) => !player.terminated)
-      .sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff).slice(0, needed);
-  const insufficient = seeds.length < needed;
+  const seeds = [...card.players].sort((a, b) => b.winPoints - a.winPoints || b.diff - a.diff).slice(0, needed);
   const start = async () => {
     if (!await appDialog.confirm("ผู้เข้าชิงจะถูกล็อกตามอันดับนี้ และจะแก้ไขผล/ยกเลิกการจับคู่ของเกมปกติไม่ได้อีก", {
       title: "เริ่มรอบชิง?",
@@ -134,29 +127,14 @@ function FinalRoundView({ card, canManage, onStart, onFinishWithRegularResults, 
     setBusy(true);
     try { await onStart(); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เริ่มรอบชิงไม่สำเร็จ", "เริ่มรอบชิงไม่สำเร็จ", true); } finally { setBusy(false); }
   };
-  const finishWithRegularResults = async () => {
-    if (!await appDialog.confirm("ยืนยันใช้อันดับจากผลรอบปกติที่เผยแพร่แล้วเป็นอันดับสุดท้ายของรุ่นนี้", {
-      title: "จบด้วยอันดับรอบปกติ?",
-      confirmLabel: "ยืนยันจบการแข่งขัน",
-      danger: true,
-    })) return;
-    setBusy(true);
-    try {
-      await onFinishWithRegularResults();
-    } catch (error) {
-      await appDialog.alert(error instanceof Error ? error.message : "จบการแข่งขันไม่สำเร็จ", "จบการแข่งขันไม่สำเร็จ", true);
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <>
       <PageHeader eyebrow={`${card.name} · รอบชิงชนะเลิศ`} title="รอบชิงชนะเลิศ"
-        description={seeding ? "ตรวจรายชื่อผู้เข้าชิงตามอันดับหลังเกมปกติเกมสุดท้าย" : "กรอกผลรายเกม (ไม่มี max diff) แล้วสรุปผู้ชนะของแต่ละคู่เอง"} />
+        description={seeding ? "ตรวจรายชื่อผู้เข้าชิงตามอันดับท้ายเกมสุดท้าย แล้วกดเริ่มรอบชิง" : "กรอกผลรายเกม (ไม่มี max diff) แล้วสรุปผู้ชนะของแต่ละคู่เอง"} />
       {seeding ? (
         <Panel title="ผู้เข้าชิง (ตรวจก่อนเริ่ม)" description={card.finalType === "CHAMPION_AND_THIRD" ? "ชิงที่ 1 (อันดับ 1,2) และชิงที่ 3 (อันดับ 3,4)" : "ชิงที่ 1 (อันดับ 1,2)"}>
           <div className="panel-padding">
-            {insufficient ? (
+            {seeds.length < needed ? (
               <p className="form-error">ผู้เล่นไม่พอสำหรับรอบชิง (ต้องการ {needed} คน มี {seeds.length} คน)</p>
             ) : (
               <ol className="final-seed-list">
@@ -169,13 +147,8 @@ function FinalRoundView({ card, canManage, onStart, onFinishWithRegularResults, 
                 ))}
               </ol>
             )}
-            {!insufficient && <div className="notice notice--warning" style={{ marginTop: 12 }}><LockKeyhole size={18} /><p><strong>เริ่มรอบชิงแล้วล็อกถาวร</strong><span>หลังเริ่ม จะแก้ไขผลเกมปกติหรือยกเลิกการจับคู่ไม่ได้อีก</span></p></div>}
-            {canManage && <div className="form-actions" style={{ paddingLeft: 0 }}>
-              {insufficient ? <>
-                <Link href={`/cards/${card.id}/players`} className="btn btn--secondary" prefetch={false}>ไปหน้าผู้เล่น</Link>
-                {seedIds && <Button disabled={busy} onClick={() => void finishWithRegularResults()}>จบด้วยอันดับรอบปกติ</Button>}
-              </> : <Button disabled={busy} onClick={() => void start()}><Trophy size={16} />เริ่มรอบชิง (ล็อก seed)</Button>}
-            </div>}
+            <div className="notice notice--warning" style={{ marginTop: 12 }}><LockKeyhole size={18} /><p><strong>เริ่มรอบชิงแล้วล็อกถาวร</strong><span>หลังเริ่ม จะแก้ไขผลเกมปกติหรือยกเลิกการจับคู่ไม่ได้อีก</span></p></div>
+            {canManage && <div className="form-actions" style={{ paddingLeft: 0 }}><Button disabled={busy || seeds.length < needed} onClick={() => void start()}><Trophy size={16} />เริ่มรอบชิง (ล็อก seed)</Button></div>}
           </div>
         </Panel>
       ) : (
@@ -215,27 +188,14 @@ export default function GamesPage() {
   const revokePenalty = useTournamentStore((state) => state.revokePenalty);
   const swapPlayers = useTournamentStore((state) => state.swapPlayers);
   const unpairCurrentPairing = useTournamentStore((state) => state.unpairCurrentPairing);
-  const syncCard = useTournamentStore((state) => state.syncCard);
-  const terminatePublicationHolds = useTournamentStore((state) => state.terminatePublicationHolds);
   const publishNextPairing = useTournamentStore((state) => state.publishNextPairing);
   const verifyPassword = useTournamentStore((state) => state.verifyPassword);
   const startFinal = useTournamentStore((state) => state.startFinal);
-  const finishWithRegularResults = useTournamentStore((state) => state.finishWithRegularResults);
   const submitFinalResult = useTournamentStore((state) => state.submitFinalResult);
   const setFinalWinner = useTournamentStore((state) => state.setFinalWinner);
   const publishFinal = useTournamentStore((state) => state.publishFinal);
   const card = selectCard(cards, id); const [busy, setBusy] = useState(false);
   const [viewKey, setViewKey] = useState<string | null>(null);
-  const [activeGame, setActiveGame] = useState<number>();
-  const [unpairOpen, setUnpairOpen] = useState(false);
-  const [publicationHolds, setPublicationHolds] = useState<string[]>();
-  const [actionError, setActionError] = useState("");
-  const [byeMatch, setByeMatch] = useState<Pairing>();
-  const [byeScore, setByeScore] = useState("");
-  const [byePassword, setByePassword] = useState("");
-  const [byeError, setByeError] = useState("");
-  const [byeBusy, setByeBusy] = useState(false);
-  const forceBye = useTournamentStore((state) => state.forceBye);
   const [editUnlocked, setEditUnlocked] = useState(false);
   const [pwOpen, setPwOpen] = useState(false); const [pwBusy, setPwBusy] = useState(false); const [pwError, setPwError] = useState("");
   // Director "ลงดาบ" penalty dialog.
@@ -251,30 +211,33 @@ export default function GamesPage() {
   if (!card) return <CardNotFound />;
 
   const playerMap = new Map(card.players.map((player) => [player.id, player]));
-  const configuredGames = resultBlockGames(card);
-  const activeGames = editableResultGames(card);
-  const pairResultBlock = activeGames.length > 1;
-  const displayedGame = activeGames.includes(activeGame ?? 0) ? activeGame : activeGames[0];
+  const activeGames = resultBlockGames(card);
+  const pairResultBlock = isPairResultBlock(card);
   const blockLabel = activeGames.length === 1 ? `เกม ${activeGames[0]}` : `เกม ${activeGames[0]}–${activeGames[activeGames.length - 1]}`;
-  const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.some((game) => activeGames.includes(game)));
+  const currentSnapshot = card.snapshots.find((snapshot) => !snapshot.confirmedAt && snapshot.gameNumbers.includes(card.currentGame));
   const pairings = currentSnapshot?.pairings.filter((pairing) => activeGames.includes(pairing.gameNumber ?? card.currentGame)) ?? [];
   const resultCollection = card.runtimeStage === "RESULT_COLLECTION"; const reviewing = card.runtimeStage === "RESULT_REVIEW";
+  // PAIR_RESULT materialises exactly one destination row per source row, including byes; voided
+  // slots leave both sides of the equation, or the gate could never open. See `blockCompletion`.
   const allComplete = blockCompletion(pairings, activeGames, card.currentGame, pairResultBlock).complete;
   const pairingsForGame = (gameNumber: number) => pairings.filter((pairing) => (pairing.gameNumber ?? card.currentGame) === gameNumber);
-  const sourcePairings = pairResultBlock ? pairingsForGame(activeGames[0]) : [];
-  const sourceComplete = sourcePairings.length > 0 && sourcePairings.every((pair) => isVoidPairing(pair) || isRecordedPairing(pair));
-  const destinationPairingComplete = pairResultBlock && sourceComplete;
-  const legacySourcePublished = configuredGames.length > activeGames.length;
-  const destinationPairingPublished = legacySourcePublished ||
-    (pairResultBlock && pairingsForGame(activeGames[1]).some((pair) => pair.pairingPublished));
+  const live = (list: Pairing[]) => list.filter((pairing) => !isVoidPairing(pairing));
+  const sourcePairings = pairResultBlock ? live(pairingsForGame(activeGames[0])) : [];
+  const sourceComplete = sourcePairings.length > 0 && sourcePairings.every(isRecordedPairing);
+  const destinationPairings = pairResultBlock ? live(pairingsForGame(activeGames[1])) : [];
+  const hasAnyPlayer = (pairing?: Pairing) => Boolean(pairing?.playerOneId || pairing?.playerTwoId);
+  const destinationPairingComplete = pairResultBlock && sourceComplete
+    && destinationPairings.length === sourcePairings.length
+    && destinationPairings.every(hasAnyPlayer);
+  const destinationPairingPublished = destinationPairings.length > 0
+    && destinationPairings.every((pairing) => pairing.pairingPublished);
   const maxDiffForGame = (gameNumber: number) => card.games.find((game) => game.number === gameNumber)?.maxDiff ?? 350;
-  // Both operators can inspect published blocks. Historical edits require a director.
+  const latestActiveGame = activeGames[activeGames.length - 1];
+  const latestActivePairings = pairingsForGame(latestActiveGame);
+  // Director-only: navigate to any past/current result block; staff stays on the current block.
   const isDirector = canManageTournament(auth);
   const currentKey = activeGames.join("-");
-  const scheduledBlocks = allResultBlocks(card);
-  const selectableBlocks = [...scheduledBlocks.filter((block) => block[0] < card.currentGame
-    && card.snapshots.some(snapshot => snapshot.confirmedAt && snapshot.gameNumbers.includes(block[0]))),
-    ...(legacySourcePublished ? [[card.currentGame]] : []), activeGames];
+  const selectableBlocks = allResultBlocks(card).filter((block) => block[0] <= card.currentGame);
   const effectiveKey = viewKey && selectableBlocks.some((block) => block.join("-") === viewKey) ? viewKey : currentKey;
   const selectedBlock = selectableBlocks.find((block) => block.join("-") === effectiveKey) ?? activeGames;
   const viewingCurrent = effectiveKey === currentKey;
@@ -285,20 +248,6 @@ export default function GamesPage() {
   };
 
   const saveResult = (pairing: Pairing, scoreOne: number, scoreTwo: number, editExisting: boolean) => submitResult(id, pairing.id, scoreOne, scoreTwo, editExisting);
-  const openBye = (pairing: Pairing) => {
-    setByeScore(""); setByePassword(""); setByeError(""); setByeMatch(pairing);
-  };
-  const submitBye = async () => {
-    const player = byeMatch?.playerOneId ?? byeMatch?.playerTwoId;
-    const score = Number(byeScore);
-    if (!byeMatch || !player || !Number.isInteger(score) || score < 1 || score > 1500 || !byePassword) {
-      setByeError("กรอกคะแนนตั้งแต่ 1 ถึง 1500 และรหัสผ่านผู้อำนวยการ"); return;
-    }
-    setByeBusy(true); setByeError("");
-    try { await forceBye(id, byeMatch.id, player, score, byePassword); setByeMatch(undefined); setByePassword(""); }
-    catch (error) { setByeError(error instanceof Error ? error.message : "บันทึกผลบายไม่สำเร็จ"); }
-    finally { setByeBusy(false); }
-  };
   const beginReview = async () => { setBusy(true); try { await reviewResults(id); } catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เปิดหน้าตรวจผลไม่สำเร็จ", "เปิดตรวจผลไม่สำเร็จ", true); } finally { setBusy(false); } };
   const publishDestinationPairing = async () => {
     if (destinationPairingPublished) return;
@@ -316,59 +265,45 @@ export default function GamesPage() {
     finally { setBusy(false); }
   };
   const publish = async () => {
-    const held = (card.screeningPool ?? []).map((hold) => hold.player);
-    if (held.length) { setActionError(""); setPublicationHolds(held); return; }
     if (!await appDialog.confirm(`เผยแพร่ผล ${blockLabel}? ข้อมูลจะขึ้นหน้าภาพรวม และการแก้ไขภายหลังต้องใช้โหมดแก้ผลย้อนหลัง`, {
       title: "เผยแพร่ผลการแข่งขัน",
       confirmLabel: "เผยแพร่ผล",
     })) return;
     const finalGame = activeGames[activeGames.length - 1] === card.games.length; setBusy(true);
     try { await publishResults(id); navigate(finalGame ? `/cards/${id}` : `/cards/${id}/tables`); }
-    catch (error) {
-      if (error instanceof ApiError && error.code === "SCREENING_POOL_PENDING") {
-        await syncCard(id);
-        const current = selectCard(useTournamentStore.getState().cards, id);
-        const changed = current?.screeningPool?.map(hold => hold.player) ?? [];
-        if (changed.length) { setActionError(""); setPublicationHolds(changed); }
-        else await appDialog.alert(error.message, "มีผู้เล่นค้างในถังคัดชั่วคราว", true);
-      } else await appDialog.alert(error instanceof Error ? error.message : "เผยแพร่ผลไม่สำเร็จ", "เผยแพร่ผลไม่สำเร็จ", true);
-    } finally { setBusy(false); }
-  };
-  const resolvePublicationHolds = async (password: string) => {
-    if (!publicationHolds) return;
-    setBusy(true); setActionError("");
-    try { await terminatePublicationHolds(id, publicationHolds, password); setPublicationHolds(undefined); }
-    catch (error) {
-      if (error instanceof ApiError && error.code === "SCREENING_POOL_PENDING") {
-        await syncCard(id);
-        const current = selectCard(useTournamentStore.getState().cards, id);
-        const remaining = current?.screeningPool?.map(hold => hold.player) ?? [];
-        setPublicationHolds(remaining.length ? remaining : undefined);
-      }
-      setActionError(error instanceof Error ? error.message : "ถอนผู้เล่นไม่สำเร็จ");
-    }
-    finally { setBusy(false); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "เผยแพร่ผลไม่สำเร็จ", "เผยแพร่ผลไม่สำเร็จ", true); } finally { setBusy(false); }
   };
   // Director edit-pairing during result collection. The swap verifies the password itself, so a
   // wrong one returns 403 + BAD_PASSWORD from that request rather than from a pre-flight.
   const onSwapPairing = async (gameNumber: number, a: string, b: string, password: string): Promise<boolean> => {
     try { await swapPlayers(id, a, b, password, false, gameNumber); return true; }
     catch (error) {
+      if (isBadPassword(error)) {
+        await appDialog.alert(error.message, "ยืนยันตัวตนไม่สำเร็จ", true);
+        return false;
+      }
       const message = error instanceof Error ? error.message : "สลับผู้เล่นไม่สำเร็จ";
-      if (!message.includes("SCHOOL_CONFLICT")) throw error;
-      if (!await appDialog.confirm(message.replace("SCHOOL_CONFLICT: ", ""), {
+      if (message.includes("SCHOOL_CONFLICT") && await appDialog.confirm(message.replace("SCHOOL_CONFLICT: ", ""), {
         title: "พบผู้เล่นสถาบันเดียวกัน",
         confirmLabel: "ยืนยันการสลับ",
-      })) return false;
-      await swapPlayers(id, a, b, password, true, gameNumber);
-      return true;
+      })) {
+        try { await swapPlayers(id, a, b, password, true, gameNumber); return true; }
+        catch (retry) { await appDialog.alert(retry instanceof Error ? retry.message : "สลับผู้เล่นไม่สำเร็จ", "สลับผู้เล่นไม่สำเร็จ", true); return false; }
+      }
+      if (!message.includes("SCHOOL_CONFLICT")) await appDialog.alert(message, "สลับผู้เล่นไม่สำเร็จ", true);
+      return false;
     }
   };
-  const onUnpairing = async (password: string) => {
-    setBusy(true); setActionError("");
-    try { await unpairCurrentPairing(id, password); setUnpairOpen(false); navigate(`/cards/${id}/tables`); }
-    catch (error) { setActionError(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ"); }
-    finally { setBusy(false); }
+  const onUnpairing = async () => {
+    const password = await appDialog.prompt("Pairing ปัจจุบันจะถูกลบทั้งหมด และระบบจะกลับไปอยู่ในสถานะรอกด Pairing ใหม่ ใช้ได้เมื่อยังไม่มีการกรอกผลในเกมนี้", {
+      title: "ยืนยัน Unpairing",
+      label: "รหัสผ่านผู้อำนวยการ",
+      type: "password",
+      confirmLabel: "ยืนยัน Unpairing",
+    });
+    if (!password) return;
+    try { await unpairCurrentPairing(id, password); navigate(`/cards/${id}/tables`); }
+    catch (error) { await appDialog.alert(error instanceof Error ? error.message : "ยกเลิกการจับคู่ไม่สำเร็จ", "Unpairing ไม่สำเร็จ", true); }
   };
   const confirmPw = async (password: string) => {
     if (!password) return;
@@ -381,9 +316,6 @@ export default function GamesPage() {
   };
 
   const oneOnly = (pairing?: Pairing) => Boolean(pairing) && (Boolean(pairing!.playerOneId) !== Boolean(pairing!.playerTwoId));
-  const blockPicker = <SelectMenu appearance="prototype" ariaLabel="เลือกเกม" value={effectiveKey}
-    options={selectableBlocks.map((block) => ({ value: block.join("-"), label: `${blockLabelOf(block)}${block.join("-") === currentKey ? " · ปัจจุบัน" : ""}` }))}
-    onChange={(value) => { setEditUnlocked(false); setViewKey(value); }} />;
   const openPenalty = (pairing: Pairing) => { setPenaltyMatch(pairing.id); setPenaltyPoints(""); setPenaltyPw(""); setPenaltyError(""); };
   const submitPenalty = async () => {
     if (!penaltyMatch) return;
@@ -415,104 +347,124 @@ export default function GamesPage() {
   if (card.runtimeStage === "FINAL_SEEDING" || card.runtimeStage === "FINAL_COLLECTION" || (card.runtimeStage === "FINAL_PUBLISHED" && card.finalType !== "NONE")) {
     return <FinalRoundView card={card} canManage={isDirector}
       onStart={() => startFinal(id)}
-      onFinishWithRegularResults={() => finishWithRegularResults(id)}
       onSubmitGame={(slot, gameIndex, scoreOne, scoreTwo, password) => submitFinalResult(id, slot, gameIndex, scoreOne, scoreTwo, password)}
       onSetWinner={(slot, winnerId, winnerWins, winnerLosses, totalDiff, password) => setFinalWinner(id, slot, winnerId, winnerWins, winnerLosses, totalDiff, password)}
       onPublish={() => publishFinal(id)} />;
   }
 
-  if (!resultCollection && !reviewing) return <div className={`director-score${isDirector ? "" : " staff-score"}`}>
-    <div className="page-head"><div className="ttl"><span className="eyebrow">{card.name} · {card.division} · {operatorStageLabels[card.runtimeStage]}</span><h1>ผลการแข่งขัน</h1></div>
-      {isDirector && (card.runtimeStage === "TABLE_PAIRING" || card.runtimeStage === "PAIRING_PREVIEW") && <div className="actions"><Link className="btn btn--primary" prefetch={false} href={`/cards/${id}/tables`}>ไปหน้าโต๊ะแข่งขัน <ArrowRight className="i" size={14} /></Link></div>}</div>
-    <GamesBrowse card={card} players={playerMap} canEdit={isDirector} onOverride={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onRevokePenalty={withdrawPenalty} />
-  </div>;
+  if (!resultCollection && !reviewing) return <><PageHeader eyebrow={`${card.name} · ${operatorStageLabels[card.runtimeStage]}`} title="ผลการแข่งขัน" description="ดูอันดับแต่ละเกม และค้นหาผู้เล่นเพื่อดูประวัติการเล่นย้อนหลัง · การกรอกผลจะเปิดเมื่อยืนยัน pairing เกมปัจจุบัน" /><GamesBrowse card={card} players={playerMap} canEdit={isDirector} onOverride={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onRevokePenalty={withdrawPenalty} /></>;
 
   return (
-    <div className={`director-score${isDirector ? "" : " staff-score"}`}>
-      <div className="page-head">
-        <div className="ttl"><h1>{reviewing ? (isDirector ? "ตรวจผลการแข่งขัน" : "ผู้อำนวยการกำลังตรวจผล") : <span className="sr">ผลการแข่งขัน</span>}</h1></div>
-        {isDirector && (resultCollection
-          ? <div className="actions">
-              {viewingCurrent && !destinationPairingPublished && pairings.some((pair) => !isVoidPairing(pair)) && !pairings.some(isRecordedPairing) &&
-                <Button variant="secondary" className="btn btn--secondary" disabled={busy} onClick={() => { setActionError(""); setUnpairOpen(true); }}><Undo2 className="i" size={14} />Unpairing</Button>}
+    <>
+      <PageHeader
+        className="results-entry-header"
+        eyebrow={`${card.name} · ${blockLabel}`}
+        title={reviewing ? "ตรวจผลการแข่งขัน" : "กรอกผลการแข่งขัน"}
+        description={reviewing ? "ตรวจคะแนนก่อนเผยแพร่" : pairResultBlock ? "กรอกผลเกมต้นทาง แล้วตรวจคู่เกมถัดไปในหน้านี้" : "กรอกคะแนนแล้วกด Enter หรือเซฟในแถว"}
+        actions={canManageTournament(auth) && (resultCollection
+          ? <div className="page-actions">
               {pairResultBlock && !destinationPairingPublished && (
-                <Button variant="secondary" className="btn btn--secondary" disabled={busy || !viewingCurrent || !destinationPairingComplete} onClick={() => void publishDestinationPairing()}
+                <Button variant="secondary" disabled={busy || !destinationPairingComplete} onClick={() => void publishDestinationPairing()}
                   title={destinationPairingComplete ? `เผยแพร่ Pairing เกม ${activeGames[1]} ไปยังหน้าภาพรวม` : `ต้องให้ Pairing เกม ${activeGames[1]} สร้างครบก่อน`}>
-                  <Megaphone className="i" size={14} />เผยแพร่คู่แข่งขัน เกม {activeGames[1]}
+                  <Megaphone size={16} />เผยแพร่คู่แข่งขัน เกม {activeGames[1]}
                 </Button>
               )}
-              {blockPicker}
-              <Button variant="success" className="btn btn--success" disabled={!viewingCurrent || !allComplete || busy} onClick={beginReview}
-                title={!viewingCurrent ? "เลือกเกมปัจจุบันก่อนตรวจผล" : allComplete ? undefined : "ต้องบันทึกผลให้ครบทุกคู่ก่อน"}><Eye className="i" size={14} />ตรวจผล <ArrowRight className="i" size={14} /></Button>
+              <Button variant="success" disabled={!allComplete || busy} onClick={beginReview}><Eye size={16} />ตรวจผล <ArrowRight size={16} /></Button>
             </div>
-          : <div className="actions"><Button className="btn btn--secondary" variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft className="i" size={14} />กลับไปแก้ไข</Button>
-            <Button className="btn btn--publish" disabled={busy} onClick={publish}>{navPending ? <LoaderCircle className="i spin" size={14} /> : <Globe className="i" size={14} />}เผยแพร่ผล {blockLabel}</Button></div>)}
-      </div>
-      {!isDirector && resultCollection && selectableBlocks.length > 1 && <div className="actions">{blockPicker}</div>}
-      {resultCollection && !viewingCurrent ? (
-        isDirector && editUnlocked ? <OverrideEditor key={effectiveKey} block={selectedBlock} pairingsForGame={publishedPairingsForGame} players={playerMap} onCommit={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onRevokePenalty={withdrawPenalty} onDone={() => setEditUnlocked(false)} /> : <>
-          <div className="notice notice--warning"><p><strong>ผลย้อนหลัง · {blockLabelOf(selectedBlock)}</strong>{isDirector && <span>ต้องยืนยันรหัสผ่านก่อนแก้ไข</span>}</p>
-            {isDirector && <Button className="btn btn--secondary" variant="secondary" onClick={() => { setPwError(""); setPwOpen(true); }}><LockKeyhole className="i" size={13} />ยืนยันรหัสผ่านเพื่อแก้ไข</Button>}
+          : <div className="page-actions"><Button variant="secondary" disabled={busy} onClick={() => void reopenResults(id)}><ArrowLeft size={16} />กลับไปแก้ไข</Button><Button variant="success" disabled={busy} onClick={publish}>{navPending ? <LoaderCircle className="loading-spinner" size={16} /> : activeGames[activeGames.length - 1] === card.games.length ? <Trophy size={16} /> : <Check size={16} />}เผยแพร่ผล</Button></div>)}
+      />
+      <OperationsStatus reviewing={reviewing} blockLabel={blockLabel} allComplete={allComplete} />
+      {!isDirector && resultCollection && allComplete && (
+        <div className="notice notice--success"><CheckCircle2 size={18} /><p><strong>กรอกผล{blockLabel}ครบทุกคู่แล้ว</strong><span>รอผู้อำนวยการตรวจผลและเผยแพร่ — แก้ไขคะแนนได้ก่อนเผยแพร่</span></p></div>
+      )}
+      {!isDirector && reviewing && (
+        <div className="notice notice--info"><Eye size={18} /><p><strong>ผู้อำนวยการกำลังตรวจผล{blockLabel}</strong><span>ผลจะขึ้นหน้าภาพรวมทันทีที่เผยแพร่</span></p></div>
+      )}
+      {isDirector && resultCollection && selectableBlocks.length > 1 && (
+        <div className="entry-toolbar director-game-toolbar">
+          <div className="director-game-picker">
+            <span className="director-game-picker__label">เลือกเกม/บล็อกที่จะดู (ผู้อำนวยการ)</span>
+            <SelectMenu
+              ariaLabel="เลือกเกมหรือบล็อกผลการแข่งขัน"
+              className="director-game-menu"
+              value={effectiveKey}
+              options={selectableBlocks.map((block) => ({
+                value: block.join("-"),
+                label: `${blockLabelOf(block)}${block.join("-") === currentKey ? " · ปัจจุบัน" : ""}`,
+              }))}
+              onChange={setViewKey}
+            />
           </div>
-          {selectedBlock.map((gameNumber) => <section className="panel director-grid-panel" key={gameNumber} aria-label={`ผล เกม ${gameNumber} (ย้อนหลัง)`}>
-              {selectedBlock.length > 1 && <div className="panel-head"><h2>เกม {gameNumber}</h2></div>}
-              <ResultViewGrid pairings={publishedPairingsForGame(gameNumber)} players={playerMap} />
-            </section>)}
-        </>
+          {!viewingCurrent && <span className="director-game-toolbar__note">กำลังดูเกมย้อนหลัง — แก้ได้หลังยืนยันรหัสผ่าน · standing คำนวณใหม่ทุกเกม แต่ pairing เดิมไม่ถูกจับใหม่</span>}
+        </div>
+      )}
+      {resultCollection && !viewingCurrent ? (
+        editUnlocked ? (
+          <OverrideEditor key={effectiveKey} block={selectedBlock} pairingsForGame={publishedPairingsForGame} players={playerMap} onCommit={(matchId, scoreOne, scoreTwo) => overrideResult(id, matchId, scoreOne, scoreTwo)} onRevokePenalty={withdrawPenalty} onDone={() => setEditUnlocked(false)} />
+        ) : (
+          <>
+            <div className="notice notice--warning"><LockKeyhole size={18} /><p><strong>แก้ไขผลย้อนหลัง (เฉพาะผู้อำนวยการ)</strong><span>ยืนยันรหัสผ่านบัญชีของคุณก่อน จึงจะแก้ผลของบล็อกนี้ได้ · แก้ได้หลายคู่แล้วบันทึกทีเดียว</span></p><Button size="sm" onClick={() => { setPwError(""); setPwOpen(true); }}><LockKeyhole size={14} />ยืนยันรหัสผ่านเพื่อแก้ไข</Button></div>
+            {selectedBlock.map((gameNumber) => {
+              const past = publishedPairingsForGame(gameNumber);
+              if (past.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`เกม ${gameNumber} ยังไม่มีผลที่เผยแพร่`} description="เลือกบล็อกอื่นจาก dropdown" /></Panel>;
+              return <Panel key={gameNumber} title={`ผล เกม ${gameNumber} (ย้อนหลัง)`} description="ดูอย่างเดียว — ยืนยันรหัสผ่านเพื่อแก้ไข"><ResultViewGrid pairings={past} players={playerMap} storageKey={`${id}:past:${gameNumber}`} /></Panel>;
+            })}
+          </>
+        )
       ) : resultCollection ? <>
-        {pairResultBlock && <div className="block-game-buttons" role="group" aria-label="เลือกเกมในชุดนี้">
-          {activeGames.map((game) => <button type="button" className="btn btn--sm btn--secondary" key={game}
-            aria-pressed={displayedGame === game} onClick={() => setActiveGame(game)}>เกม {game}</button>)}
-        </div>}
         {activeGames.map((gameNumber) => {
           const gamePairings = pairingsForGame(gameNumber);
           const maxDiff = maxDiffForGame(gameNumber);
           const isDestination = pairResultBlock && gameNumber === activeGames[1];
-          const tables = [...new Set([...gamePairings.map((pair) => pair.tableNumber),
-            ...(isDestination ? sourcePairings.map((pair) => pair.tableNumber) : [])])].sort((a,b) => a-b);
-          const slots: EntrySlot[] = tables.map((tableNumber) => {
-            const pairing = gamePairings.find((pair) => pair.tableNumber === tableNumber);
-            const group = Math.floor((tableNumber - 1) / 2);
-            const sources = sourcePairings.filter((pair) => Math.floor((pair.tableNumber - 1) / 2) === group);
-            const ready = !isDestination || sourceComplete || (sources.length > 0
-              && sources.every((pair) => isVoidPairing(pair) || isRecordedPairing(pair)));
-            const isBye = oneOnly(pairing) && (ready || Boolean(pairing?.resultType) || Boolean(pairing?.manualPairing));
-            return { tableNumber, pairing, isBye, waiting: isDestination && !ready && !pairing?.voided,
-              isVoid: Boolean(pairing?.voided) || (ready && isVoidPairing(pairing)) };
-          });
-          const pairingEdit = isDirector ? {
-            onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password),
-            swapDisabled: !gamePairings.some((pair) => pair.playerOneId || pair.playerTwoId),
-            seats: card.slotLabel === "SEAT",
-          } : undefined;
+          // A one-player game-1 row is a bye; a one-player destination row is a bye once the whole source game is recorded.
+          const destinationSourceComplete = isDestination && sourceComplete;
+          const slots: EntrySlot[] = isDestination
+            ? [...pairingsForGame(activeGames[0])].sort((a, b) => a.tableNumber - b.tableNumber).map((source) => { const dest = gamePairings.find((d) => d.tableNumber === source.tableNumber); return { tableNumber: source.tableNumber, pairing: dest, isBye: oneOnly(dest) && destinationSourceComplete, isVoid: isVoidPairing(source) }; })
+            : [...gamePairings].sort((a, b) => a.tableNumber - b.tableNumber).map((pairing) => ({ tableNumber: pairing.tableNumber, pairing, isBye: oneOnly(pairing), isVoid: isVoidPairing(pairing) }));
+          // A voided slot counts on neither side of the badge: it is resolved, not outstanding.
+          const liveSlots = slots.filter((slot) => !slot.isVoid);
+          const completed = live(gamePairings).filter(isRecordedPairing).length;
+          const destinationHasPlayers = isDestination && gamePairings.some(hasAnyPlayer);
+          const publishTitle = !sourceComplete
+            ? `ต้องกรอกผล เกม ${activeGames[0]} ให้ครบก่อน`
+            : !destinationPairingComplete
+              ? `คู่แข่งขันเกม ${gameNumber} ยังสร้างไม่ครบ`
+              : `เผยแพร่คู่แข่งขันเกม ${gameNumber} ไปยังหน้าภาพรวม`;
+          const pairingEdit = isDirector
+            ? isDestination
+              ? {
+                  onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password),
+                  swapDisabled: !destinationHasPlayers,
+                  swapTitle: destinationHasPlayers ? "สลับผู้เล่นในคู่แข่งขันเกมปลายทางที่ยังไม่กรอกผล" : "ยังไม่มีผู้เล่นในคู่แข่งขันเกมปลายทางให้สลับ",
+                  onPublish: destinationPairingPublished ? undefined : publishDestinationPairing,
+                  publishDisabled: busy || !destinationPairingComplete,
+                  publishLabel: `เผยแพร่คู่แข่งขันเกม ${gameNumber}`,
+                  publishTitle,
+                }
+              : gameNumber === card.currentGame
+                ? { onSwap: (a: string, b: string, password: string) => onSwapPairing(gameNumber, a, b, password), onUnpair: onUnpairing }
+                : undefined
+            : undefined;
           if (slots.length === 0) return <Panel key={gameNumber}><EmptyState icon={<Gamepad2 size={25} />} title={`เกม ${gameNumber} ยังไม่มีคู่แข่งขัน`} description="ยืนยันคู่แข่งขันเกมนี้ก่อนจึงจะกรอกผลได้" /></Panel>;
-          return <section className="panel director-grid-panel" key={gameNumber} aria-label="ผลการแข่งขัน" hidden={gameNumber !== displayedGame}>
-            {pairResultBlock && <div className="panel-head"><h2>เกม {gameNumber}</h2></div>}
-            <ResultEntryGrid gameNumber={gameNumber} codePrefix={card.codePrefix ?? card.players[0]?.id.match(/^[A-Za-z]+/)?.[0] ?? "P"} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} onForceBye={isDirector && isDestination ? openBye : undefined} pairingEdit={pairingEdit} />
-          </section>;
+          return <Panel key={gameNumber} title={`กรอกผล เกม ${gameNumber}`} description={`บันทึกแล้ว ${completed}/${liveSlots.length} คู่ · Max diff ${maxDiff}`} actions={<Badge tone={completed === liveSlots.length ? "success" : "warning"}>{completed}/{liveSlots.length} คู่</Badge>}>
+            <ResultEntryGrid gameNumber={gameNumber} slots={slots} players={playerMap} maxDiff={maxDiff} storageKey={`${id}:${gameNumber}`} onSubmit={saveResult} onPenalty={isDirector ? openPenalty : undefined} onRevokePenalty={isDirector ? withdrawPenalty : undefined} pairingEdit={pairingEdit} />
+          </Panel>;
         })}
       </> : (
         <>{activeGames.map((gameNumber) => {
-          return <section className="panel director-grid-panel" key={gameNumber} aria-label="ตรวจผลการแข่งขัน">
-            {pairResultBlock && <div className="panel-head"><h2>เกม {gameNumber}</h2></div>}
-            <ResultViewGrid pairings={pairingsForGame(gameNumber)} players={playerMap} />
-          </section>;
+          const gamePairings = pairingsForGame(gameNumber); const maxDiff = maxDiffForGame(gameNumber);
+          return <Panel key={gameNumber} title={`ตรวจผล เกม ${gameNumber}`} description={`${gamePairings.length} คู่ · ผลต่างสูงสุด ${maxDiff}`}>
+            <ResultViewGrid pairings={gamePairings} players={playerMap} storageKey={`${id}:review:${gameNumber}`} />
+          </Panel>;
         })}</>
       )}
-      <PromptDialog appearance="prototype" open={unpairOpen} title="ยืนยัน Unpairing" label="รหัสผ่านผู้อำนวยการ" type="password"
-        description="ระบบจะยกเลิกคู่ปัจจุบันและกลับไปหน้าสร้างคู่แข่งขัน" danger busy={busy} error={actionError}
-        confirmLabel="ยืนยัน Unpairing" onSubmit={onUnpairing} onCancel={() => setUnpairOpen(false)} />
-      <PromptDialog appearance="prototype" open={Boolean(publicationHolds)} title={`มีผู้เล่นค้างในถังคัดชั่วคราว ${publicationHolds?.length ?? 0} คน`}
-        label="รหัสผ่านผู้อำนวยการ" type="password" busy={busy} danger error={actionError}
-        description="ถอนผู้เล่นเหล่านี้เพื่อกลับมาตรวจและเผยแพร่ผลการแข่งขัน" confirmLabel="ถอนผู้เล่นออก"
-        onSubmit={resolvePublicationHolds} onCancel={() => setPublicationHolds(undefined)}>
-        <ul className="publication-hold-list">{publicationHolds?.map((code) => {
-          const player = playerMap.get(code);
-          return <li key={code}><b className="code">{code}</b> {player?.firstName} {player?.lastName}</li>;
-        })}</ul>
-      </PromptDialog>
+      {viewingCurrent && latestActivePairings.length > 0 && (
+        <Panel title={`คู่แข่งขันเกม ${latestActiveGame}`} description="คู่แข่งขันของเกมที่กำลังกรอกผล">
+          <PairingGrid pairings={latestActivePairings} players={playerMap} storageKey={`${id}:games:current-pairing`} />
+        </Panel>
+      )}
+
       <PromptDialog
-        appearance="prototype"
         open={pwOpen}
         eyebrow="ยืนยันตัวตน"
         title="ยืนยันรหัสผ่านผู้อำนวยการ"
@@ -526,24 +478,10 @@ export default function GamesPage() {
         onCancel={() => { if (!pwBusy) { setPwOpen(false); setPwError(""); } }}
       />
 
-      <ConfirmDialog appearance="prototype" open={Boolean(byeMatch)}
-        title={`ให้บาย · เกม ${byeMatch?.gameNumber ?? ""} คู่ ${byeMatch?.tableNumber ?? ""}`}
-        description={`${byeMatch?.playerOneId ?? byeMatch?.playerTwoId ?? ""} จะชนะบาย ผู้เล่นที่เข้ามาทีหลังจะรอจัดคู่แยก`}
-        confirmLabel="ยืนยันและบันทึกผลบาย" busy={byeBusy} error={byeError || undefined}
-        onConfirm={() => void submitBye()} onCancel={() => { if (!byeBusy) { setByeMatch(undefined); setByePassword(""); } }}>
-        <label className="form-label" htmlFor="force-bye-score">คะแนนผู้เล่น</label>
-        <input className="input" id="force-bye-score" type="number" min={1} max={1500} value={byeScore}
-          onChange={(event) => setByeScore(event.target.value)} />
-        <label className="form-label" htmlFor="force-bye-password">รหัสผ่านผู้อำนวยการ</label>
-        <FreshSecretInput className="input" id="force-bye-password" value={byePassword}
-          onChange={(event) => setByePassword(event.target.value)} />
-      </ConfirmDialog>
-
       <ConfirmDialog
-        appearance="prototype"
         open={penaltyMatch !== null}
         eyebrow="ลงดาบ"
-        icon={<PenaltySword size={20} />}
+        icon={<Gavel size={20} />}
         title="บังคับแพ้ทั้งคู่"
         description={`กำหนดแต้มที่หัก (diff −X) ให้ทั้งคู่ของคู่นี้ (รวมคู่บายที่มีคนเดียว) แล้วยืนยันด้วยรหัสผ่านผู้อำนวยการ (${auth.username})`}
         confirmLabel="ยืนยันลงดาบ"
@@ -559,6 +497,6 @@ export default function GamesPage() {
         <label className="form-label" htmlFor="penalty-pw">รหัสผ่านผู้อำนวยการ</label>
         <FreshSecretInput className="input" id="penalty-pw" value={penaltyPw} placeholder="รหัสผ่าน" disabled={penaltyBusy} onChange={(event) => setPenaltyPw(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submitPenalty(); }} />
       </ConfirmDialog>
-    </div>
+    </>
   );
 }

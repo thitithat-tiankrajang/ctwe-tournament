@@ -70,14 +70,28 @@ export interface BlockCompletion {
   complete: boolean;
 }
 
-/** Every occupied slot in the active games must be scored, including a single-seat bye. */
+/**
+ * The review gate's arithmetic, with voided slots removed from BOTH sides.
+ *
+ * Counting a voided slot can only produce a gate that never opens: it can never be recorded, so
+ * `completed` could never reach an `expected` that included it. This mirrors the server's own rule
+ * — `requireBlockFullyResolved` skips `voided_at IS NOT NULL` — and the server is what actually
+ * authorises the transition. This only decides whether to offer it.
+ *
+ * `expected` still derives from the SOURCE row count in a PAIR_RESULT block, because that is what
+ * detects destination rows that have not been materialised yet: those are missing from `pairings`
+ * entirely, so only a count derived from elsewhere can notice they are absent.
+ */
 export function blockCompletion(
   pairings: readonly Pairing[],
   games: readonly number[],
   currentGame: number,
-  _pairResult: boolean,
+  pairResult: boolean,
 ): BlockCompletion {
-  const live = pairings.filter((pairing) => games.includes(pairing.gameNumber ?? currentGame) && !isVoidPairing(pairing));
+  const live = pairings.filter((pairing) => !isVoidPairing(pairing));
+  const gameOf = (pairing: Pairing) => pairing.gameNumber ?? currentGame;
+  const sources = pairResult ? live.filter((pairing) => gameOf(pairing) === games[0]).length : live.length;
+  const expected = pairResult ? sources * games.length : sources;
   const completed = live.filter(isRecordedPairing).length;
-  return { live: live.length, expected: live.length, completed, complete: completed === live.length };
+  return { live: live.length, expected, completed, complete: live.length === expected && completed === expected };
 }

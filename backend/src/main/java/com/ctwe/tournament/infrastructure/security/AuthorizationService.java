@@ -25,13 +25,13 @@ import java.util.UUID;
 @Service
 public class AuthorizationService {
     /**
-     * FORCE_BYE and PENALIZE_RESULT are director-only, including withdrawal of an existing penalty.
+     * PENALIZE_RESULT is intentionally director-only, including withdrawal of an existing penalty.
      *
      * <p>MANAGE_PAIRING covers the Screening Pool and Multi Switching — holding a player out of the
-     * active pairing, returning them, and committing a batch of pairing changes. It follows the
-     * standard admin-or-director rule.
+     * active pairing, returning them, and committing a batch of pairing changes. It falls through to
+     * the same admin-or-director rule as the rest; only PENALIZE_RESULT needs its own branch.
      */
-    public enum Capability { MANAGE_PLAYERS, SUBMIT_RESULT, RUN_TOURNAMENT, PENALIZE_RESULT, MANAGE_PAIRING, FORCE_BYE }
+    public enum Capability { MANAGE_PLAYERS, SUBMIT_RESULT, RUN_TOURNAMENT, PENALIZE_RESULT, MANAGE_PAIRING }
 
     private final JdbcTemplate jdbc;
 
@@ -115,10 +115,6 @@ public class AuthorizationService {
     }
 
     private void enforceRole(Authentication auth, Capability capability) {
-        if (capability == Capability.FORCE_BYE) {
-            if (isDirector(auth)) return;
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "การให้บายสงวนสำหรับผู้อำนวยการเท่านั้น");
-        }
         if (capability == Capability.PENALIZE_RESULT) {
             if (isDirector(auth)) return;
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,

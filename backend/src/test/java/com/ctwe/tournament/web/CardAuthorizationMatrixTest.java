@@ -28,8 +28,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import com.ctwe.tournament.application.WebPushService;
 
 /**
  * The staff/director boundary, asserted at the HTTP layer rather than by which buttons render.
@@ -52,9 +50,6 @@ import com.ctwe.tournament.application.WebPushService;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class CardAuthorizationMatrixTest {
-
-    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
-    @MockitoBean WebPushService webPush;
 
     /**
      * A real password for the seeded principals. Password-bearing endpoints re-authenticate AFTER
@@ -81,17 +76,9 @@ class CardAuthorizationMatrixTest {
     private UUID cardId;
     private UUID tournamentId;
 
-    /** A synthetic tournament inside the rolled-back test transaction: no reliance on existing data. */
-    private UUID syntheticTournament() {
-        UUID id = UUID.randomUUID();
-        jdbc.update("INSERT INTO tournaments (id, name, access_token, status) VALUES (?, ?, ?, 'OPEN')",
-            id, "IT " + id, "it-" + id);
-        return id;
-    }
-
     @BeforeEach
     void seedTenancy() {
-        tournamentId = syntheticTournament();
+        tournamentId = jdbc.queryForObject("SELECT id FROM tournaments WHERE status = 'OPEN' LIMIT 1", UUID.class);
         cardId = cards.create(new CardDtos.CreateCardRequest(tournamentId, "AUTHZ-" + UUID.randomUUID(),
             "DIV", 2, List.of(PairingRuleType.SWISS), List.of(250, 250), "NONE", 0, false,
             PairingRuleType.RANDOM, null), "ittest").id();
@@ -139,14 +126,13 @@ class CardAuthorizationMatrixTest {
     private List<MockHttpServletRequestBuilder> lifecycleMutations() {
         String card = "/api/cards/" + cardId;
         String pw = "{\"password\":\"" + PASSWORD + "\"}";
-        String version = "\"" + cards.cardVersion(cardId) + "\"";
         String commit = "{\"commitKey\":\"" + UUID.randomUUID() + "\",\"password\":\"" + PASSWORD + "\",\"force\":false,"
             + "\"expect\":[],\"slots\":[],\"screen\":[],\"release\":[],\"confirmWarnings\":[]}";
         List<MockHttpServletRequestBuilder> requests = new ArrayList<>(List.of(
             json(post(card + "/players"), "{\"firstName\":\"a\",\"lastName\":\"b\",\"school\":\"c\"}"),
             json(post(card + "/players/bulk"), "{\"players\":[{\"firstName\":\"a\",\"lastName\":\"b\",\"school\":\"c\"}]}"),
-            json(put(card + "/players/A001").header("If-Match", version), "{\"firstName\":\"a\",\"lastName\":\"b\",\"school\":\"c\"}"),
-            delete(card + "/players/A001").header("If-Match", version),
+            json(put(card + "/players/A001"), "{\"firstName\":\"a\",\"lastName\":\"b\",\"school\":\"c\"}"),
+            delete(card + "/players/A001"),
             post(card + "/registration/finish"),
             post(card + "/registration/reopen"),
             post(card + "/pairings/preview"),

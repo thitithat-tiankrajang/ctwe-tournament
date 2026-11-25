@@ -18,7 +18,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * The pairing tool's commit contract: atomicity, the per-slot precondition, idempotency, the hard
@@ -29,9 +28,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class PairingSessionIntegrationTest {
-
-    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
-    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
@@ -49,16 +45,8 @@ class PairingSessionIntegrationTest {
 
     // ---- scaffolding -------------------------------------------------------
 
-    /** A synthetic tournament inside the rolled-back test transaction: no reliance on existing data. */
-    private UUID syntheticTournament() {
-        UUID id = UUID.randomUUID();
-        jdbc.update("INSERT INTO tournaments (id, name, access_token, status) VALUES (?, ?, ?, 'OPEN')",
-            id, "IT " + id, "it-" + id);
-        return id;
-    }
-
     private UUID cardWithPairing(int players) {
-        UUID tournamentId = syntheticTournament();
+        UUID tournamentId = jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
         List<PairingRuleType> edges = List.of(PairingRuleType.SWISS, PairingRuleType.SWISS);
         UUID cardId = cards.create(new CardDtos.CreateCardRequest(tournamentId, "PS-" + UUID.randomUUID(),
             "DIV", 3, edges, List.of(500, 500, 500), "NONE", 0, false, PairingRuleType.RANDOM, null), ACTOR).id();
@@ -211,27 +199,6 @@ class PairingSessionIntegrationTest {
             "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 1", Long.class, cardId);
         assertThat(tablesAfter).as("voided, never deleted — seat numbers derive from table_number")
             .isEqualTo(tablesBefore);
-    }
-
-    @Test
-    void returningToAVoidedSlotRestoresItsOccupantAndClearsTheVoid() {
-        UUID cardId = cardWithPairing(8);
-        int[] first = fullSlot(cardId);
-        String one = id(cardId, first[2]);
-        String two = id(cardId, first[3]);
-        session.commit(cardId, request(
-            List.of(slot(1, first[1], one, two)), List.of(),
-            List.of(new CardDtos.ScreenEntry(one, "LATE", null), new CardDtos.ScreenEntry(two, "LATE", null)),
-            List.of(), List.of()), ACTOR);
-
-        session.commit(cardId, request(
-            List.of(slot(1, first[1], null, null)),
-            List.of(slot(1, first[1], one, null)), List.of(), List.of(one), List.of()), ACTOR);
-
-        assertThat(jdbc.queryForObject("""
-            SELECT player_one = ? AND voided_at IS NULL AND voided_by IS NULL
-            FROM matches WHERE card_id = ? AND game_number = 1 AND table_number = ?
-            """, Boolean.class, first[2], cardId, first[1])).isTrue();
     }
 
     @Test
