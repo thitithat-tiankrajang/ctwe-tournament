@@ -24,3 +24,24 @@ export function allResultBlocks(card: TournamentCard): number[][] {
   }
   return blocks;
 }
+
+/** Published source games keep their historical view while the destination stays editable. */
+export function editableResultGames(card: TournamentCard): number[] {
+  const games = resultBlockGames(card);
+  const sourcePublished = games.length > 1 && card.snapshots.some((snapshot) =>
+    Boolean(snapshot.confirmedAt) && snapshot.gameNumbers.length === 1 && snapshot.gameNumbers[0] === games[0]);
+  return sourcePublished ? games.slice(1) : games;
+}
+
+export function rosterBlockScopes(card: TournamentCard) {
+  const block = resultBlockGames(card);
+  if (card.runtimeStage !== "RESULT_COLLECTION" || block.length < 2) return [];
+  const games = editableResultGames(card);
+  const last = block[block.length - 1];
+  return [
+    ...games.map((game) => game === block[0]
+      ? { game, label: `ทั้งชุด เกม ${block[0]}–${last}`, detail: "เอาออกจากคู่ทั้งชุด" }
+      : { game, label: `ตั้งแต่เกม ${game}`, detail: `คงคู่ ผล และอันดับเกม ${game - 1}` }),
+    { game: last + 1, label: "หลังจบชุดนี้", detail: "คงคู่ ผล และอันดับทั้งชุด" },
+  ];
+}

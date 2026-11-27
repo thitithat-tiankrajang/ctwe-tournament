@@ -73,7 +73,7 @@ test("a row still shows the division alone, never the game again", () => {
   // UI-R4: the heading names the game once. This is a source guard because the row is JSX, and
   // the rule it protects is exactly the one a "make the game visible" fix would be tempted to undo.
   const view = readFileSync(join(process.cwd(), "src/ui/components/tournament-viewer.tsx"), "utf8");
-  const row = view.match(/<span className="card-select-row__name">\{([^}]*)\}<\/span>/);
-  assert.ok(row, "the browse row no longer renders card-select-row__name");
+  const row = view.match(/<span className="vrow__main">\{([^}]*)\}<\/span>/);
+  assert.ok(row, "the viewer division row no longer renders vrow__main");
   assert.equal(row![1].trim(), "card.division");
 });

@@ -14,6 +14,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -24,8 +25,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import com.ctwe.tournament.application.WebPushService;
 
 /**
  * {@code GET /api/card-summaries} end to end: the five-way caller matrix B3 requires, and the value
@@ -40,6 +45,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class CardSummaryEndpointDatabaseTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
@@ -153,6 +161,40 @@ class CardSummaryEndpointDatabaseTest {
         String body = loggedIn(STAFF).get("/api/card-summaries").body();
         assertThat(body).contains(mineCard.toString());
         assertThat(body).doesNotContain(theirsCard.toString());
+    }
+
+    @Test
+    void disablingStaffRevokesBothSessionsAndClosesThePrivateEventStream() throws Exception {
+        jdbc.update("UPDATE staff_accounts SET created_by = ? WHERE username = ?", DIRECTOR, STAFF);
+        Browser director = loggedIn(DIRECTOR);
+        Browser reader = loggedIn(STAFF);
+        Browser writer = loggedIn(STAFF);
+        String directorToken = director.csrf();
+        String writerToken = writer.csrf();
+        String cardPath = "/api/cards/" + mineCard;
+        assertThat(reader.get(cardPath).body()).contains("ผู้เล่น1");
+
+        try (InputStream live = reader.events(cardPath + "/events")) {
+            assertThat(director.json("PATCH", "/api/director/staff/" + STAFF + "/enabled",
+                "{\"enabled\":false}", directorToken).statusCode()).isEqualTo(204);
+            CompletableFuture.runAsync(() -> {
+                try {
+                    live.transferTo(java.io.OutputStream.nullOutputStream());
+                } catch (java.io.IOException error) {
+                    throw new java.io.UncheckedIOException(error);
+                }
+            }).get(4, TimeUnit.SECONDS);
+            // Finishing the SSE request may itself have invalidated the reader's servlet session.
+            // Read a protected endpoint and check the card's public projection separately.
+            assertThat(reader.get("/api/card-summaries").statusCode()).isEqualTo(401);
+            assertThat(reader.get(cardPath).body()).doesNotContain("ผู้เล่น1");
+            // The writer has a separate session that has made no request since disable.
+            assertThat(writer.json("PUT", cardPath + "/matches/g1t1/result",
+                "{\"scoreOne\":410,\"scoreTwo\":389}", writerToken).statusCode()).isEqualTo(401);
+            assertThat(reader.get("/api/auth/me").body()).contains("\"authenticated\":false");
+            assertThat(director.get(cardPath).body()).contains("ผู้เล่น1");
+            assertThat(new Browser().login(STAFF)).isEqualTo(401);
+        }
     }
 
     @Test
@@ -288,10 +330,32 @@ class CardSummaryEndpointDatabaseTest {
             return response;
         }
 
-        int login(String username) throws Exception {
+        String csrf() throws Exception {
             String body = get("/api/auth/me").body();
             int i = body.indexOf("\"csrfToken\":\"");
-            String token = body.substring(i + 13, body.indexOf('"', i + 13));
+            return body.substring(i + 13, body.indexOf('"', i + 13));
+        }
+
+        HttpResponse<String> json(String method, String path, String body, String csrf) throws Exception {
+            return http.send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + path))
+                .header("Cookie", cookieHeader())
+                .header("Content-Type", "application/json")
+                .header("X-XSRF-TOKEN", csrf)
+                .method(method, HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+        }
+
+        InputStream events(String path) throws Exception {
+            var response = http.send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + path))
+                .header("Cookie", cookieHeader()).header("Accept", "text/event-stream")
+                .GET().build(), HttpResponse.BodyHandlers.ofInputStream());
+            assertThat(response.statusCode()).isEqualTo(200);
+            return response.body();
+        }
+
+        int login(String username) throws Exception {
+            String token = csrf();
             String form = "username=" + URLEncoder.encode(username, StandardCharsets.UTF_8)
                 + "&password=" + URLEncoder.encode(PASSWORD, StandardCharsets.UTF_8)
                 + "&_csrf=" + URLEncoder.encode(token, StandardCharsets.UTF_8);

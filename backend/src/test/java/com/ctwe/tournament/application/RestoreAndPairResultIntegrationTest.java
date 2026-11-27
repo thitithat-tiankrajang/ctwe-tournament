@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Real-Postgres integration tests (localhost:5432) — every test runs inside a transaction that is
@@ -30,6 +32,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class RestoreAndPairResultIntegrationTest {
 
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
+
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
         registry.add("security.staff.username", () -> "ittest");
@@ -41,8 +46,16 @@ class RestoreAndPairResultIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired RankingSource rankingSource;
 
+    /** A synthetic tournament inside the rolled-back test transaction: no reliance on existing data. */
+    private UUID syntheticTournament() {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO tournaments (id, name, access_token, status) VALUES (?, ?, ?, 'OPEN')",
+            id, "IT " + id, "it-" + id);
+        return id;
+    }
+
     private UUID tournamentId() {
-        return jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
+        return syntheticTournament();
     }
 
     private UUID createCard(int games, PairingRuleType initial, List<PairingRuleType> edgeRules) {
@@ -340,62 +353,205 @@ class RestoreAndPairResultIntegrationTest {
         assertThat(losses).isGreaterThanOrEqualTo(1);
     }
 
-    // ---- Bug 1: publishing the PAIR_RESULT destination confirms the source game as its own snapshot ----
     @Test
-    void publishNextConfirmsSourceGameSnapshotAndKeepsItEditable() {
+    void pairedGamesExposeLiveScoresOnlyAfterTheirOwnPairingIsPublished() {
         UUID cardId = createCard(4, PairingRuleType.RANDOM,
             List.of(PairingRuleType.SWISS, PairingRuleType.SWISS, PairingRuleType.PAIR_RESULT));
         addPlayers(cardId, 8);
         service.finishRegistration(cardId, "ittest");
+        runGame(cardId);
+        runGame(cardId);
 
-        runGame(cardId); // game 1
-        runGame(cardId); // game 2
-        assertThat(currentGame(cardId)).isEqualTo(3);
-
-        // Game 3 is the PAIR_RESULT source: pair it and score every table (winner = player_one).
         service.generatePairingPreview(cardId, "ittest");
         service.confirmPairingPreview(cardId, "ittest");
+        assertThatThrownBy(() -> service.publishPairResultDestination(cardId, "ittest"))
+            .isInstanceOf(IllegalArgumentException.class);
         int sourceTables = jdbc.queryForObject(
             "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 3", Integer.class, cardId);
+        long beforeSave = publicCard(cardId).version();
         for (int table = 1; table <= sourceTables; table++)
             service.submitResult(cardId, "g3t" + table, new CardDtos.ResultRequest(100, 72, false), "ittest");
 
-        // Before publish-next: nothing snapshotted, destination materialised but not published.
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ? AND game_from = 3", Long.class, cardId)).isZero();
+        var visibleSource = publicCard(cardId);
+        assertThat(visibleSource.version()).isEqualTo(beforeSave + sourceTables);
+        var sourceOnly = visibleSource.snapshots().stream().filter(s -> s.confirmedAt().isBlank()).findFirst().orElseThrow();
+        assertThat(sourceOnly.gameNumbers()).containsExactly(3);
+        assertThat(sourceOnly.pairings()).allSatisfy(row -> assertThat(row.scoreOne()).isEqualTo(100));
 
+        var privateSave = service.submitResult(cardId, "g4t3", new CardDtos.ResultRequest(90, 80, false), "ittest");
+        assertThat(privateSave.publicVersion()).isNull();
+        var afterPrivateSave = publicCard(cardId);
+        assertThat(afterPrivateSave.version()).isEqualTo(visibleSource.version());
+        assertThat(afterPrivateSave.snapshots()).isEqualTo(visibleSource.snapshots());
+
+        // The open block can include an empty destination placeholder.
+        jdbc.update("INSERT INTO matches (card_id, game_number, table_number) VALUES (?, 4, 100)", cardId);
         service.publishPairResultDestination(cardId, "ittest");
+        assertThatThrownBy(() -> service.publishPairResultDestination(cardId, "ittest"))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(currentGame(cardId)).isEqualTo(3);
+        var publicBlock = publicCard(cardId).snapshots().stream()
+            .filter(snapshot -> snapshot.confirmedAt().isBlank()).findFirst().orElseThrow();
+        assertThat(publicBlock.gameNumbers()).containsExactly(3, 4);
+        assertThat(publicBlock.pairings()).allSatisfy(pairing -> {
+            assertThat(pairing.pairingPublished()).isTrue();
+            assertThat(pairing.pairingPublishedAt()).isNotBlank();
+            assertThat(pairing.tableNumber()).isNotEqualTo(100);
+        });
+        assertThat(publicBlock.pairings()).anySatisfy(row -> {
+            assertThat(row.id()).isEqualTo("g4t3");
+            assertThat(row.scoreOne()).isEqualTo(90);
+        });
 
-        // Source game 3 is now a confirmed single-game snapshot; the destination stays open for scoring.
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ? AND game_from = 3 AND game_to = 3 AND confirmed_at IS NOT NULL",
-            Long.class, cardId)).isEqualTo(1L);
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 3 AND snapshot_no IS NULL", Long.class, cardId)).isZero();
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 4 AND snapshot_no IS NULL", Long.class, cardId)).isGreaterThan(0L);
-        assertThat(currentGame(cardId)).isEqualTo(3); // still the source game until the destination publishes
-
-        // R2: the published source game stays editable via overrideResult (director "แก้เกมเก่า"),
-        // which does not hit the immutability guard and re-stamps the snapshot time.
-        int diffBefore = jdbc.queryForObject(
-            "SELECT calculated_diff FROM matches WHERE card_id = ? AND game_number = 3 AND table_number = 1", Integer.class, cardId);
-        service.overrideResult(cardId, "g3t1", new CardDtos.ResultRequest(120, 72, false), "ittest");
-        int diffAfter = jdbc.queryForObject(
-            "SELECT calculated_diff FROM matches WHERE card_id = ? AND game_number = 3 AND table_number = 1", Integer.class, cardId);
-        assertThat(diffAfter).isNotEqualTo(diffBefore); // edit took effect on a snapshotted (published) game
-        assertThat(jdbc.queryForObject(
-            "SELECT confirmed_at IS NOT NULL FROM pairing_snapshots WHERE card_id = ? AND game_from = 3", Boolean.class, cardId)).isTrue();
-
-        // Finishing the destination: it becomes its own snapshot (game 4), separate from game 3.
+        var patch = service.submitResult(cardId, "g3t1", new CardDtos.ResultRequest(110, 72, true), "ittest");
+        assertThat(patch.changedPairings()).anySatisfy(pair -> assertThat(pair.scoreOne()).isEqualTo(110));
+        var afterEdit = publicCard(cardId);
+        assertThat(patch.publicVersion()).isEqualTo(afterEdit.version());
+        assertThat(patch.publicPairingsChanged()).isTrue();
+        assertThat(afterEdit.snapshots().stream().filter(s -> s.confirmedAt().isBlank())
+            .flatMap(s -> s.pairings().stream())).anySatisfy(row -> {
+                assertThat(row.id()).isEqualTo("g3t1");
+                assertThat(row.scoreOne()).isEqualTo(110);
+            });
         service.autoResults(cardId, "ittest");
         service.reviewResults(cardId, "ittest");
         service.publishResults(cardId, "ittest");
+        var published = service.get(cardId, false);
+        var snapshot = published.snapshots().stream().filter(item -> item.gameNumbers().contains(3)).findFirst().orElseThrow();
+        assertThat(snapshot.gameNumbers()).containsExactly(3, 4);
+        assertThat(snapshot.confirmedAt()).isNotBlank();
+        assertThat(snapshot.pairings()).allSatisfy(pairing -> assertThat(pairing.resultType()).isNotNull());
         assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ? AND game_from = 4 AND game_to = 4", Long.class, cardId)).isEqualTo(1L);
-        // Game 4 is the last game, so the card finishes with two distinct snapshots (game 3, game 4).
+            "SELECT COUNT(*) FROM matches WHERE card_id = ? AND game_number = 4 AND table_number = 100", Long.class, cardId)).isZero();
         assertThat(jdbc.queryForObject("SELECT status FROM tournament_cards WHERE id = ?", String.class, cardId)).isEqualTo("FINISHED");
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM pairing_snapshots WHERE card_id = ? AND game_from IN (3, 4)", Long.class, cardId)).isEqualTo(2L);
+    }
+
+    private CardDtos.CardResponse publicCard(UUID cardId) {
+        long version = jdbc.queryForObject("SELECT public_version FROM tournament_cards WHERE id = ?", Long.class, cardId);
+        return PublicCardProjection.of(service.get(cardId, false), version);
+    }
+
+    @Test
+    void voidLastSlotDoesNotDropThePreviousTableFromTheSixPlayerSwissTail() {
+        UUID id = startPairedBlock(7);
+        var bye = gamePairs(id, 1).get(3);
+        String byePlayer = bye.playerOneId() != null ? bye.playerOneId() : bye.playerTwoId();
+        int code = Integer.parseInt(byePlayer.substring(1));
+        jdbc.update("UPDATE players SET terminated_at = now(), withdrawn_from_game = 1 WHERE card_id = ? AND code = ?", id, code);
+        jdbc.update("UPDATE matches SET player_one = NULL, player_two = NULL, voided_at = now(), voided_by = 'ittest' "
+            + "WHERE card_id = ? AND game_number = 1 AND table_number = 4", id);
+
+        scoreSource(id, 1, 500, 400, false);
+        scoreSource(id, 2, 600, 550, false);
+        scoreSource(id, 3, 450, 440, false);
+        assertThat(entrants(id, 2)).containsExactlyInAnyOrderElementsOf(entrants(id, 1));
+        var initial = gamePairs(id, 2);
+
+        service.publishPairResultDestination(id, "ittest");
+        scoreSource(id, 3, 440, 450, true);
+        assertThat(gamePairs(id, 2).stream().map(p -> java.util.Arrays.asList(p.playerOneId(), p.playerTwoId())).toList())
+            .isNotEqualTo(initial.stream().map(p -> java.util.Arrays.asList(p.playerOneId(), p.playerTwoId())).toList());
+        assertThat(entrants(id, 2)).containsExactlyInAnyOrderElementsOf(entrants(id, 1));
+
+        service.applyPenalty(id, "g1t3", 100, "ittest");
+        assertThat(entrants(id, 2)).containsExactlyInAnyOrderElementsOf(entrants(id, 1));
+        service.revokePenalty(id, "g1t3", "ittest");
+        assertThat(entrants(id, 2)).isEmpty();
+        scoreSource(id, 3, 440, 450, false);
+        assertThat(entrants(id, 2)).containsExactlyInAnyOrderElementsOf(entrants(id, 1));
+    }
+
+    @Test
+    void fivePlayerTailSeatsFiveExactlyOnceAndKeepsOneBye() {
+        UUID id = startPairedBlock(5);
+        scoreSource(id, 3, 430, 0, false);
+        scoreSource(id, 2, 500, 450, false);
+        assertThat(entrants(id, 2)).isEmpty();
+        scoreSource(id, 1, 510, 440, false);
+        assertThat(entrants(id, 2)).containsExactlyInAnyOrderElementsOf(entrants(id, 1));
+        assertThat(gamePairs(id, 2).stream().filter(p -> (p.playerOneId() == null) ^ (p.playerTwoId() == null))).hasSize(1);
+    }
+
+    @Test
+    void threePlayerTailPairsTheByeAgainstTheWinnerAndGivesTheLoserABye() {
+        UUID id = startPairedBlock(7);
+        var source = gamePairs(id, 1);
+        scoreSource(id, 4, 430, 0, false);
+        scoreSource(id, 3, 510, 450, false);
+        var tail = gamePairs(id, 2).stream().filter(pair -> pair.tableNumber() >= 3).toList();
+        assertThat(tail).hasSize(2);
+        assertThat(tail.get(0).playerOneId()).isEqualTo(source.get(2).playerOneId());
+        assertThat(tail.get(0).playerTwoId()).isEqualTo(source.get(3).playerOneId());
+        assertThat(tail.get(1).playerOneId()).isEqualTo(source.get(2).playerTwoId());
+        assertThat(tail.get(1).playerTwoId()).isNull();
+    }
+
+    @Test
+    void correctingSourceWinnerDoesNotDuplicateTheRemainingPlayerAfterWithdrawal() {
+        UUID id = startPairedBlock(4);
+        var source = gamePairs(id, 1);
+        String withdrawn = source.get(0).playerTwoId();
+        scoreSource(id, 1, 510, 450, false);
+        scoreSource(id, 2, 530, 460, false);
+        service.publishPairResultDestination(id, "ittest");
+        service.terminatePlayers(id, List.of(withdrawn), 2, "ittest");
+
+        scoreSource(id, 1, 450, 510, true);
+
+        var dest = gamePairs(id, 2);
+        assertThat(dest.get(0).playerOneId()).isNull();
+        assertThat(dest.get(0).playerTwoId()).isEqualTo(source.get(1).playerOneId());
+        assertThat(dest.get(1).playerOneId()).isEqualTo(source.get(0).playerOneId());
+        assertThat(dest.get(1).playerTwoId()).isEqualTo(source.get(1).playerTwoId());
+        assertThat(entrants(id, 2)).containsExactlyInAnyOrderElementsOf(
+            entrants(id, 1).stream().filter(player -> !player.equals(withdrawn)).toList());
+        service.autoResults(id, "ittest");
+        service.reviewResults(id, "ittest");
+        service.publishResults(id, "ittest");
+    }
+
+    @Test
+    void correctingSourceWinnerClearsAnObsoleteRedirectFromTheStaffPatch() {
+        UUID id = startPairedBlock(4);
+        var source = gamePairs(id, 1);
+        scoreSource(id, 1, 510, 450, false);
+        service.forceBye(id, "g2t1", source.get(0).playerOneId(), 100, "ittest");
+        scoreSource(id, 2, 530, 460, false);
+        service.publishPairResultDestination(id, "ittest");
+        service.terminatePlayers(id, List.of(source.get(1).playerTwoId()), 2, "ittest");
+
+        var patch = service.submitResult(id, "g1t2", new CardDtos.ResultRequest(460, 530, true), "ittest");
+
+        assertThat(patch.changedPairings()).anySatisfy(pair -> {
+            assertThat(pair.id()).isEqualTo("g2t3");
+            assertThat(pair.playerOneId()).isNull();
+            assertThat(pair.playerTwoId()).isNull();
+        });
+        assertThat(entrants(id, 2)).containsExactlyInAnyOrder(source.get(0).playerOneId(),
+            source.get(0).playerTwoId(), source.get(1).playerOneId());
+        assertThat(gamePairs(id, 2).get(0).scoreOne()).isEqualTo(100);
+    }
+
+    private UUID startPairedBlock(int players) {
+        UUID id = createCard(2, PairingRuleType.RANDOM, List.of(PairingRuleType.PAIR_RESULT));
+        addPlayers(id, players);
+        service.finishRegistration(id, "ittest");
+        service.generatePairingPreview(id, "ittest");
+        service.confirmPairingPreview(id, "ittest");
+        return id;
+    }
+
+    private List<CardDtos.PairingResponse> gamePairs(UUID cardId, int game) {
+        return service.get(cardId, true).snapshots().stream().flatMap(s -> s.pairings().stream())
+            .filter(row -> row.gameNumber() == game).toList();
+    }
+
+    private List<String> entrants(UUID id, int game) {
+        return gamePairs(id, game).stream().flatMap(row -> java.util.stream.Stream.of(row.playerOneId(), row.playerTwoId()))
+            .filter(java.util.Objects::nonNull).toList();
+    }
+
+    private void scoreSource(UUID id, int table, int one, int two, boolean editing) {
+        service.submitResult(id, "g1t" + table, new CardDtos.ResultRequest(one, two, editing), "ittest");
     }
 }

@@ -54,6 +54,39 @@ export function participantKey(divisionId: string, code: string): string {
   return `${divisionId}:${code}`;
 }
 
+/** Form entering a selected regular game, from the published results of earlier games. */
+export function spectatorPairingStats(division: SpectatorDivision, game: number) {
+  const streaks = new Map<string, number>();
+  const meetings = new Map<string, number>();
+  const pairKey = (one: string, two: string) => JSON.stringify([one, two].sort());
+  const prior = division.contests.filter(contest => contest.game < game && contest.state === "official")
+    .sort((a, b) => a.game - b.game);
+  for (const { assignments, result } of prior) {
+    if (!result) continue;
+    const [one, two] = assignments.map(assignment => assignment.participantKey);
+    if (result.type === "PENALTY") {
+      if (one) streaks.delete(one);
+      if (two) streaks.delete(two);
+      continue;
+    }
+    // A bye awards standings points without contributing to a streak or a meeting.
+    if (!one || !two) continue;
+    const winner = result.type === "WIN" ? result.winnerKey : null;
+    streaks.set(one, winner === one ? (streaks.get(one) ?? 0) + 1 : 0);
+    streaks.set(two, winner === two ? (streaks.get(two) ?? 0) + 1 : 0);
+    const key = pairKey(one, two);
+    meetings.set(key, (meetings.get(key) ?? 0) + 1);
+  }
+  return {
+    winStreak: (code?: string) => code ? streaks.get(participantKey(division.id, code)) ?? 0 : 0,
+    encounterNumber: (one: string | null, two: string | null) => {
+      if (!one || !two) return null;
+      const count = meetings.get(pairKey(participantKey(division.id, one), participantKey(division.id, two)));
+      return count === undefined ? null : count + 1;
+    },
+  };
+}
+
 /** No physical Table inference: existing public payloads do not identify a safe layout policy. */
 export function publicDivisionPayload(source: PublicDivisionPayload): PublicDivisionPayload {
   const { id, tournamentId, name, division, status, runtimeStage, currentGame, version, games,
@@ -110,9 +143,9 @@ export function spectatorDivision(card: PublicDivisionPayload): SpectatorDivisio
   // Map insertion order preserves the public snapshot/table order used by reports; replacing a
   // repeated locator updates its value without moving it or perturbing existing row order.
   const contests = [...byLocator.values()].map(candidate => candidate.contest);
-  const publishedGames = [...new Set(contests.map(contest => contest.game))].sort((a, b) => a - b);
   const officialGames = [...new Set(card.snapshots.filter(snapshot => snapshot.confirmedAt)
     .flatMap(snapshot => snapshot.gameNumbers))].sort((a, b) => a - b);
+  const publishedGames = [...new Set([...contests.map(contest => contest.game), ...officialGames])].sort((a, b) => a - b);
   const officialThroughGame = officialGames.at(-1) ?? null;
   const currentGame = Math.max(card.currentGame, ...publishedGames);
   const complete = card.status === "FINISHED" || card.status === "CLOSED" || card.runtimeStage === "FINAL_PUBLISHED";
@@ -123,7 +156,7 @@ export function spectatorDivision(card: PublicDivisionPayload): SpectatorDivisio
   return {
     id: card.id, tournamentId: card.tournamentId, name: card.name, division: card.division, version: card.version,
     participants: card.players.map(player => ({ key: key(player.id)!, code: player.id, divisionId: card.id,
-      name: `${player.firstName} ${player.lastName}`, school: player.school, listedInStandings: !player.terminated })),
+      name: `${player.firstName} ${player.lastName}`, school: player.school, listedInStandings: !player.terminated || (player.withdrawnFromGame ?? 0) > currentGame })),
     slotLabel: card.slotLabel ?? "PAIR",
     contests,
     publication: {

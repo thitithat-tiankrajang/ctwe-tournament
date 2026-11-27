@@ -40,6 +40,8 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import com.ctwe.tournament.application.WebPushService;
 
 /**
  * PHASE C against a real PostgreSQL — the same equivalence assertion as
@@ -66,6 +68,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class SnapshotLiveEquivalenceDatabaseTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
@@ -202,8 +207,8 @@ class SnapshotLiveEquivalenceDatabaseTest {
         UUID card = finalRoundCard();
         addPlayers(card, 6);
         playAllGames(card);
-        service.startFinalRound(card, "ittest");                  // FINAL_SEEDING -> FINAL_COLLECTION
-        service.submitFinalResult(card, 0, 1, 500, 400, "ittest");
+        service.startFinalRound(card, "ittest", null);            // FINAL_SEEDING -> FINAL_COLLECTION
+        service.submitFinalResult(card, 0, 1, 500, 400, "ittest", null);
 
         Result result = assertEquivalent();
 
@@ -223,10 +228,10 @@ class SnapshotLiveEquivalenceDatabaseTest {
         UUID card = finalRoundCard();
         addPlayers(card, 6);
         playAllGames(card);
-        service.startFinalRound(card, "ittest");
+        service.startFinalRound(card, "ittest", null);
         for (CardDtos.FinalSlotResponse slot : service.get(card, true).finalRound().slots()) {
-            service.submitFinalResult(card, slot.slot(), 1, 500, 400, "ittest");
-            service.setFinalWinner(card, slot.slot(), slot.playerOneId(), 1, 0, 100, "ittest");
+            service.submitFinalResult(card, slot.slot(), 1, 500, 400, "ittest", slot.pairingId());
+            service.setFinalWinner(card, slot.slot(), slot.playerOneId(), 1, 0, 100, "ittest", slot.pairingId());
         }
         service.publishFinalRound(card, "ittest");
 

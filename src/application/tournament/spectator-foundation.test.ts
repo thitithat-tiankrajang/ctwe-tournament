@@ -5,7 +5,7 @@ import type { Pairing, PublicTournamentBundle, TournamentCard } from "@/domain/t
 import { rankingAfterGame } from "@/domain/tournament/history";
 import { useTournamentStore } from "./store";
 import { isSpectatorRoute, spectatorCardFromHash } from "./spectator-route";
-import { legacyPublicCard, publicDivisionPayload, spectatorDivision } from "./spectator-read-model";
+import { legacyPublicCard, publicDivisionPayload, spectatorDivision, spectatorPairingStats } from "./spectator-read-model";
 import { applyPublicDelta, createSpectatorState } from "./spectator-state";
 
 const goldens = JSON.parse(readFileSync("backend/src/test/resources/golden/public-card-projection.json", "utf8")) as Record<string, TournamentCard>;
@@ -93,6 +93,52 @@ test("publication separates recorded and official results, suppresses penalty pl
   card.snapshots[0].pairings[0].resultWithdrawn = true;
   assert.equal(spectatorDivision(card).contests[0].state, "withdrawn");
   assert.equal(spectatorDivision(card).contests[0].result, null);
+});
+
+test("pairing stats count prior wins and meetings in game order, preserving streaks through byes", () => {
+  const card = fixture();
+  const [a, b, c] = card.players.map(player => player.id);
+  const row = (game: number, one: string, two: string | null, type: Pairing["resultType"], winner?: string): Pairing => ({
+    id: `g${game}t1`, gameNumber: game, tableNumber: 1, playerOneId: one, playerTwoId: two,
+    scoreOne: 450, scoreTwo: 450, resultType: type, winnerId: winner,
+  });
+  card.snapshots = [{ id: "official", gameNumbers: [1, 2, 3, 4, 5, 6, 7], confirmedAt: "2026-09-16T04:00:00Z", pairings: [
+    row(7, a, b, "WIN", b), row(4, b, a, "DRAW"), row(1, a, b, "WIN", a), row(2, c, a, "WIN", a),
+    row(3, a, null, "WIN", a), row(5, a, b, "WIN", a), row(6, a, c, "PENALTY"),
+  ] }];
+  const division = spectatorDivision(card);
+  const stats = (game: number) => spectatorPairingStats(division, game);
+  assert.equal(stats(1).winStreak(a), 0);
+  assert.equal(stats(1).encounterNumber(a, b), null);
+  assert.equal(stats(2).winStreak(a), 1);
+  assert.equal(stats(4).winStreak(a), 2);
+  assert.equal(stats(4).encounterNumber(b, a), 2);
+  assert.equal(stats(4).encounterNumber(b, c), null);
+  assert.equal(stats(4).encounterNumber(a, null), null);
+  assert.equal(stats(5).winStreak(a), 0);
+  assert.equal(stats(5).encounterNumber(a, b), 3);
+  assert.equal(stats(6).winStreak(a), 1);
+  assert.equal(stats(7).winStreak(a), 0);
+  assert.equal(stats(7).encounterNumber(a, c), 2);
+  assert.deepEqual([stats(8).winStreak(a), stats(8).winStreak(b)], [0, 1]);
+});
+
+test("pairing stats ignore provisional, withdrawn and void contests and count duplicate public IDs once", () => {
+  const card = fixture();
+  const [a, b] = card.players.map(player => player.id);
+  const result: Pairing = { id: "g1t1", gameNumber: 1, tableNumber: 1, playerOneId: a, playerTwoId: b,
+    resultType: "WIN", scoreOne: 500, scoreTwo: 400, winnerId: a, pairingPublished: true };
+  const official = { id: "official", gameNumbers: [1, 2, 3], confirmedAt: "2026-09-16T04:00:00Z", pairings: [
+    result, { ...result, id: "g2t1", gameNumber: 2, resultWithdrawn: true },
+    { ...result, id: "g3t1", gameNumber: 3, voided: true },
+  ] };
+  card.snapshots = [official, { ...official, id: "duplicate", pairings: [result] },
+    { id: "preview", gameNumbers: [4], confirmedAt: "", pairings: [{ ...result, id: "g4t1", gameNumber: 4, winnerId: b }] }];
+  const stats = spectatorPairingStats(spectatorDivision(card), 5);
+  assert.equal(stats.winStreak(a), 1);
+  assert.equal(stats.winStreak(b), 0);
+  assert.equal(stats.winStreak(undefined), 0);
+  assert.equal(stats.encounterNumber(a, b), 2);
 });
 
 test("finals expose no inferred seat or table, and unexposed pairings stay absent", () => {

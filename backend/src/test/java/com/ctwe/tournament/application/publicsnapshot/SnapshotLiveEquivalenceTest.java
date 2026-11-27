@@ -332,7 +332,7 @@ class SnapshotLiveEquivalenceTest {
     private TenantDtos.PublicTournamentBundle bundle(FakePublicDatabase database) {
         PublicCardReadCache readCache = new PublicCardReadCache(database.jdbc(), database.cardService());
         PublicTournamentController controller = new PublicTournamentController(
-            new TenantService(database.jdbc(), mock(PasswordEncoder.class), new ObjectMapper()),
+            new TenantService(database.jdbc(), mock(PasswordEncoder.class), new ObjectMapper(), event -> {}),
             new PublicCardQueryService(readCache),
             mock(CardEventPublisher.class));
 

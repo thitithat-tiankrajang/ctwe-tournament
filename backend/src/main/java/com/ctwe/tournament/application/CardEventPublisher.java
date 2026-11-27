@@ -6,6 +6,7 @@ import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.security.core.session.SessionInformation;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -14,6 +15,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -64,6 +66,7 @@ public class CardEventPublisher {
     /** Authoritative current version per live stream, captured at subscribe, for the resync hint. */
     private final Map<SseEmitter, LongSupplier> emitterVersions = new ConcurrentHashMap<>();
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
+    private final Map<SseEmitter, StaffStream> staffSessions = new ConcurrentHashMap<>();
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> publicEmitters = new ConcurrentHashMap<>();
     /** Keyed by tournament id: the viewer card LIST channel (card created/updated/removed facts). */
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> tournamentEmitters = new ConcurrentHashMap<>();
@@ -117,12 +120,27 @@ public class CardEventPublisher {
     }
 
     public SseEmitter subscribe(UUID cardId, LongSupplier currentVersion) {
-        return subscribe(emitters, cardId, currentVersion);
+        return subscribe(cardId, currentVersion, null);
+    }
+
+    public SseEmitter subscribe(UUID cardId, LongSupplier currentVersion, SessionInformation session) {
+        return subscribe(emitters, cardId, currentVersion, session);
+    }
+
+    public void disconnectStaffSessions(Set<String> sessionIds) {
+        staffSessions.forEach((emitter, stream) -> {
+            if (sessionIds.contains(stream.sessionId())) closeStaffStream(stream.cardId(), emitter);
+        });
+    }
+
+    private void closeStaffStream(UUID cardId, SseEmitter emitter) {
+        remove(emitters, cardId, emitter);
+        emitter.complete();
     }
 
     /** Public stream carries only public-safe invalidation signals and changed result rows. */
     public SseEmitter subscribePublic(UUID cardId, LongSupplier currentVersion) {
-        return subscribe(publicEmitters, cardId, currentVersion);
+        return subscribe(publicEmitters, cardId, currentVersion, null);
     }
 
     /**
@@ -131,13 +149,14 @@ public class CardEventPublisher {
      * the director created any card — had no way to learn about new cards short of refreshing.
      */
     public SseEmitter subscribeTournament(UUID tournamentId, LongSupplier catalogVersion) {
-        return subscribe(tournamentEmitters, tournamentId, catalogVersion);
+        return subscribe(tournamentEmitters, tournamentId, catalogVersion, null);
     }
 
     private SseEmitter subscribe(
         Map<UUID, CopyOnWriteArrayList<SseEmitter>> subscribers,
         UUID cardId,
-        LongSupplier currentVersion
+        LongSupplier currentVersion,
+        SessionInformation session
     ) {
         RuntimeSettings config = settings.get();
         // Both refusals below reject NEW subscribers only — established streams are never touched.
@@ -157,7 +176,11 @@ public class CardEventPublisher {
             // Captured so a resync hint can carry the AUTHORITATIVE version rather than a guess:
             // both clients decide whether to refetch by comparing it against what they hold.
             emitterVersions.put(emitter, currentVersion);
-            subscribers.computeIfAbsent(cardId, ignored -> new CopyOnWriteArrayList<>()).add(emitter);
+            subscribers.compute(cardId, (key, streamsForCard) -> {
+                var current = streamsForCard == null ? new CopyOnWriteArrayList<SseEmitter>() : streamsForCard;
+                current.add(emitter);
+                return current;
+            });
         } catch (RuntimeException error) {
             streams.decrementAndGet();
             throw error;
@@ -170,6 +193,15 @@ public class CardEventPublisher {
             emitter.complete();
         });
         emitter.onError(error -> remove.run());
+
+        if (session != null) {
+            staffSessions.put(emitter, new StaffStream(cardId, session.getSessionId()));
+            // Disable may commit while the already-authenticated request is registering its stream.
+            if (session.isExpired()) {
+                closeStaffStream(cardId, emitter);
+                return emitter;
+            }
+        }
 
         try {
             long version = currentVersion.getAsLong();
@@ -524,14 +556,19 @@ public class CardEventPublisher {
         UUID cardId,
         SseEmitter emitter
     ) {
-        CopyOnWriteArrayList<SseEmitter> cardEmitters = subscribers.get(cardId);
-        if (cardEmitters == null || !cardEmitters.remove(emitter)) return;
-        emitterVersions.remove(emitter);
-        // A stream that is gone owes nothing: the browser reconnects and `connected` resyncs it.
-        resyncDebt.remove(emitter);
-        counterOf(subscribers).decrementAndGet();
-        if (cardEmitters.isEmpty()) subscribers.remove(cardId, cardEmitters);
+        subscribers.computeIfPresent(cardId, (key, cardEmitters) -> {
+            if (cardEmitters.remove(emitter)) {
+                emitterVersions.remove(emitter);
+                staffSessions.remove(emitter);
+                // A stream that is gone owes nothing: the browser reconnects and `connected` resyncs it.
+                resyncDebt.remove(emitter);
+                counterOf(subscribers).decrementAndGet();
+            }
+            return cardEmitters.isEmpty() ? null : cardEmitters;
+        });
     }
+
+    private record StaffStream(UUID cardId, String sessionId) {}
 
     private AtomicInteger counterOf(Map<UUID, CopyOnWriteArrayList<SseEmitter>> subscribers) {
         return subscribers == emitters ? staffStreams : publicStreams;

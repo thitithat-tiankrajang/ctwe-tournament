@@ -2,14 +2,15 @@ import type { ReactNode } from "react";
 
 export function PageHeader({ eyebrow, title, subtitle, description, actions, className = "" }: { eyebrow?: string; title: ReactNode; subtitle?: ReactNode; description?: string; actions?: ReactNode; className?: string }) {
   return (
-    <header className={`page-header${className ? ` ${className}` : ""}`}>
-      <div>
-        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+    // The accepted design's page head; legacy class names stay as hooks for page-specific rules.
+    <header className={`page-head page-header${className ? ` ${className}` : ""}`}>
+      <div className="ttl">
+        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
         <h1>{title}</h1>
-        {subtitle && <p className="page-subtitle">{subtitle}</p>}
-        {description && <p className="page-description">{description}</p>}
+        {subtitle && <span className="desc page-subtitle">{subtitle}</span>}
+        {description && <span className="desc page-description">{description}</span>}
       </div>
-      {actions && <div className="page-actions">{actions}</div>}
+      {actions && <div className="actions page-actions">{actions}</div>}
     </header>
   );
 }

@@ -214,6 +214,8 @@ test("a recorded result is not folded into the official standing before its game
   const leader = viewOf(divisionA(), "A001")!;
   assert.equal(leader.standing?.rank, 1);
   assert.deepEqual([leader.standing?.wins, leader.standing?.diff], [1, 120]);
+  const drawn = viewOf(divisionA(), "A004")!;
+  assert.deepEqual([leader.standing?.winPoints, drawn.standing?.winPoints, view.standing?.winPoints], [2, 1, 0]);
 });
 
 test("a division with nothing published yet has no official standing and says so", () => {

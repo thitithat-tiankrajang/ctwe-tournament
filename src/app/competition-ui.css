@@ -1,0 +1,102 @@
+/* Shared presentation of the competition workspace and public reports. */
+:root { --competition-rail:56px; --competition-sidebar:268px; }
+* { scrollbar-width:thin; scrollbar-color:#a2aebc transparent; }
+.public-report-bar { display:flex; align-items:center; gap:8px; align-self:start; position:sticky; top:61px; z-index:19; padding:5px 8px; background:var(--surface); border-block:1px solid var(--border); }
+.public-report-details { display:inline-flex; align-items:center; gap:6px; border:0; background:transparent; color:var(--blue-dark); padding:6px; font:inherit; font-weight:650; cursor:pointer; }
+.public-report-game { margin-inline-start:auto; flex:0 1 185px; }
+.public-report-game .select-menu__trigger { border:0; padding-inline:11px; color:var(--blue-dark); }
+.public-report-game .select-menu__trigger > svg:first-child { display:none; }
+.public-report-bar .overview-view-picker { display:flex; border-radius:6px; gap:0; margin-inline:auto; }
+.public-report-bar .segment { display:flex; align-items:center; gap:5px; padding:6px 9px; font-size:13px; }
+.public-report-bar .segment--on { color:var(--blue-dark); background:var(--blue-soft); box-shadow:inset 0 -2px var(--blue); }
+.public-report-filter { display:flex; justify-content:flex-end; margin-block:8px; }
+.select-menu__option[aria-disabled=true] { opacity:.52; cursor:not-allowed; }
+.competition-format details { border-bottom:1px solid var(--border); }
+.competition-format summary { cursor:pointer; font-weight:700; padding:8px; }
+.competition-format ul { padding:0 8px 8px; margin:0; list-style:none; }
+.competition-format li { display:flex; justify-content:space-between; gap:8px; padding:5px 0; }
+.competition-format p { padding:8px; }
+.report-views { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; gap:12px; }
+.report-views > * { min-width:0; }
+@media(min-width:1150px) {
+  .report-views--split { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .report-views--split > :last-child:nth-child(3) { grid-column:1/-1; }
+}
+.competition-report { container:ctwe-report / inline-size; min-width:0; }
+.competition-report table { width:100%; border-collapse:collapse; table-layout:fixed; }
+.competition-report :is(th,td) { padding:8px; border-bottom:1px solid var(--border); }
+.competition-report thead th { font-size:12px; color:var(--ink-soft); text-align:left; background:var(--surface-sunken); white-space:nowrap; }
+.competition-report tbody tr { height:46px; }
+.competition-report tbody tr:nth-child(even),.competition-report .report-match:nth-of-type(even) { background:var(--surface-hover); }
+.competition-report--result tbody tr:nth-child(even) { background:transparent; }
+.competition-report tbody tr:hover { background:var(--blue-soft); }
+.competition-report .report-number { text-align:center; font-variant-numeric:tabular-nums; }
+.competition-report .report-score { color:var(--blue-dark); font-weight:750; font-size:15px; }
+.competition-report col.report-position { width:clamp(37px,8cqi,55px); }
+.competition-report col.report-points { width:clamp(63px,16cqi,96px); }
+.competition-report col.report-diff { width:clamp(68px,18cqi,100px); }
+.competition-report--result col:is(.report-points,.report-diff) { width:clamp(55px,14cqi,82px); }
+.competition-report .report-school { display:none; }
+.report-identity { display:grid; width:100%; min-width:0; background:none; border:0; padding:0; font:inherit; color:inherit; text-align:left; gap:3px; }
+button.report-identity { cursor:pointer; }
+button.report-identity:hover strong { text-decoration:underline; }
+.report-name-line { display:flex; align-items:baseline; min-width:0; gap:5px; }
+.report-code { flex:none; color:var(--blue-dark); font:700 12px var(--font-mono,monospace); }
+.report-name-line > strong,.report-school-inline,.competition-report td.report-school { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.competition-report td.report-school { display:none; }
+.report-school-inline,.report-tiebreak,.report-bye,.report-empty { color:var(--muted); }
+.report-tiebreak { display:block; font-size:10px; font-weight:400; }
+.report-match .report-pair-diff { font-weight:650; }
+@container ctwe-report (min-width:510px) {
+  .competition-report:is(.competition-report--ranking,.competition-report--result) col.report-player { width:clamp(175px,37cqi,235px); }
+  .competition-report:is(.competition-report--ranking,.competition-report--result) :is(th,td).report-school { display:table-cell; }
+  .competition-report:is(.competition-report--ranking,.competition-report--result) col.report-school { display:table-column; }
+  .competition-report:is(.competition-report--ranking,.competition-report--result) .report-school-inline { display:none; }
+}
+@container ctwe-report (min-width:705px) {
+  .competition-report--pairing col.report-player { width:clamp(155px,23cqi,248px); }
+  .competition-report--pairing :is(th,td).report-school { display:table-cell; }
+  .competition-report--pairing col.report-school { display:table-column; }
+  .competition-report--pairing .report-school-inline { display:none; }
+}
+@container ctwe-report (max-width:415px) {
+  .competition-report :is(th,td) { padding-inline:5px; }
+  .competition-report thead th { font-size:11px; }
+  .competition-report .report-name-line { gap:3px; }
+  .competition-report .report-code { font-size:11px; }
+}
+
+.entry-grid-wrap .entry-keyin { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:6px 9px; border:0; background:#2b3138; color:#fff; }
+.entry-grid-wrap .entry-keyin__label,.entry-grid-wrap .entry-keyin__vs { color:#dbe5f2; }
+.entry-grid-wrap .entry-keyin :is(.entry-code,.entry-keyin__score) { border:0; border-radius:5px; background:#3b4654; color:#fff; min-height:31px; }
+.entry-grid-wrap .entry-keyin input::placeholder { color:#c6d4e2; }
+.entry-grid-wrap .entry-keyin .entry-code { display:flex; align-items:center; gap:4px; padding-inline:6px; width:93px; }
+.entry-grid-wrap .entry-code > span { color:#b9d3fc; font-weight:750; }
+.entry-grid-wrap .entry-code input { width:100%; min-width:0; border:0; background:transparent; color:#fff; padding-inline:0; }
+.entry-grid-wrap .entry-keyin input:focus { outline:none !important; box-shadow:none !important; border:0 !important; }
+.entry-grid-wrap .entry-keyin :is(.entry-code,.entry-keyin__score) { background-image:linear-gradient(#8eb9ff,#8eb9ff); background-repeat:no-repeat; background-position:50% calc(100% - 2px); background-size:0 2px; transition:background-size 180ms ease,background-color 160ms ease; }
+.entry-grid-wrap .entry-keyin :is(.entry-code:focus-within,.entry-keyin__score:focus) { background-color:#475a70; background-size:90% 2px; }
+.entry-grid-wrap .entry-keyin :is(.entry-code[data-invalid=true],input[aria-invalid=true]), .entry-grid-wrap .egrid-score[aria-invalid=true] { box-shadow:inset 0 0 0 1px #e66e66; }
+.entry-grid-wrap .entry-keyin__feedback { color:#fff; }
+.entry-grid-wrap .entry-grid-scroll--result-entry .egrid-td { height:36px; }
+.dialog-backdrop { backdrop-filter:blur(2px); animation:ctwe-backdrop 130ms ease-out; }
+.confirm-dialog { animation:ctwe-modal 180ms cubic-bezier(.2,.8,.2,1); }
+@keyframes ctwe-backdrop { from { opacity:0; } }
+@keyframes ctwe-modal { from { opacity:.3; transform:translateY(6px) scale(.985); } }
+@media(max-width:768px) {
+  .public-report-bar { top:54px; padding-inline:4px; }
+  .public-report-bar .overview-view-picker { display:none; }
+  .public-report-game { flex:1; }
+  .public-report-details { font-size:12px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .entry-grid-wrap .entry-keyin :is(.entry-code,.entry-keyin__score) { transition:none; }
+  .confirm-dialog,.dialog-backdrop { animation:none; }
+}
+.split-stack__body { scrollbar-width:thin; scrollbar-color:#a2aebc transparent; }
+@media(max-width:815px) {
+  .pairing-tool { width:calc(100vw - 12px); height:calc(100dvh - 18px); }
+  .pairing-tool > footer { position:sticky; bottom:0; flex-wrap:wrap; background:var(--surface); }
+}
+.entry-grid-wrap .entry-keyin[hidden] { display:none; }
+.entry-grid-wrap .entry-swap { color:#fff; background:#2b3138; padding:5px 9px; }

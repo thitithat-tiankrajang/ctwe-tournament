@@ -2,6 +2,8 @@ package com.ctwe.tournament.infrastructure.security;
 
 import com.ctwe.tournament.infrastructure.security.AuthorizationService.Capability;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -11,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -91,5 +94,65 @@ class AuthorizationServiceTest {
         userTournaments(); // not scoped to this card's tournament
         assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.SUBMIT_RESULT))
             .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void unauthenticatedAndUnrecognizedPrincipalsHaveNoTournamentPermissions() {
+        var inactive = new UsernamePasswordAuthenticationToken("user", "n/a");
+        assertThat(authz.hasRole(inactive, "ROLE_DIRECTOR")).isFalse();
+        assertThat(authz.accessibleTournamentIds(inactive)).isEmpty();
+        assertThatThrownBy(() -> authz.requireTournamentAccess(auth("ROLE_DIRECTOR"), null))
+            .isInstanceOfSatisfying(ResponseStatusException.class,
+                error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+    }
+
+    @Test
+    void closedTournamentAllowsScopedReadingButRejectsResultEntry() {
+        cardBelongsToTournament();
+        userTournaments(tournamentId);
+        when(jdbc.queryForObject(anyString(), eq(String.class), eq(tournamentId))).thenReturn("CLOSED");
+        assertThatCode(() -> authz.requireTournamentAccess(auth("ROLE_STAFF"), tournamentId))
+            .doesNotThrowAnyException();
+        assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.SUBMIT_RESULT))
+            .isInstanceOfSatisfying(ResponseStatusException.class,
+                error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+    }
+
+    @Test
+    void missingTournamentAndCardReportNotFound() {
+        when(jdbc.queryForObject(anyString(), eq(String.class), eq(tournamentId)))
+            .thenThrow(new EmptyResultDataAccessException(1));
+        assertThatThrownBy(() -> authz.requireTournamentCapability(auth("ROLE_ADMIN"), tournamentId, Capability.RUN_TOURNAMENT))
+            .isInstanceOfSatisfying(ResponseStatusException.class,
+                error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+        when(jdbc.queryForObject(anyString(), eq(UUID.class), eq(cardId)))
+            .thenThrow(new EmptyResultDataAccessException(1));
+        assertThatThrownBy(() -> authz.tournamentOfCard(cardId))
+            .isInstanceOfSatisfying(ResponseStatusException.class,
+                error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void legacyCardRemainsReadableByAdminAndUnassignedToScopedRoles() {
+        when(jdbc.queryForObject(anyString(), eq(UUID.class), eq(cardId))).thenReturn(null);
+        assertThatCode(() -> authz.requireCardCapability(auth("ROLE_ADMIN"), cardId, Capability.RUN_TOURNAMENT))
+            .doesNotThrowAnyException();
+        assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_DIRECTOR"), cardId, Capability.RUN_TOURNAMENT))
+            .isInstanceOfSatisfying(ResponseStatusException.class,
+                error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+    }
+
+    @Test
+    void onlyTheAssignedDirectorCanForceABye() {
+        cardBelongsToTournament();
+        userTournaments(tournamentId);
+        assertThatCode(() -> authz.requireCardCapability(auth("ROLE_DIRECTOR"), cardId, Capability.FORCE_BYE))
+            .doesNotThrowAnyException();
+        assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_ADMIN"), cardId, Capability.FORCE_BYE))
+            .isInstanceOfSatisfying(ResponseStatusException.class,
+                error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+        assertThatThrownBy(() -> authz.requireCardCapability(auth("ROLE_STAFF"), cardId, Capability.FORCE_BYE))
+            .isInstanceOfSatisfying(ResponseStatusException.class,
+                error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
     }
 }

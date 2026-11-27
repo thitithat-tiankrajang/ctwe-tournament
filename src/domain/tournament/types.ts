@@ -21,6 +21,7 @@ export interface FinalGameResult {
 /** One play-off bracket slot: slot 0 decides 1st/2nd, slot 1 decides 3rd/4th. */
 export interface FinalSlot {
   slot: number;
+  pairingId?: string;
   playerOneId: string;
   playerTwoId: string;
   games: FinalGameResult[];
@@ -31,6 +32,7 @@ export interface FinalSlot {
 }
 export interface FinalRound {
   slots: FinalSlot[];
+  seedPlayerIds?: string[];
 }
 
 export interface PairingRule {
@@ -59,6 +61,8 @@ export interface Player {
   winPoints: number;
   diff: number;
   terminated: boolean;
+  withdrawnFromGame?: number;
+  rankingExcludedGames?: number[];
 }
 
 export interface SeatingTable {
@@ -81,6 +85,7 @@ export interface Pairing {
   playerOneGibsonized?: boolean;
   playerTwoGibsonized?: boolean;
   pairingPublished?: boolean;
+  pairingPublishedAt?: string | null;
   /**
    * The slot lost both players to screening. It keeps its table number so seat numbering and printed
    * table cards stay valid, but it holds nobody and needs no result — every completeness check skips
@@ -93,6 +98,7 @@ export interface Pairing {
    * submit a new result.
    */
   resultWithdrawn?: boolean;
+  manualPairing?: boolean;
 }
 
 /** Why a player is being held. Controlled so the pool is filterable and reportable. */
@@ -115,6 +121,7 @@ export interface ScreeningHold {
   originOpponent: string | null;
   /** The captured pairing has since changed, so treat the context as historical, not current. */
   originStale: boolean;
+  fromGame?: number;
 }
 
 /** Desired or observed occupancy of one pairing slot. `null` is an empty seat. */
@@ -191,9 +198,10 @@ export interface PairingValidation {
 export interface PairingChangeSet {
   expect: SlotState[];
   slots: SlotState[];
-  screen: { player: string; reason: ScreeningReason; note?: string }[];
+  screen: { player: string; reason: ScreeningReason; note?: string; fromGame?: number }[];
   release: string[];
   confirmWarnings: string[];
+  clearResults?: SlotState[];
 }
 
 export interface PairingSnapshot {

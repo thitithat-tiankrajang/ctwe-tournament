@@ -42,7 +42,7 @@ import static org.mockito.Mockito.doReturn;
 @ContextConfiguration(classes = {CacheConfiguration.class, PublicCardReadCacheTest.TestConfiguration.class})
 @TestPropertySource(properties = {
     "app.cache.public-card-details.ttl-seconds=60",
-    "app.cache.public-card-details.maximum-size=8",
+    "app.cache.public-card-details.maximum-weight-bytes=20512768",
     "app.cache.public-card-catalog.ttl-seconds=300",
     "app.cache.public-card-versions.ttl-seconds=3"
 })
@@ -149,7 +149,10 @@ class PublicCardReadCacheTest {
         long missesBefore = caffeine.stats().missCount();
         caffeine.getIfPresent(UUID.randomUUID());
         assertThat(caffeine.stats().missCount()).isEqualTo(missesBefore + 1);
-        assertThat(caffeine.policy().eviction().orElseThrow().getMaximum()).isEqualTo(8);
+        // Bounded by the sum of estimated card weights (estimate-bytes), not by entry count.
+        var eviction = caffeine.policy().eviction().orElseThrow();
+        assertThat(eviction.isWeighted()).isTrue();
+        assertThat(eviction.getMaximum()).isEqualTo(20_512_768L);
     }
 
     @Test

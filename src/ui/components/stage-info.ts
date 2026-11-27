@@ -39,6 +39,20 @@ export type StageSource = Pick<TournamentCard, "status" | "runtimeStage" | "curr
   games?: readonly unknown[];
 };
 
+/**
+ * The PUBLIC card-list badge. Its game number is the game the audience can actually see —
+ * `SpectatorDivision.publication.currentGame`, i.e. the card's own game or a later game whose pairing
+ * is already public — so the list never trails the division report it opens. A PAIR_RESULT
+ * "publish next" makes game N+1's pairing public while the card's own `currentGame` stays N; unpublished
+ * future pairings never count (they are not in `publication`). Staff badges keep the operational
+ * value via `cardStageInfo(card, "staff")`. Presentation only: no state, no request.
+ */
+export function viewerCardStageInfo(card: StageSource, publishedCurrentGame: number | undefined): { label: string; tone: StageTone } {
+  const currentGame = publishedCurrentGame !== undefined && publishedCurrentGame > card.currentGame
+    ? publishedCurrentGame : card.currentGame;
+  return cardStageInfo({ ...card, currentGame }, "viewer");
+}
+
 export function cardStageInfo(card: StageSource, audience: "staff" | "viewer"): { label: string; tone: StageTone } {
   const playerCount = card.playerCount ?? card.players?.length ?? 0;
   const gameCount = card.gameCount ?? card.games?.length ?? 0;

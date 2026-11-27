@@ -8,6 +8,7 @@ import org.springframework.cache.annotation.Caching;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -15,14 +16,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TournamentCardCacheEvictionTest {
     private static final Set<String> PUBLIC_MUTATIONS = Set.of(
         "updatePlayer", "removePlayer", "finishRegistration", "swapPlayers",
-        "confirmPairingPreview", "unpairCurrentPairing", "submitResult", "publishResults",
+        "confirmPairingPreview", "unpairCurrentPairing", "submitResult", "reviewResults", "publishResults",
         "startFinalRound", "submitFinalResult", "setFinalWinner", "publishFinalRound",
         "undoPairing", "overrideResult", "applyPenalty", "revokePenalty", "close",
         "generateTestPlayers", "resetRuntime", "simulate"
     );
     private static final Set<String> PRIVATE_MUTATIONS = Set.of(
         "addPlayer", "addPlayersBulk", "generatePairingPreview",
-        "reviewResults", "reopenResults", "autoResults"
+        "reopenResults", "autoResults"
     );
 
     @Test
@@ -75,7 +76,7 @@ class TournamentCardCacheEvictionTest {
 
     private static Method findMethod(String name) {
         return java.util.Arrays.stream(TournamentCardService.class.getDeclaredMethods())
-            .filter(method -> method.getName().equals(name))
+            .filter(method -> method.getName().equals(name) && Modifier.isPublic(method.getModifiers()))
             .findFirst()
             .orElseThrow();
     }

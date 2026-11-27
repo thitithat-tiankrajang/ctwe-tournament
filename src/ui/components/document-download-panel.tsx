@@ -34,7 +34,7 @@ const formats: { format: Format; label: string; icon: typeof FileText }[] = [
  * Both heavy generators (jsPDF + the embedded Thai font, SheetJS) stay out of the page bundle and
  * are only fetched on click.
  */
-export function DocumentDownloadPanel({ card }: { card: TournamentCard }) {
+export function DocumentDownloadPanel({ card, appearance }: { card: TournamentCard; appearance?: "prototype" | "prototype-panel" }) {
   const activeTournament = useTournamentStore((state) => state.activeTournament);
   const [downloading, setDownloading] = useState<DocumentKind | null>(null);
   const [format, setFormat] = useState<Format>("pdf");
@@ -75,6 +75,25 @@ export function DocumentDownloadPanel({ card }: { card: TournamentCard }) {
       setDownloading(null);
     }
   };
+
+  const controls = <>
+    {effectiveGame !== null && <SelectMenu appearance="prototype" ariaLabel="เกมสำหรับเอกสาร" value={String(effectiveGame)}
+      options={gameList.map((game) => ({ value: String(game), label: `เกม ${game}` }))} onChange={(value) => setSelectedGame(Number(value))} />}
+    {effectiveGame === null ? <button className="btn btn--secondary" type="button" disabled>ดาวน์โหลด</button>
+      : <details className="overview-download-options"><summary className="btn btn--secondary">ดาวน์โหลด</summary>
+        <div className="overview-download-list" aria-label="เลือกรายงานและรูปแบบไฟล์">
+          <SelectMenu appearance="prototype" ariaLabel="รูปแบบไฟล์" value={format} icon={FileText} options={formats.map((option) => ({ value: option.format, label: option.label }))}
+            onChange={(value) => setFormat(value as Format)} />
+          {kinds.map(({ kind, label, icon: Icon }) => <button key={kind} className="btn btn--secondary" type="button" disabled={Boolean(downloading) || !gamesByKind[kind].includes(effectiveGame)}
+            onClick={() => void downloadDocument(kind)}><Icon className="i" size={15} />{label}</button>)}
+        </div>
+      </details>}
+  </>;
+  if (appearance === "prototype-panel") return <section className="panel" aria-label="เอกสาร PDF">
+    <div className="panel-head"><h2>เอกสาร PDF</h2><span className="desc">Pairing · Ranking · Result</span>
+      <span className="actions overview-document-actions">{controls}</span></div>
+  </section>;
+  if (appearance === "prototype") return <div className="overview-document-actions"><span>เอกสาร PDF</span>{controls}</div>;
 
   return (
     <Panel

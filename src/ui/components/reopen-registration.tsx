@@ -1,19 +1,18 @@
 "use client";
 
-import { LoaderCircle, UserPlus2 } from "lucide-react";
+import { LoaderCircle, LockKeyhole, UserPlus2 } from "lucide-react";
 import { useState } from "react";
 import { useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import type { TournamentCard } from "@/domain/tournament/types";
-import { Button } from "@/ui/components/button";
 import { PromptDialog } from "@/ui/components/prompt-dialog";
 
 /**
  * Director-only "ลงทะเบียนเพิ่ม": reopen player registration after it was finished, allowed until
  * the FIRST game-1 result is saved. Before any game-1 pairing exists (TABLE_PAIRING) the finish is
  * reverted directly; once the pairing is previewed or published, confirming requires the
- * director's password because the game-1 pairing will be discarded. Renders nothing when the card
- * is not in that window (registration still open, past game 1, or a game-1 result already saved).
+ * director's password because the game-1 pairing will be discarded. The action is disabled when the card
+ * is outside that window (registration still open, past game 1, or a game-1 result already saved).
  */
 export function ReopenRegistration({ card }: { card: TournamentCard }) {
   const reopenRegistration = useTournamentStore((state) => state.reopenRegistration);
@@ -27,7 +26,6 @@ export function ReopenRegistration({ card }: { card: TournamentCard }) {
     && (card.runtimeStage === "TABLE_PAIRING" || pairingExists)
     && card.status !== "FINISHED" && card.status !== "CLOSED"
     && !anyGameOneResult;
-  if (!eligible) return null;
 
   const reopenBeforePairing = async () => {
     if (!await appDialog.confirm("ระบบจะยกเลิกการจบการลงทะเบียน และเปิดให้เพิ่มผู้เล่นต่อจากรายชื่อเดิม รหัสผู้เล่นเดิมไม่เปลี่ยนแปลง", {
@@ -62,11 +60,12 @@ export function ReopenRegistration({ card }: { card: TournamentCard }) {
 
   return (
     <>
-      <Button variant="secondary" disabled={busy} onClick={() => { if (pairingExists) { setError(""); setDialogOpen(true); } else { void reopenBeforePairing(); } }}>
-        {busy && !dialogOpen ? <LoaderCircle className="loading-spinner" size={16} /> : <UserPlus2 size={16} />}ลงทะเบียนเพิ่ม
-      </Button>
+      <button className="btn btn--secondary" type="button" disabled={busy || !eligible} title={eligible ? undefined : "เปิดได้ก่อนบันทึกผลเกมแรก"} onClick={() => { if (pairingExists) { setError(""); setDialogOpen(true); } else { void reopenBeforePairing(); } }}>
+        {busy && !dialogOpen ? <LoaderCircle className="loading-spinner" size={16} /> : <UserPlus2 className="i" size={15} />}ลงทะเบียนเพิ่ม<LockKeyhole className="i" size={12} />
+      </button>
 
       <PromptDialog
+        appearance="prototype"
         open={dialogOpen}
         eyebrow="ผู้อำนวยการเท่านั้น"
         title="ลงทะเบียนเพิ่ม"

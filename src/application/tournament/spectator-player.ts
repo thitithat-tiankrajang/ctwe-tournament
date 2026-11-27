@@ -46,6 +46,7 @@ export interface SpectatorStanding {
   wins: number;
   draws: number;
   losses: number;
+  winPoints: number;
   diff: number;
   /** The last game whose results are official. Everything after it is deliberately not counted. */
   throughGame: number;
@@ -210,7 +211,7 @@ export function spectatorPlayerView(
       ? division.publication.currentGame : null,
     final: playerFinal,
     standing: ranked && officialThroughGame !== null ? { rank: finalIndex >= 0 ? finalIndex + 1 : ranked.displayRank,
-      wins: ranked.wins, draws: ranked.draws, losses: ranked.losses, diff: ranked.diff,
+      wins: ranked.wins, draws: ranked.draws, losses: ranked.losses, winPoints: ranked.winPoints, diff: ranked.diff,
       throughGame: officialThroughGame, ...(finalIndex >= 0 ? { isFinal: true } : {}) } : null,
     completedRecord,
     officialThroughGame,

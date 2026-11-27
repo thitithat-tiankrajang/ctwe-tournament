@@ -3,6 +3,7 @@ package com.ctwe.tournament.application;
 import com.ctwe.tournament.infrastructure.cache.TournamentCaches;
 import com.ctwe.tournament.web.dto.CardDtos;
 import com.ctwe.tournament.web.dto.PublicCardDtos;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -88,6 +89,26 @@ public class PublicCardReadCache {
             SELECT id, public_version FROM tournament_cards ORDER BY created_at DESC
             """, (rs, row) -> new PublicCardDtos.CardVersion(
                 rs.getObject("id", UUID.class), rs.getLong("public_version"))));
+    }
+
+    /**
+     * Authoritative and deliberately UNCACHED: one tournament's card ids and public versions, in
+     * public order. One indexed query and no card payload, so a bundle revalidation costs this read
+     * instead of rebuilding cards — and, being uncached, it can never disagree with the database the
+     * way two independently cached copies can disagree with each other.
+     */
+    @Transactional(readOnly = true)
+    public List<PublicCardDtos.CardVersion> manifest(UUID tournamentId) {
+        return List.copyOf(jdbc.query("""
+            SELECT id, public_version FROM tournament_cards WHERE tournament_id = ? ORDER BY created_at DESC, id
+            """, (rs, row) -> new PublicCardDtos.CardVersion(
+                rs.getObject("id", UUID.class), rs.getLong("public_version")), tournamentId));
+    }
+
+    /** Drops one card's cached public payload so the next {@link #card} read loads it again. */
+    @CacheEvict(cacheNames = TournamentCaches.PUBLIC_CARD_DETAILS, key = "#cardId")
+    public void evictCard(UUID cardId) {
+        // The annotation does the work.
     }
 
     @Transactional(readOnly = true)
