@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * The dry run must survive a genuinely READ-ONLY transaction.
@@ -32,6 +33,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class PairingSessionReadOnlyTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
@@ -49,7 +53,18 @@ class PairingSessionReadOnlyTest {
 
     @Test
     void validateSurvivesARealReadOnlyTransaction() {
-        UUID tournamentId = jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
+        // Its own synthetic tournament, so the test never depends on (or writes into) existing data.
+        UUID tournamentId = UUID.randomUUID();
+        jdbc.update("INSERT INTO tournaments (id, name, access_token, status) VALUES (?, ?, ?, 'OPEN')",
+            tournamentId, "RO " + tournamentId, "ro-" + tournamentId);
+        try {
+            readOnlyDryRun(tournamentId);
+        } finally {
+            jdbc.update("DELETE FROM tournaments WHERE id = ?", tournamentId);
+        }
+    }
+
+    private void readOnlyDryRun(UUID tournamentId) {
         UUID cardId = cards.create(new CardDtos.CreateCardRequest(tournamentId,
             "RO-" + UUID.randomUUID(), "DIV", 3,
             List.of(PairingRuleType.SWISS, PairingRuleType.SWISS), List.of(500, 500, 500),

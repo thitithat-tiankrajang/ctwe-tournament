@@ -1,0 +1,77 @@
+/* The app shell supplies the same .content wrapper as the standalone prototype. */
+.ctwe-prototype .director-score { display: contents; }
+
+.ctwe-prototype .director-score .gscroll {
+  border: 0;
+  min-height: 0;
+  padding-inline-end: 0;
+}
+.ctwe-prototype .director-score table.eg.score-review-table {
+  --review-score-width: clamp(6rem, 19vw, 8rem);
+  table-layout: fixed;
+  width: 100%;
+}
+.ctwe-prototype .director-score table.eg.score-review-table--editable { --review-score-width: clamp(7rem, 24vw, 9rem); }
+.score-review-table .review-pair-col { width: clamp(1.75rem, 5.5vw, 3rem); }
+.score-review-table .review-score-col { width: var(--review-score-width); }
+.score-review-table .review-result-col { width: clamp(2.85rem, 10vw, 5.5rem); }
+.ctwe-prototype .director-score .score-review-table th { padding: .55rem .3rem; }
+.ctwe-prototype .director-score .score-review-table th:nth-child(even) { padding-inline-start: clamp(.3rem, 1vw, .8rem); }
+.ctwe-prototype .director-score .score-review-table th:is(:first-child, :nth-child(3), :last-child) { text-align: center; }
+.ctwe-prototype .director-score .score-review-table td { padding: .45rem .3rem; height: 3.05rem; line-height: 1.32; }
+.ctwe-prototype .director-score .score-review-table td:nth-child(even) { padding-inline: clamp(.3rem, 1vw, .8rem); white-space: normal; }
+.ctwe-prototype .director-score .score-review-table tr:nth-child(even):not(:hover) td:not(.gibcell) { background: var(--surface-sunken); }
+.score-review-table .review-player { font-weight: 650; overflow-wrap: anywhere; }
+.score-review-table .review-player .code { color: var(--blue-dark); font-weight: 800; }
+.score-review-table .review-player .pairing-name-with-mark { display: inline; }
+.score-review-table .review-player .pairing-name-with-mark > span:first-child { white-space: normal; }
+.score-review-table .review-player .pairing-name-with-mark > .gibson-mark { margin-inline-start: .25em; }
+.score-review-table .review-player small { display: block; margin-top: .15rem; font-size: .88em; font-weight: 500; color: var(--muted); }
+.score-review-table .review-vacant, .score-review-table .review-diff { color: var(--muted); }
+.score-review-table .review-score { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: clamp(.12rem, 1vw, .4rem); font-size: .9em; font-weight: 700; }
+.score-review-table .review-score [data-winner="true"] { color: var(--green-on-soft); }
+.score-review-table .review-score-separator { color: var(--muted); }
+.ctwe-prototype .director-score .score-review-table .score-override-input { min-width: 0; width: 100%; }
+.score-review-table .review-outcome { display: inline-block; border-radius: var(--r-sm); padding: .12rem .28rem; font-size: .82em; font-weight: 800; white-space: normal; overflow-wrap: anywhere; }
+.score-review-table .review-outcome[data-tone="success"] { background: var(--green-soft); color: var(--green-on-soft); }
+.score-review-table .review-outcome[data-tone="danger"] { background: var(--red-soft); color: var(--red-on-soft); }
+.score-review-table .review-diff { display: block; margin-top: .14rem; font-size: .82em; }
+.ctwe-prototype .director-score .score-empty { height: 60px; }
+
+.final-seed-groups { display: grid; gap: .85rem; container: final-seed / inline-size; }
+.final-seed-group { border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+.final-seed-group h3 { margin: 0; padding: .55rem .8rem; font-size: .87rem; color: var(--blue-dark); background: var(--blue-soft); }
+.final-seed-list { list-style: none; margin: 0; padding: 0; }
+.final-seed-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: .65rem; padding: .7rem .8rem; }
+.final-seed-row + .final-seed-row { border-top: 1px solid var(--border); }
+.final-seed-identity { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: start; gap: .65rem; }
+.final-seed-person { min-width: 0; overflow-wrap: anywhere; }
+.final-seed-person small { display: block; margin-top: .15rem; color: var(--muted); }
+.final-seed-name { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: start; overflow-wrap: anywhere; }
+button.final-seed-name { color: var(--blue-dark); cursor: pointer; }
+button.final-seed-name:hover strong, button.final-seed-name:focus-visible strong { text-decoration: underline; }
+.final-seed-name .code { font-weight: 800; }
+.final-seed-stats { display: grid; grid-template-columns: 1.15fr .9fr .82fr 1.13fr; gap: .4rem; margin: 0; }
+.final-seed-stats > div { min-width: 0; min-height: 2.85rem; padding: .35rem .25rem; border-radius: var(--r-sm); background: var(--surface-sunken); text-align: center; }
+.final-seed-stats dt { color: var(--muted); font-size: .73rem; line-height: 1.25; }
+.final-seed-stats dd { margin: .12rem 0 0; font-weight: 750; font-variant-numeric: tabular-nums; font-size: .86rem; }
+.final-seed-score { display: block; font-size: .78rem; color: var(--ink-soft); overflow-wrap: anywhere; }
+@container final-seed (max-width: 620px) {
+  .final-seed-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Keep the password visibility control functional while retaining the prototype field width. */
+.ctwe-prototype .director-tools .score-swap-password { width: 107px; }
+.ctwe-prototype .director-tools .score-swap-password input { padding-inline-end: 28px; }
+.ctwe-prototype .director-tools .score-swap-password .fresh-secret-input__toggle {
+  color: #dce9fa;
+  height: 26px;
+  inset-inline-end: 1px;
+  width: 26px;
+}
+@container (max-width: 490px) {
+  .ctwe-prototype .director-tools .score-swap-password { grid-column: 3 / 5; width: auto; }
+}
+@media (max-width: 768px) {
+  .ctwe-prototype .score-entry-table .rz { display: none; }
+}

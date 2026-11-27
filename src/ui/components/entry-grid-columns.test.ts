@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import { applyColumnControls, fieldGroupsOf, filterTargets, playerCodeKeysOf } from "./data-grid";
-import { ACTION_WIDTH, editColumns } from "./result-entry-grid";
+import { ACTION_WIDTH, editColumns, ResultViewGrid } from "./result-entry-grid";
 
 /**
  * The result-entry grid's two code columns are ONE searchable field.
@@ -165,21 +167,24 @@ test("the entry grid's fields resolve to real groups, not just tags", () => {
   for (const key of ["pair", "score1", "score2", "diff", "action"]) assert.equal(groups[key], undefined);
 });
 
-test("no grid keeps a hand-written list of filterable keys", () => {
-  // The list and the `searchable: false` flags were two statements of one fact, free to disagree.
+test("score entry opens the same filter for either seat of a logical field", () => {
   const source = readFileSync(COMPONENT, "utf8");
   for (const stale of ["ENTRY_FILTER_KEYS", "VIEW_FILTER_KEYS", "ENTRY_CODE_GROUP"])
     assert.ok(!source.includes(stale), `${stale} is back - the menu list must be derived from the columns`);
-  assert.equal((source.match(/sortable: \(key\) => filterKeys\.includes\(key\)/g) ?? []).length, 2);
-  assert.equal((source.match(/filterable: \(key\) => filterKeys\.includes\(key\)/g) ?? []).length, 2);
+  assert.match(source, /const field = column\.field/);
+  assert.match(source, /toggleMenu\(event\.currentTarget, "filter", field\)/);
+  assert.match(source, /\[row\.pairing\?\.playerOneId, row\.pairing\?\.playerTwoId\]\.some/);
 });
 
-test("the winner column is its own field - it answers who won, not who played", () => {
-  // Grouping it with the code columns would make a รหัส filter match rows the player merely won.
-  const source = readFileSync(COMPONENT, "utf8");
-  const winner = columnLines(source, "winner")[0];
-  assert.ok(winner.includes('filterKind: "playerCode"'), "winner still matches codes exactly");
-  assert.ok(!winner.includes("field:"), "winner must not join another column's field");
+test("the review result column reports the winner and capped difference separately from both players", () => {
+  const html = renderToStaticMarkup(createElement(ResultViewGrid, { players: new Map(), pairings: [{
+    id: "g1t1", tableNumber: 1, playerOneId: "A045", playerTwoId: "A012",
+    scoreOne: 350, scoreTwo: 500, resultType: "WIN", winnerId: "A012", calculatedDiff: 100,
+  }] }));
+  assert.match(html, /<th scope="col">ผล<\/th>/);
+  assert.match(html, /class="review-player"><span class="code">A045<\/span>/);
+  assert.match(html, /class="review-player"><span class="code">A012<\/span>/);
+  assert.match(html, /class="review-outcome"[^>]*>A012<\/span><small[^>]*>±100<\/small>/);
 });
 
 test("the mirror mutes its HEADER only - the value reads exactly like side 1", () => {
@@ -250,7 +255,7 @@ test("no grid carries a per-table mirror exception any more", () => {
 test("a void slot renders as a plain row of em dashes - no waiting text, no badge", () => {
   const source = readFileSync(COMPONENT, "utf8");
   // The branch must come FIRST: every later branch describes a match that this slot does not have.
-  const voidBranch = source.indexOf("if (slot.isVoid || isVoidPairing(pairing)) {");
+  const voidBranch = source.indexOf("if (slot.isVoid || (!slot.waiting && isVoidPairing(pairing))) {");
   const penaltyBranch = source.indexOf('if (pairing?.resultType === "PENALTY") {');
   const pendingBranch = source.indexOf("if (!isCompletePairing(pairing)) {");
   assert.ok(voidBranch >= 0, "the void row branch is missing");
@@ -261,7 +266,7 @@ test("a void slot renders as a plain row of em dashes - no waiting text, no badg
   assert.ok(!branch.includes("รอ"), "a void row must not say it is waiting for anything");
   assert.ok(!branch.includes("<input"), "a void row has no score to enter, not even a disabled one");
   // The pending branch keeps its waiting text: a slot with no row yet IS waiting on its source game.
-  assert.match(source.slice(pendingBranch), /const waitingText = pairing \? "รอคู่แข่งจากอีก row"/);
+  assert.match(source.slice(pendingBranch), /const waitingText = p1 \|\| p2 \? "รอคู่แข่งจากอีก row"/);
 });
 
 test("void is internal - it never appears as a status the operator can pick", () => {
@@ -276,9 +281,18 @@ test("void is internal - it never appears as a status the operator can pick", ()
 test("every competition score input is wheel-guarded", () => {
   // type=number steps on wheel while focused; these are the fields where that silently corrupts a
   // recorded result. Configuration inputs are deliberately left alone.
-  for (const [file, expected] of [["result-entry-grid.tsx", 5], ["override-editor.tsx", 2], ["final-round-board.tsx", 4]] as const) {
+  for (const [file, expected] of [["result-entry-grid.tsx", 5], ["override-editor.tsx", 1], ["final-round-board.tsx", 4]] as const) {
     const source = readFileSync(join(process.cwd(), "src", "ui", "components", file), "utf8");
-    assert.equal((source.match(/<ScoreInput/g) ?? []).length, expected, `${file} lost a ScoreInput`);
+    if (file === "result-entry-grid.tsx") {
+      assert.equal((source.match(/<EntryScoreInput/g) ?? []).length, expected, "entry lost a validated score field");
+      assert.match(source, /function EntryScoreInput[\s\S]*?<ScoreInput \{\.\.\.props\} type="text"/);
+    } else {
+      assert.equal((source.match(/<ScoreInput/g) ?? []).length, expected, `${file} lost a ScoreInput`);
+      if (file === "override-editor.tsx") {
+        const sheet = readFileSync(COMPONENT, "utf8");
+        for (const side of ["one", "two"]) assert.ok(sheet.includes(`renderScore(pairing, "${side}"`));
+      }
+    }
     assert.ok(!/<input[^>]*type="number"/.test(source), `${file} still has a raw number input`);
   }
 });

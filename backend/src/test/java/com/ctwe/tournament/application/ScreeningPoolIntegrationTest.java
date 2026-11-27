@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * P1 guards for the Screening Pool: the deadlock that stranded the original rules, the review/publish
@@ -32,6 +33,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class ScreeningPoolIntegrationTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
@@ -48,8 +52,16 @@ class ScreeningPoolIntegrationTest {
 
     // ---- scaffolding -------------------------------------------------------
 
+    /** A synthetic tournament inside the rolled-back test transaction: no reliance on existing data. */
+    private UUID syntheticTournament() {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO tournaments (id, name, access_token, status) VALUES (?, ?, ?, 'OPEN')",
+            id, "IT " + id, "it-" + id);
+        return id;
+    }
+
     private UUID tournamentId() {
-        return jdbc.queryForObject("SELECT id FROM tournaments LIMIT 1", UUID.class);
+        return syntheticTournament();
     }
 
     private UUID createCard(int games) {
@@ -174,17 +186,16 @@ class ScreeningPoolIntegrationTest {
             Boolean.class, cardId, slot[0], slot[1]);
         assertThat(voided).as("an abandoned slot is voided so table numbering survives").isTrue();
 
-        // The gate refuses while anyone is held.
         scoreEveryLiveSlot(cardId);
-        assertThatThrownBy(() -> service.reviewResults(cardId, ACTOR))
-            .hasMessageContaining("Screening Pool");
-
-        // Resolve both by the disciplinary exit.
-        service.terminatePlayers(cardId, List.of(external(cardId, first), external(cardId, partner)), ACTOR);
-        assertThat(pool.isEmpty(cardId)).isTrue();
-
-        // ...and the round now advances all the way through publish.
         service.reviewResults(cardId, ACTOR);
+        assertThatThrownBy(() -> service.publishResults(cardId, ACTOR))
+            .isInstanceOf(TournamentCardService.ScreeningPoolPending.class);
+        assertThatThrownBy(() -> service.terminatePublicationHolds(cardId, List.of(external(cardId, first)), ACTOR))
+            .isInstanceOf(TournamentCardService.ScreeningPoolPending.class);
+        assertThat(pool.listOpen(cardId)).hasSize(2);
+
+        service.terminatePublicationHolds(cardId, List.of(external(cardId, first), external(cardId, partner)), ACTOR);
+        assertThat(pool.isEmpty(cardId)).isTrue();
         service.publishResults(cardId, ACTOR);
 
         Integer snapshotNo = jdbc.queryForObject(
@@ -196,15 +207,16 @@ class ScreeningPoolIntegrationTest {
     // ---- the gate ----------------------------------------------------------
 
     @Test
-    void reviewIsBlockedWhileAnyPlayerIsHeld() {
+    void publicationIsBlockedWhileAnyPlayerIsHeld() {
         UUID cardId = cardInResultCollection(8);
         int held = codes(cardId).get(0);
         screen(cardId, held);
         scoreEveryLiveSlot(cardId);
 
-        assertThatThrownBy(() -> service.reviewResults(cardId, ACTOR))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Screening Pool")
+        service.reviewResults(cardId, ACTOR);
+        assertThatThrownBy(() -> service.publishResults(cardId, ACTOR))
+            .isInstanceOf(TournamentCardService.ScreeningPoolPending.class)
+            .hasMessageContaining("ถังคัดชั่วคราว")
             // The message must name the player using THIS card's prefix. The legacy single-argument
             // pcode() always renders "P", which would send the director looking for a code that
             // appears on no screen in this tournament.

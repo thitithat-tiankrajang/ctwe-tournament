@@ -61,14 +61,15 @@ test("a block of nothing but voided slots is complete, not stuck", () => {
   assert.deepEqual(result, { live: 0, expected: 0, completed: 0, complete: true });
 });
 
-test("PAIR_RESULT expects one destination row per live source row", () => {
+test("PAIR_RESULT counts each occupied row across games and ignores empty rows", () => {
   const source = [recorded({ gameNumber: 1, tableNumber: 1 }), recorded({ gameNumber: 1, tableNumber: 2 })];
   const done = [recorded({ gameNumber: 2, tableNumber: 1 }), recorded({ gameNumber: 2, tableNumber: 2 })];
   assert.equal(blockCompletion([...source, ...done], [1, 2], 1, true).complete, true);
-  // A destination row that has not been materialised is MISSING from the list entirely, so only a
-  // count taken from the source side can notice it is absent.
-  const partial = blockCompletion([...source, done[0]], [1, 2], 1, true);
-  assert.deepEqual(partial, { live: 3, expected: 4, completed: 3, complete: false });
+  const empty = pair({ gameNumber: 2, tableNumber: 2, playerOneId: null, playerTwoId: null });
+  assert.deepEqual(blockCompletion([...source, done[0], empty], [1, 2], 1, true),
+    { live: 3, expected: 3, completed: 3, complete: true });
+  const bye = pair({ gameNumber: 2, tableNumber: 2, playerTwoId: null });
+  assert.equal(blockCompletion([...source, done[0], bye], [1, 2], 1, true).complete, false);
 });
 
 test("a voided source row expects no destination row of its own", () => {
@@ -83,5 +84,5 @@ test("a voided source row expects no destination row of its own", () => {
 
 test("gameNumber falls back to the current game, as the API omits it on the active block", () => {
   const rows = [recorded(), recorded()];
-  assert.equal(blockCompletion(rows, [4, 5], 4, true).expected, 4);
+  assert.equal(blockCompletion(rows, [4, 5], 4, true).expected, 2);
 });

@@ -24,11 +24,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 ) {
   // `md` is the default and has no rule of its own; emitting `button--md` produced a class that
   // matched nothing in the stylesheet.
-  const sizeClass = size === "md" ? "" : ` button--${size}`;
+  const sizeClass = size === "md" ? "" : ` button--${size} btn--${size}`;
   return (
     <button
       ref={ref}
-      className={`button button--${variant}${sizeClass} ${className}`}
+      // `btn btn--*` is the accepted design's button family; the legacy classes stay for old rules/tests.
+      className={`button button--${variant} btn btn--${variant}${sizeClass} ${className}`}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       {...props}

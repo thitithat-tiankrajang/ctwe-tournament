@@ -16,6 +16,8 @@ interface ConfirmDialogProps {
   busyLabel?: string;
   danger?: boolean;
   hideCancel?: boolean;
+  /** Disables the confirm button (e.g. nothing picked yet). */
+  confirmDisabled?: boolean;
   cancelLabel?: string;
   error?: string;
   /** Header accent above the title. */
@@ -24,6 +26,7 @@ interface ConfirmDialogProps {
   icon?: ReactNode;
   /** Extra classes on the dialog box (e.g. size variants). */
   className?: string;
+  appearance?: "prototype";
   /** Custom body content rendered between the description and the error/footer. */
   children?: ReactNode;
   onConfirm: () => void;
@@ -40,11 +43,13 @@ export function ConfirmDialog({
   busyLabel = "กำลังบันทึก…",
   danger = false,
   hideCancel = false,
+  confirmDisabled = false,
   cancelLabel = "ยกเลิก",
   error,
   eyebrow = "ตรวจสอบก่อนดำเนินการ",
   icon,
   className = "",
+  appearance,
   children,
   onConfirm,
   onCancel,
@@ -54,6 +59,28 @@ export function ConfirmDialog({
   const dialog = useModalDialog({ open, onDismiss: onCancel, dismissible: !busy });
 
   if (!open) return null;
+  if (appearance === "prototype") return (
+    <div className="scrim prototype-dialog-scrim" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
+      <section ref={dialog.ref as React.RefObject<HTMLElement>} tabIndex={-1}
+        className={`dialog ${danger ? "dialog--destructive" : "dialog--consequential"} ${className}`}
+        role="dialog" aria-modal="true" aria-labelledby={dialog.titleId}
+        aria-describedby={description ? dialog.descriptionId : undefined}
+        onMouseDown={(event) => event.stopPropagation()}>
+        <header className="dlg-head">
+          {eyebrow && <span className="dlg-eyebrow">{icon ?? <AlertTriangle className="i" size={15} />}{eyebrow}</span>}
+          <h2 id={dialog.titleId}>{title}</h2>
+        </header>
+        <div className="dlg-body">
+          {description && <p id={dialog.descriptionId}>{description}</p>}{children}
+          {error && <p className="dlg-err" role="alert">{error}</p>}
+        </div>
+        <footer className="dlg-foot">
+          {!hideCancel && <button className="btn btn--secondary" type="button" disabled={busy} onClick={onCancel}>{cancelLabel}</button>}
+          <button className={`btn ${danger ? "btn--danger" : "btn--primary"}`} type="button" disabled={busy || confirmDisabled} onClick={onConfirm}>{busy ? busyLabel : confirmLabel}</button>
+        </footer>
+      </section>
+    </div>
+  );
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={dialog.onBackdropMouseDown}>
       <section

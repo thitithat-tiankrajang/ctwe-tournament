@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class CardControllerCacheRoutingTest {
@@ -37,7 +38,8 @@ class CardControllerCacheRoutingTest {
     private final WebPushService push = mock(WebPushService.class);
     private final PairingSessionService pairingSession = mock(PairingSessionService.class);
     private final CardController controller =
-        new CardController(cards, publicCards, authz, reauthentication, events, push, pairingSession);
+        new CardController(cards, publicCards, authz, reauthentication, events, push, pairingSession,
+            mock(org.springframework.security.core.session.SessionRegistry.class));
 
     @Test
     void anonymousCardReadUsesOnlyPublicCacheBoundary() {
@@ -62,6 +64,7 @@ class CardControllerCacheRoutingTest {
 
         assertThat(controller.get(cardId, authentication)).isSameAs(response);
 
+        verify(authz).requireTournamentAccess(eq(authentication), org.mockito.ArgumentMatchers.any());
         verify(cards).get(cardId, true);
         verify(publicCards, never()).get(cardId);
     }
@@ -118,15 +121,42 @@ class CardControllerCacheRoutingTest {
             "g1-t1", 1, 1, "P001", "P002", "P001", 100, 70, "WIN", 30, false, false, true, false, false);
         var privateDestination = new CardDtos.PairingResponse(
             "g2-t1", 2, 1, "P001", null, null, null, null, null, null, false, false, false, false, false);
-        var patch = new CardDtos.ResultPatch(8, List.of(publishedSource, privateDestination));
+        var patch = new CardDtos.ResultPatch(8, List.of(publishedSource, privateDestination), 5L, false);
         when(cards.submitResult(cardId, "g1-t1", request, "staff")).thenReturn(patch);
-        when(publicCards.version(cardId)).thenReturn(5L);
 
         assertThat(controller.submitResult(cardId, "g1-t1", request, authentication)).isSameAs(patch);
 
         verify(events).publishResult(eq(cardId), eq(patch), anyString(), anyList());
         verify(events).publishPublicResult(eq(cardId), eq(5L), eq(List.of(publishedSource)));
+        verify(publicCards, never()).version(cardId);
         verify(cards).submitResult(cardId, "g1-t1", request, "staff");
+    }
+
+    @Test
+    void resultOnAnUnpublishedPairingIsOnlyBroadcastToStaff() {
+        UUID cardId = UUID.randomUUID();
+        var request = new CardDtos.ResultRequest(100, 70, false);
+        var patch = new CardDtos.ResultPatch(8, List.of());
+        when(cards.submitResult(cardId, "g2t1", request, "director")).thenReturn(patch);
+
+        controller.submitResult(cardId, "g2t1", request, director());
+
+        verify(events).publishResult(eq(cardId), eq(patch), anyString(), anyList());
+        verifyNoMoreInteractions(events);
+    }
+
+    @Test
+    void anEditThatRebuildsPublicDestinationPairingsInvalidatesThePublicCard() {
+        UUID cardId = UUID.randomUUID();
+        var request = new CardDtos.ResultRequest(70, 100, true);
+        var patch = new CardDtos.ResultPatch(8, List.of(), 5L, true);
+        when(cards.submitResult(cardId, "g1t1", request, "director")).thenReturn(patch);
+
+        controller.submitResult(cardId, "g1t1", request, director());
+
+        verify(events).publishResult(eq(cardId), eq(patch), anyString(), anyList());
+        verify(events).publishPublic(cardId, 5L);
+        verifyNoMoreInteractions(events);
     }
 
     @Test
@@ -182,10 +212,10 @@ class CardControllerCacheRoutingTest {
         var authentication = director();
         CardDtos.CardResponse started = withStage(card(cardId), RuntimeStage.FINAL_COLLECTION, 3, List.of());
         CardDtos.CardResponse completed = withStage(card(cardId), RuntimeStage.FINAL_PUBLISHED, 3, List.of());
-        when(cards.startFinalRound(cardId, "director")).thenReturn(started);
+        when(cards.startFinalRound(cardId, "director", null)).thenReturn(started);
         when(cards.publishFinalRound(cardId, "director")).thenReturn(completed);
 
-        assertThat(controller.startFinal(cardId, authentication)).isSameAs(started);
+        assertThat(controller.startFinal(cardId, null, authentication)).isSameAs(started);
         assertThat(controller.publishFinal(cardId, authentication)).isSameAs(completed);
 
         verify(push).finalStarted(cardId);
@@ -214,10 +244,10 @@ class CardControllerCacheRoutingTest {
         CardDtos.CardResponse response = card(cardId);
         var request = new CardDtos.PlayerRequest(null, "First", "Last", "School");
         when(authz.isDirector(authentication)).thenReturn(true);
-        when(cards.updatePlayer(cardId, "P001", request, "director", true)).thenReturn(response);
+        when(cards.updatePlayer(cardId, "P001", request, "director", true, 4L)).thenReturn(response);
         when(publicCards.version(cardId)).thenReturn(4L);
 
-        controller.updatePlayer(cardId, "P001", request, authentication);
+        controller.updatePlayer(cardId, "P001", "\"4\"", request, authentication);
 
         verify(events).publish(response);
         verify(events, never()).publishPublic(org.mockito.ArgumentMatchers.eq(cardId), org.mockito.ArgumentMatchers.anyLong());

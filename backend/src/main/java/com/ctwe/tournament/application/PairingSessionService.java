@@ -70,7 +70,7 @@ public class PairingSessionService {
             hold.origin().table(),
             hold.origin().side(),
             code(prefix, hold.origin().opponent()),
-            hold.origin().stale()
+            hold.origin().stale(), hold.fromGame()
         )).toList();
     }
 
@@ -92,6 +92,7 @@ public class PairingSessionService {
     public CommitOutcome commit(UUID cardId, CardDtos.PairingCommitRequest request, String actor) {
         // 1. Idempotency, before anything is read or written. A replayed commit — the director's
         //    network dropped and they pressed the button again — must be a no-op, not a second apply.
+        jdbc.queryForObject("SELECT id FROM tournament_cards WHERE id = ? FOR UPDATE", UUID.class, cardId);
         int claimed = jdbc.update("""
             INSERT INTO pairing_commits (card_id, commit_key, actor, forced)
             VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING
@@ -103,7 +104,6 @@ public class PairingSessionService {
         // 2. Lock the card, then the touched rows in a deterministic order so two concurrent commits
         //    on overlapping slots queue instead of deadlocking.
         List<SlotKey> keys = touchedKeys(cardId, request);
-        jdbc.queryForObject("SELECT id FROM tournament_cards WHERE id = ? FOR UPDATE", UUID.class, cardId);
         Map<SlotKey, Slot> current = lockSlots(cardId, keys);
 
         Evaluation evaluation = evaluate(cardId, request, current);
@@ -122,7 +122,7 @@ public class PairingSessionService {
         // Destruction first: a slot cannot be rearranged while it still carries the result that made
         // it un-rearrangeable, and the audit row must capture the result BEFORE anything overwrites it.
         var destroyed = response.resultsToRemove();
-        for (var doomed : destroyed) {
+        for (var doomed : destroyed.stream().sorted(Comparator.comparingInt(CardDtos.DestroyedResult::game).reversed()).toList()) {
             cards.writeAudit(cardId, actor, "FORCE_REMOVE_RESULT", doomed, Map.of(
                 "removedBy", actor,
                 "commitKey", request.commitKey().toString(),
@@ -181,14 +181,6 @@ public class PairingSessionService {
             && card.stage() != RuntimeStage.RESULT_COLLECTION)
             blocks.add(block("WRONG_STAGE", null, null,
                 "พักผู้เล่น/แก้คู่ได้เฉพาะช่วงจับคู่ ตรวจ pairing และกรอกผล (ขั้นตอนปัจจุบัน: " + card.stage() + ")"));
-        // Game 1 before confirmation lives in table_seats, whose player_code is NOT NULL — an empty
-        // seat cannot even be represented there. Regenerating is free at that point, so it is the
-        // supported route rather than teaching this tool a second storage model.
-        if (card.stage() == RuntimeStage.PAIRING_PREVIEW && card.currentGame() == 1
-            && cards.hasSeatLayout(cardId))
-            blocks.add(block("GAME_ONE_PREVIEW", null, null,
-                "เกม 1 ก่อนยืนยันคู่ ให้สุ่มจับคู่ใหม่แทนการแก้ทีละคู่"));
-
         List<Integer> editableGames = card.editableGames();
 
         // ---- resolve player codes ----
@@ -205,7 +197,16 @@ public class PairingSessionService {
             .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         Set<Integer> releasing = request.release().stream().map(codes::get)
             .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-        Set<Integer> heldNow = pool.openCodes(cardId);
+        Map<Integer, Integer> heldFrom = new LinkedHashMap<>();
+        pool.listOpen(cardId).forEach(hold -> heldFrom.put(hold.playerCode(), hold.fromGame() == null ? 1 : hold.fromGame()));
+        Set<Integer> heldNow = heldFrom.keySet();
+        Map<Integer, Integer> screenFrom = new LinkedHashMap<>();
+        for (var screen : request.screen()) {
+            if (screen.fromGame() != null) cards.validateRosterScope(cardId, card, screen.fromGame());
+            if (cards.isTerminated(cardId, codes.get(screen.player())))
+                blocks.add(block("TERMINATED_PLAYER", null, null, screen.player() + " ถูกถอนแล้ว"));
+            screenFrom.put(codes.get(screen.player()), screen.fromGame() == null ? 1 : screen.fromGame());
+        }
 
         // ---- drift: is the world still what the client staged against? ----
         for (var expected : request.expect()) {
@@ -230,18 +231,20 @@ public class PairingSessionService {
         // Screening vacates the player's seat wherever it is; the server locates it rather than
         // trusting the client to, so the two can never disagree about where someone was sitting.
         Map<Integer, ScreenOrigin> origins = new LinkedHashMap<>();
+        Set<SlotKey> vacatedByScreening = new LinkedHashSet<>();
         for (int code : screening) {
-            if (heldNow.contains(code)) continue;                 // convergent: already held
-            SlotKey key = null;
-            for (var entry : desired.entrySet())
-                if (Objects.equals(entry.getValue().one(), code) || Objects.equals(entry.getValue().two(), code))
-                    key = entry.getKey();
-            if (key == null) { origins.put(code, ScreenOrigin.UNSEATED); continue; }
-            Slot slot = desired.get(key);
-            boolean isOne = Objects.equals(slot.one(), code);
-            origins.put(code, new ScreenOrigin(key.game(), key.table(), isOne ? 1 : 2,
-                isOne ? slot.two() : slot.one()));
-            desired.put(key, isOne ? slot.withOne(null) : slot.withTwo(null));
+            if (heldNow.contains(code)) continue;
+            origins.put(code, ScreenOrigin.UNSEATED);
+            for (var entry : desired.entrySet()) {
+                SlotKey key = entry.getKey();
+                Slot slot = entry.getValue();
+                if (!editableGames.contains(key.game()) || key.game() < screenFrom.get(code)) continue;
+                boolean one = Objects.equals(slot.one(), code);
+                if (!one && !Objects.equals(slot.two(), code)) continue;
+                origins.put(code, new ScreenOrigin(key.game(), key.table(), one ? 1 : 2, one ? slot.two() : slot.one()));
+                entry.setValue(one ? slot.withOne(null) : slot.withTwo(null));
+                vacatedByScreening.add(key);
+            }
         }
 
         // Explicit occupancy rewrites are applied after screening so a slot can be vacated and
@@ -268,19 +271,35 @@ public class PairingSessionService {
         // slot. This is deliberately NOT derived from `slots` being empty or `screen` being
         // non-empty: those correlate with the two UI modes today by accident of how the client
         // builds a change set, and nothing in the contract keeps them correlated tomorrow.
-        Set<SlotKey> vacatedByScreening = new LinkedHashSet<>();
-        for (var origin : origins.values())
-            if (origin.game() != null && origin.table() != null)
-                vacatedByScreening.add(new SlotKey(origin.game(), origin.table()));
         Set<SlotKey> namedByClient = new LinkedHashSet<>();
         for (var wanted : request.slots()) namedByClient.add(new SlotKey(wanted.game(), wanted.table()));
+
+        Set<SlotKey> requestedClears = new LinkedHashSet<>();
+        Set<SlotKey> clearResults = new LinkedHashSet<>();
+        for (var target : request.clearResults()) {
+            SlotKey key = new SlotKey(target.game(), target.table());
+            Slot found = current.get(key);
+            if (found == null || found.resultType() == null || found.snapshotNo() != null || !editableGames.contains(key.game())) {
+                blocks.add(block("RESULT_NOT_EDITABLE", key.game(), key.table(), "ผลที่ต้องการล้างเปลี่ยนแล้วหรืออยู่นอกเกมที่แก้ไขได้"));
+                continue;
+            }
+            requestedClears.add(key);
+            clearResults.add(key);
+            for (int table : cards.dependentPairResultTables(cardId, key.game(), key.table())) {
+                SlotKey downstream = new SlotKey(key.game() + 1, table);
+                if (current.get(downstream) != null) {
+                    consequences.add(new CardDtos.PairingConsequence("PAIR_RESULT_REBUILD", downstream.game(), table, null));
+                    if (current.get(downstream).resultType() != null) clearResults.add(downstream);
+                }
+            }
+        }
 
         // ---- hard blocks ----
         for (var entry : current.entrySet()) {
             SlotKey key = entry.getKey();
             Slot before = entry.getValue();
             Slot after = desired.get(key);
-            if (before.sameOccupancy(after)) continue;
+            if (before.sameOccupancy(after) && !clearResults.contains(key)) continue;
 
             if (before.snapshotNo() != null)
                 blocks.add(block("SNAPSHOTTED", key.game(), key.table(),
@@ -311,7 +330,7 @@ public class PairingSessionService {
                     forceAvailable = false;
                     continue;
                 }
-                String reason = cards.unwindBlocker(cardId, key.game(), key.table());
+                String reason = cards.unwindBlocker(cardId, key.game(), key.table(), requestedClears.contains(key));
                 if (!request.force())
                     blocks.add(block("HAS_RESULT", key.game(), key.table(),
                         "คู่ที่ " + key.table() + " เกม " + key.game()
@@ -327,41 +346,31 @@ public class PairingSessionService {
             }
         }
 
-        // A player may sit in at most one seat.
-        Map<Integer, SlotKey> seatOf = new LinkedHashMap<>();
-        for (var entry : desired.entrySet())
-            // Iterate the array, not List.of(...) — an empty seat is null and List.of rejects nulls.
-            for (Integer occupant : entry.getValue().occupants())
-                if (occupant != null) {
-                    SlotKey clash = seatOf.put(occupant, entry.getKey());
-                    if (clash != null)
-                        blocks.add(block("DUPLICATE_PLAYER", entry.getKey().game(), entry.getKey().table(),
-                            code(prefix, occupant) + " ถูกจัดไว้สองที่ (คู่ที่ " + clash.table()
-                                + " และ " + entry.getKey().table() + ")"));
-                }
-
-        for (var entry : seatOf.entrySet()) {
-            int code = entry.getKey();
-            if (cards.isTerminated(cardId, code))
-                blocks.add(block("TERMINATED_PLAYER", entry.getValue().game(), entry.getValue().table(),
-                    code(prefix, code) + " ถูก terminate แล้ว จัดลงคู่ไม่ได้"));
-            // Seating someone who is held only makes sense as part of releasing them.
-            if (heldNow.contains(code) && !releasing.contains(code))
-                blocks.add(block("STILL_SCREENED", entry.getValue().game(), entry.getValue().table(),
-                    code(prefix, code) + " อยู่ใน Screening Pool ต้องนำออกจาก pool พร้อมกัน"));
-            if (screening.contains(code))
-                blocks.add(block("SCREENED_AND_SEATED", entry.getValue().game(), entry.getValue().table(),
-                    code(prefix, code) + " ถูกเลือกให้เข้า Screening Pool และถูกจัดลงคู่พร้อมกัน"));
+        // The same player may play once in each game in the block.
+        Map<Integer, Set<Integer>> gamesByPlayer = new LinkedHashMap<>();
+        for (var entry : desired.entrySet()) {
+            SlotKey key = entry.getKey();
+            for (Integer code : entry.getValue().occupants()) {
+                if (code == null) continue;
+                if (!gamesByPlayer.computeIfAbsent(code, ignored -> new LinkedHashSet<>()).add(key.game()))
+                    blocks.add(block("DUPLICATE_PLAYER", key.game(), key.table(),
+                        code(prefix, code) + " ถูกจัดไว้สองที่ในเกม " + key.game()));
+                if (cards.isTerminatedInGame(cardId, code, key.game()))
+                    blocks.add(block("TERMINATED_PLAYER", key.game(), key.table(),
+                        code(prefix, code) + " ถูกถอนในเกมนี้ จัดลงคู่ไม่ได้"));
+                if (heldFrom.getOrDefault(code, Integer.MAX_VALUE) <= key.game() && !releasing.contains(code))
+                    blocks.add(block("STILL_SCREENED", key.game(), key.table(),
+                        code(prefix, code) + " อยู่ใน Screening Pool ต้องนำออกจาก pool พร้อมกัน"));
+                if (screenFrom.getOrDefault(code, Integer.MAX_VALUE) <= key.game())
+                    blocks.add(block("SCREENED_AND_SEATED", key.game(), key.table(),
+                        code(prefix, code) + " ถูกเลือกให้พักและถูกจัดลงคู่พร้อมกัน"));
+            }
         }
-
-        // Rule 3: there is no "active but unpaired". Leaving the pool means landing in a seat.
         for (int code : releasing) {
             if (!heldNow.contains(code))
-                blocks.add(block("NOT_SCREENED", null, null,
-                    code(prefix, code) + " ไม่ได้อยู่ใน Screening Pool"));
-            else if (!seatOf.containsKey(code))
-                blocks.add(block("RELEASED_WITHOUT_SEAT", null, null,
-                    code(prefix, code) + " ต้องมีคู่รองรับก่อนจึงจะออกจาก Screening Pool ได้"));
+                blocks.add(block("NOT_SCREENED", null, null, code(prefix, code) + " ไม่ได้อยู่ใน Screening Pool"));
+            else if (gamesByPlayer.getOrDefault(code, Set.of()).stream().noneMatch(game -> game >= heldFrom.get(code)))
+                blocks.add(block("RELEASED_WITHOUT_SEAT", null, null, code(prefix, code) + " ต้องมีคู่รองรับก่อนจึงจะออกจาก Screening Pool ได้"));
         }
 
         // ---- warnings ----
@@ -403,9 +412,9 @@ public class PairingSessionService {
             else if (!isBye && wasBye && before.voided())
                 consequences.add(new CardDtos.PairingConsequence("UNVOIDED", key.game(), key.table(), null));
         }
-        for (int code : screening)
-            if (!heldNow.contains(code))
-                consequences.add(new CardDtos.PairingConsequence("POOL_ADD", null, null, code(prefix, code)));
+        for (var entry : request.screen())
+            if (!heldNow.contains(codes.get(entry.player())))
+                consequences.add(new CardDtos.PairingConsequence("POOL_ADD", entry.fromGame(), null, entry.player()));
         for (int code : releasing)
             consequences.add(new CardDtos.PairingConsequence("POOL_REMOVE", null, null, code(prefix, code)));
 
@@ -439,27 +448,17 @@ public class PairingSessionService {
     // ----------------------------------------------------------------- write
 
     private void applyPairing(UUID cardId, Evaluation evaluation, String actor) {
+        int source = cards.cardSummary(cardId).currentGame();
         evaluation.desired().forEach((key, after) -> {
             Slot before = evaluation.current().get(key);
             if (before.sameOccupancy(after)) return;
-            jdbc.update("""
-                UPDATE matches SET player_one = ?, player_two = ?
-                WHERE card_id = ? AND game_number = ? AND table_number = ?
-                """, after.one(), after.two(), cardId, key.game(), key.table());
             boolean empty = after.one() == null && after.two() == null;
-            if (empty && !before.voided())
-                // Vacated entirely: void it rather than delete it. Seat numbers are derived from
-                // table_number, so removing a row silently renumbers every seat after it — including
-                // on table cards already handed out.
-                jdbc.update("""
-                    UPDATE matches SET voided_at = now(), voided_by = ?
-                    WHERE card_id = ? AND game_number = ? AND table_number = ?
-                    """, actor, cardId, key.game(), key.table());
-            else if (!empty && before.voided())
-                jdbc.update("""
-                    UPDATE matches SET voided_at = NULL, voided_by = NULL
-                    WHERE card_id = ? AND game_number = ? AND table_number = ?
-                    """, cardId, key.game(), key.table());
+            jdbc.update("""
+                UPDATE matches SET player_one = ?, player_two = ?, pairing_override = pairing_override OR ?,
+                    voided_at = CASE WHEN ? THEN COALESCE(voided_at, now()) END,
+                    voided_by = CASE WHEN ? THEN COALESCE(voided_by, ?) END
+                WHERE card_id = ? AND game_number = ? AND table_number = ?
+                """, after.one(), after.two(), key.game() > source, empty, empty, actor, cardId, key.game(), key.table());
         });
     }
 
@@ -484,11 +483,18 @@ public class PairingSessionService {
             pool.open(cardId, code, ScreeningPoolStore.reasonOf(entry.reason()), entry.note(),
                 new ScreeningPoolStore.Origin(origin.game(), origin.table(), origin.side(),
                     origin.opponent(), false),
-                actor);
+                actor, entry.fromGame());
         }
+        Map<Integer, Integer> heldFrom = new LinkedHashMap<>();
+        pool.listOpen(cardId).forEach(hold -> heldFrom.put(hold.playerCode(), hold.fromGame() == null ? 1 : hold.fromGame()));
         for (String id : request.release()) {
             Integer code = cards.playerCodeOrNull(cardId, id);
-            if (code != null) pool.close(cardId, code, ScreeningPoolStore.Resolution.RETURNED, actor);
+            if (code == null) continue;
+            Integer returnedIn = evaluation.desired().entrySet().stream()
+                .filter(entry -> entry.getKey().game() >= heldFrom.getOrDefault(code, 1)
+                    && (Objects.equals(entry.getValue().one(), code) || Objects.equals(entry.getValue().two(), code)))
+                .map(entry -> entry.getKey().game()).min(Integer::compareTo).orElseThrow();
+            pool.close(cardId, code, ScreeningPoolStore.Resolution.RETURNED, actor, returnedIn);
         }
     }
 
@@ -526,6 +532,11 @@ public class PairingSessionService {
         Set<SlotKey> keys = new LinkedHashSet<>();
         for (var slot : request.expect()) keys.add(new SlotKey(slot.game(), slot.table()));
         for (var slot : request.slots()) keys.add(new SlotKey(slot.game(), slot.table()));
+        for (var slot : request.clearResults()) {
+            keys.add(new SlotKey(slot.game(), slot.table()));
+            for (int table : cards.dependentPairResultTables(cardId, slot.game(), slot.table()))
+                keys.add(new SlotKey(slot.game() + 1, table));
+        }
         // The seat a screened player currently occupies — located server-side so the client cannot
         // disagree with the server about where someone was sitting.
         for (var entry : request.screen()) addCurrentSeat(cardId, entry.player(), keys);

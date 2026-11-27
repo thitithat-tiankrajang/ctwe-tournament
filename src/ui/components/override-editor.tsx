@@ -1,17 +1,15 @@
 "use client";
 
-import { Save, ShieldCheck, X } from "lucide-react";
+import { SaveAll, ShieldCheck, Undo2 } from "lucide-react";
 import { useState } from "react";
 import type { Pairing, Player } from "@/domain/tournament/types";
-import { Badge } from "@/ui/components/badge";
-import { Button } from "@/ui/components/button";
 import { appDialog } from "@/application/ui/dialog";
 import { useUnsavedChangesWarning } from "@/application/ui/use-unsaved-changes-warning";
 import { ConfirmDialog } from "@/ui/components/confirm-dialog";
-import { Panel } from "@/ui/components/page";
 import { ScoreInput } from "@/ui/components/score-input";
+import { MAX_SCORE, MIN_SCORE, ResultViewGrid } from "@/ui/components/result-entry-grid";
 
-const validScore = (value: string) => value.trim() !== "" && Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 1_000_000_000;
+const validScore = (value: string) => /^-?\d+$/.test(value) && Number(value) >= MIN_SCORE && Number(value) <= MAX_SCORE;
 
 /**
  * Director backdated-result editor: edits are buffered (not saved per keystroke). "บันทึกการแก้ไขทั้งหมด"
@@ -23,28 +21,44 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
   pairingsForGame: (game: number) => Pairing[];
   players: Map<string, Player>;
   onCommit: (matchId: string, scoreOne: number, scoreTwo: number) => Promise<void>;
-  onRevokePenalty: (pairing: Pairing) => void;
+  onRevokePenalty?: (pairing: Pairing) => void;
   onDone: () => void;
 }) {
   const [edits, setEdits] = useState<Record<string, { one: string; two: string }>>({});
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [committing, setCommitting] = useState(false);
 
-  const items = block.flatMap((game) => pairingsForGame(game).filter((pairing) => pairing.playerOneId && pairing.playerTwoId).map((pairing) => ({ game, pairing })));
-  const draftOf = (pairing: Pairing) => edits[pairing.id] ?? { one: pairing.scoreOne?.toString() ?? "", two: pairing.scoreTwo?.toString() ?? "" };
+  const items = block.flatMap((game) => pairingsForGame(game).filter((pairing) => pairing.playerOneId || pairing.playerTwoId).map((pairing) => ({ game, pairing })));
+  const savedScores = (pairing: Pairing) => ({
+    one: pairing.playerOneId ? pairing.scoreOne?.toString() ?? "" : "0",
+    two: pairing.playerTwoId ? pairing.scoreTwo?.toString() ?? "" : "0",
+  });
+  const draftOf = (pairing: Pairing) => edits[pairing.id] ?? savedScores(pairing);
   const setScore = (pairing: Pairing, field: "one" | "two", value: string) =>
-    setEdits((prev) => ({ ...prev, [pairing.id]: { ...(prev[pairing.id] ?? { one: pairing.scoreOne?.toString() ?? "", two: pairing.scoreTwo?.toString() ?? "" }), [field]: value } }));
+    setEdits((prev) => ({ ...prev, [pairing.id]: { ...(prev[pairing.id] ?? savedScores(pairing)), [field]: value } }));
+  const validSide = (pairing: Pairing, side: "one" | "two", score: string) => validScore(score)
+    && (Boolean(side === "one" ? pairing.playerTwoId : pairing.playerOneId) || Number(score) > 0);
   const nameOf = (id: string | null) => { const player = id ? players.get(id) : undefined; return player ? `${player.id} ${player.firstName} ${player.lastName}` : "—"; };
 
   const changes = items.flatMap(({ game, pairing }) => {
     const draft = edits[pairing.id];
     if (!draft) return [];
-    const oldOne = pairing.scoreOne?.toString() ?? ""; const oldTwo = pairing.scoreTwo?.toString() ?? "";
-    if ((draft.one === oldOne && draft.two === oldTwo) || !validScore(draft.one) || !validScore(draft.two)) return [];
+    const { one: oldOne, two: oldTwo } = savedScores(pairing);
+    if ((draft.one === oldOne && draft.two === oldTwo) || !validSide(pairing, "one", draft.one) || !validSide(pairing, "two", draft.two)) return [];
     return [{ game, pairing, oldOne, oldTwo, newOne: draft.one, newTwo: draft.two }];
   });
   // Buffered edits only reach the server on the final confirm — guard against losing them.
-  useUnsavedChangesWarning(changes.length > 0);
+  const dirty = items.some(({ pairing }) => {
+    const saved = savedScores(pairing);
+    const draft = draftOf(pairing);
+    return draft.one !== saved.one || draft.two !== saved.two;
+  });
+  useUnsavedChangesWarning(dirty);
+  const exitEditor = async () => {
+    if (!dirty || await appDialog.confirm("คะแนนที่แก้ไว้จะไม่ถูกบันทึก", {
+      title: "ออกจากโหมดแก้ไข?", confirmLabel: "ออกและทิ้งการแก้ไข",
+    })) onDone();
+  };
 
   const commit = async () => {
     setCommitting(true);
@@ -60,55 +74,41 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
 
   return (
     <>
-      {block.map((game) => {
-        const pairings = pairingsForGame(game);
-        return (
-          <Panel key={game} title={`แก้ไขผล เกม ${game} (ย้อนหลัง)`} description="แก้คะแนนได้หลายคู่ แล้วกด “บันทึกการแก้ไขทั้งหมด” ครั้งเดียว · standing จะคำนวณใหม่ตอนยืนยัน">
-            <div className="dense-table-wrap">
-              <table className="data-table" aria-label={`ผลการแข่งขัน เกม ${game} (แก้ไขย้อนหลัง)`}>
-                <thead><tr><th scope="col" className="numeric">คู่</th><th scope="col">ฝ่ายที่ 1</th><th scope="col">ฝ่ายที่ 2</th><th scope="col" className="numeric">เดิม</th><th scope="col" className="numeric">คะแนน 1</th><th scope="col" className="numeric">คะแนน 2</th></tr></thead>
-                <tbody>
-                  {pairings.length === 0 ? <tr><td colSpan={6} className="egrid-empty"><strong>ยังไม่มีผลที่เผยแพร่</strong></td></tr> : pairings.map((pairing) => {
-                    const penalty = pairing.resultType === "PENALTY";
-                    const draft = draftOf(pairing);
-                    const dirty = !penalty && Boolean(edits[pairing.id]) && (draft.one !== (pairing.scoreOne?.toString() ?? "") || draft.two !== (pairing.scoreTwo?.toString() ?? ""));
-                    return (
-                      <tr key={pairing.id} className={penalty ? "egrid-row--locked egrid-row--penalty" : dirty ? "player-row--editing" : undefined}>
-                        <td className="numeric">{pairing.tableNumber}</td>
-                        <td title={nameOf(pairing.playerOneId)}>{nameOf(pairing.playerOneId)}</td>
-                        <td title={nameOf(pairing.playerTwoId)}>{nameOf(pairing.playerTwoId)}</td>
-                        <td className="numeric">{penalty ? <Badge tone="danger">ลงดาบ −{pairing.calculatedDiff ?? 0}</Badge> : <>{pairing.scoreOne ?? "—"} : {pairing.scoreTwo ?? "—"}</>}</td>
-                        <td>{penalty ? <Badge tone="danger">ล็อก</Badge> : <ScoreInput className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 1 คู่ ${pairing.tableNumber}`} value={draft.one} disabled={committing} onChange={(event) => setScore(pairing, "one", event.target.value)} />}</td>
-                        <td>{penalty ? <Button size="sm" variant="secondary" disabled={committing} onClick={() => onRevokePenalty(pairing)}>ถอนดาบ</Button> : <ScoreInput className="input" type="number" min={0} inputMode="numeric" aria-label={`คะแนนฝ่าย 2 คู่ ${pairing.tableNumber}`} value={draft.two} disabled={committing} onChange={(event) => setScore(pairing, "two", event.target.value)} />}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-        );
-      })}
-
-      <div className="form-actions">
-        <Button variant="secondary" disabled={committing} onClick={onDone}><X size={16} />ออกจากโหมดแก้ไข</Button>
-        <Button disabled={committing || changes.length === 0} onClick={() => setConfirmOpen(true)}><Save size={16} />บันทึกการแก้ไขทั้งหมด ({changes.length})</Button>
+      <div className="notice notice--warning"><p><strong>ผลย้อนหลัง · เกม {block.join("–")}</strong><span>การแก้ไขมีผลต่ออันดับทันที</span></p>
+        <button type="button" className="btn btn--secondary" disabled={committing} onClick={() => void exitEditor()}>ออกจากโหมดแก้ไข</button>
       </div>
+      {block.map((game, index) => <section className="panel director-grid-panel" key={game} aria-label={`แก้ไขผลย้อนหลัง เกม ${game}`}>
+        {block.length > 1 && <div className="panel-head"><h2>เกม {game}</h2></div>}
+        <ResultViewGrid pairings={pairingsForGame(game)} players={players} renderScore={(pairing, side, fallback) => {
+          if (pairing.resultType === "PENALTY") return side === "one" || !onRevokePenalty ? fallback : <button type="button" className="btn btn--sm btn--secondary dir-row-icon"
+            title="ถอนดาบ" aria-label="ถอนดาบ" disabled={committing} onClick={() => onRevokePenalty(pairing)}><Undo2 size={15} /></button>;
+          if (!(side === "one" ? pairing.playerOneId : pairing.playerTwoId) || pairing.resultWithdrawn) return fallback;
+          const value = draftOf(pairing)[side];
+          return <ScoreInput className="sc score-override-input" type="text" inputMode="text" aria-label={`คะแนนฝ่าย ${side === "one" ? 1 : 2} คู่ ${pairing.tableNumber}`}
+            value={value} disabled={committing} onFocus={(event) => event.currentTarget.select()}
+            onChange={(event) => { if (/^-?\d*$/.test(event.target.value)) { event.currentTarget.removeAttribute("aria-invalid"); setScore(pairing, side, event.target.value); } }}
+            onBlur={(event) => { if (!validSide(pairing, side, event.target.value)) event.currentTarget.setAttribute("aria-invalid", "true"); }} />;
+        }} />
+        {index === block.length - 1 && <div className="gmeta"><span className="acts">
+          <button type="button" className="btn btn--sm btn--success" disabled={committing || changes.length === 0} onClick={() => setConfirmOpen(true)}><SaveAll className="i" size={13} />บันทึกการแก้ไขทั้งหมด</button>
+        </span></div>}
+      </section>)}
 
       <ConfirmDialog
+        appearance="prototype"
         open={confirmOpen}
         eyebrow="ตรวจสอบก่อนเผยแพร่"
         icon={<ShieldCheck size={20} />}
         title={`ยืนยันการแก้ไขผล ${changes.length} รายการ`}
         description="รายการที่จะถูกบันทึกและเผยแพร่สาธารณะ · standing จะคำนวณใหม่ทุกเกม"
         confirmLabel="ยืนยันและเผยแพร่"
-        className="confirm-dialog--wide"
+        className="dialog--wide"
         busy={committing}
         onConfirm={() => void commit()}
         onCancel={() => { if (!committing) setConfirmOpen(false); }}
       >
-        <div className="dense-table-wrap">
-          <table className="data-table" aria-label="สรุปผลที่จะถูกแก้ไข">
+        <div className="gscroll">
+          <table className="dt" aria-label="สรุปผลที่จะถูกแก้ไข">
             <thead><tr><th scope="col" className="numeric">เกม</th><th scope="col" className="numeric">คู่</th><th scope="col">ฝ่ายที่ 1</th><th scope="col">ฝ่ายที่ 2</th><th scope="col" className="numeric">เดิม</th><th scope="col" className="numeric">ใหม่</th></tr></thead>
             <tbody>
               {changes.map((change) => (
@@ -118,7 +118,7 @@ export function OverrideEditor({ block, pairingsForGame, players, onCommit, onRe
                   <td title={nameOf(change.pairing.playerOneId)}>{nameOf(change.pairing.playerOneId)}</td>
                   <td title={nameOf(change.pairing.playerTwoId)}>{nameOf(change.pairing.playerTwoId)}</td>
                   <td className="numeric">{change.oldOne || "—"} : {change.oldTwo || "—"}</td>
-                  <td className="numeric"><Badge tone="success">{change.newOne} : {change.newTwo}</Badge></td>
+                  <td className="numeric"><strong>{change.newOne} : {change.newTwo}</strong></td>
                 </tr>
               ))}
             </tbody>

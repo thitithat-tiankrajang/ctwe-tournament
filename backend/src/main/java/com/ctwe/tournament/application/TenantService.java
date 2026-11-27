@@ -3,6 +3,7 @@ package com.ctwe.tournament.application;
 import com.ctwe.tournament.web.dto.TenantDtos;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -28,11 +29,14 @@ public class TenantService {
     private final JdbcTemplate jdbc;
     private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher events;
 
-    public TenantService(JdbcTemplate jdbc, PasswordEncoder passwordEncoder, ObjectMapper objectMapper) {
+    public TenantService(JdbcTemplate jdbc, PasswordEncoder passwordEncoder, ObjectMapper objectMapper,
+                         ApplicationEventPublisher events) {
         this.jdbc = jdbc;
         this.passwordEncoder = passwordEncoder;
         this.objectMapper = objectMapper;
+        this.events = events;
     }
 
     // ----------------------------------------------------------------- tournaments (admin)
@@ -161,9 +165,12 @@ public class TenantService {
     public void deleteDirector(String username, String actor) {
         requireRole(username, "ROLE_DIRECTOR");
         // Remove the staff the director created (their authorities cascade), then the director.
-        jdbc.update("DELETE FROM staff_accounts WHERE created_by = ?", username);
+        List<String> deletedStaff = jdbc.queryForList(
+            "DELETE FROM staff_accounts WHERE created_by = ? RETURNING username", String.class, username);
         jdbc.update("DELETE FROM staff_accounts WHERE username = ?", username); // cascades authorities + memberships
         audit(actor, "DELETE_DIRECTOR", Map.of("username", username), null);
+        deletedStaff.forEach(this::revokeSessions);
+        revokeSessions(username);
     }
 
     // ----------------------------------------------------------------- staff (director)
@@ -189,6 +196,7 @@ public class TenantService {
         requireOwnedStaff(username, director);
         jdbc.update("DELETE FROM staff_accounts WHERE username = ?", username);
         audit(actor, "DELETE_STAFF", Map.of("username", username), null);
+        revokeSessions(username);
     }
 
     /** Grant a staff access to one of the director's own tournaments (sees all its cards). */
@@ -223,6 +231,7 @@ public class TenantService {
             enabled, username) == 0)
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found");
         audit(actor, enabled ? "ENABLE_ACCOUNT" : "DISABLE_ACCOUNT", null, Map.of("username", username));
+        if (!enabled) revokeSessions(username);
     }
 
     @Transactional
@@ -232,7 +241,14 @@ public class TenantService {
             """, passwordEncoder.encode(password), username) == 0)
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found");
         audit(actor, "RESET_PASSWORD", null, Map.of("username", username));
+        revokeSessions(username);
     }
+
+    private void revokeSessions(String username) {
+        events.publishEvent(new StaffSessionsRevoked(username));
+    }
+
+    public record StaffSessionsRevoked(String username) {}
 
     public void requireOwnedStaff(String username, String director) {
         Long owned = jdbc.queryForObject(

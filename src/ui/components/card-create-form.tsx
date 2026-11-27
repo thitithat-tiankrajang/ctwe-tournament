@@ -2,15 +2,14 @@
 
 import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, Info, Save, Trophy } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTournamentStore } from "@/application/tournament/store";
 import { appDialog } from "@/application/ui/dialog";
 import { createCardSchema, type CreateCardForm } from "@/domain/tournament/schemas";
 import type { FinalType, PairingRuleType, SlotLabel, Tournament } from "@/domain/tournament/types";
-import { Button } from "@/ui/components/button";
-import { Panel } from "@/ui/components/page";
+import { SelectMenu } from "@/ui/components/select-menu";
 
 type InitialPairingRule = Exclude<PairingRuleType, "PAIR_RESULT">;
 
@@ -34,13 +33,13 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
   const createCard = useTournamentStore((state) => state.createCard);
   const [initialPairingRule, setInitialPairingRule] = useState<InitialPairingRule>("RANDOM");
   const [rules, setRules] = useState<PairingRuleType[]>(["SWISS", "SWISS", "SWISS"]);
-  const [gameMaxDiffs, setGameMaxDiffs] = useState<number[]>([350, 350, 350, 350]);
+  const [gameMaxDiffs, setGameMaxDiffs] = useState<string[]>(["350", "350", "350", "350"]);
   const [finalType, setFinalType] = useState<FinalType>("NONE");
-  const [finalGames, setFinalGames] = useState<number>(1);
+  const [finalGames, setFinalGames] = useState("1");
   const [gibsonEnabled, setGibsonEnabled] = useState(false);
   const [slotLabel, setSlotLabel] = useState<SlotLabel>("PAIR");
   const [tournamentId, setTournamentId] = useState(fixedTournament?.id ?? "");
-  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<CreateCardForm>({
+  const { register, handleSubmit, setValue, watch, formState: { errors, isSubmitting } } = useForm<CreateCardForm>({
     resolver: zodResolver(createCardSchema),
     defaultValues: { name: "", division: "", numberOfGames: 4 },
   });
@@ -48,7 +47,7 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
 
   useEffect(() => {
     setRules((current) => Array.from({ length: Math.max(1, numberOfGames - 1) }, (_, index) => current[index] ?? "SWISS"));
-    setGameMaxDiffs((current) => Array.from({ length: numberOfGames }, (_, index) => current[index] ?? 350));
+    setGameMaxDiffs((current) => Array.from({ length: numberOfGames }, (_, index) => current[index] ?? "350"));
   }, [numberOfGames]);
 
   useEffect(() => {
@@ -70,131 +69,96 @@ export function CardCreateForm({ tournaments, fixedTournament, onCreated, cancel
     const tour = resolveTournament();
     if (!tour) { await appDialog.alert("กรุณาเลือกรายการแข่งขัน (tournament) ก่อนสร้างการ์ด"); return; }
     try {
-      const id = await createCard({ tournamentId: tour.id, ...values, initialPairingRule, rules, gameMaxDiffs, finalType, finalGames: finalType === "NONE" ? 0 : finalGames, gibsonEnabled, slotLabel });
+      const id = await createCard({ tournamentId: tour.id, ...values, initialPairingRule, rules, gameMaxDiffs: gameMaxDiffs.map(Number), finalType, finalGames: finalType === "NONE" ? 0 : Number(finalGames), gibsonEnabled, slotLabel });
       onCreated(id, tour);
     } catch (error) {
       await appDialog.alert(error instanceof Error ? error.message : "ไม่สามารถสร้างการ์ดได้", "สร้างการ์ดไม่สำเร็จ", true);
     }
   };
 
+  const invalidMaxDiffs = gameMaxDiffs.length !== numberOfGames || gameMaxDiffs.some((value) => !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1_000_000);
+  const invalidFinal = finalType !== "NONE" && (!/^\d+$/.test(finalGames) || Number(finalGames) < 1 || Number(finalGames) > 12);
+  const initialOptions = (["RANDOM", "SWISS", "KING_OF_THE_HILL"] as const).map((value) => ({ value, label: ruleLabels[value] }));
+  const tournamentOptions = (tournaments ?? []).map((item) => ({ value: item.id, label: item.name + (item.status === "CLOSED" ? " (ปิดอยู่)" : "") }));
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
-      <Panel title="ข้อมูลการแข่งขัน" description="การ์ดหนึ่งใบใช้สำหรับหนึ่งรุ่นการแข่งขัน">
-        <div className="panel-padding form-grid">
-          <div className="form-field">
-            <label className="form-label" htmlFor="cf-tour">รายการแข่งขัน (Tournament) <span className="required">*</span></label>
-            {fixedTournament ? (
-              <div className="input" style={{ display: "flex", alignItems: "center", gap: 8 }}><Trophy size={15} />{fixedTournament.name}</div>
-            ) : (
-              <>
-                <select className="select" id="cf-tour" value={tournamentId} onChange={(event) => setTournamentId(event.target.value)}>
-                  <option value="" disabled>เลือกรายการแข่งขัน…</option>
-                  {tournaments?.map((item) => <option key={item.id} value={item.id}>{item.name}{item.status === "CLOSED" ? " (ปิดอยู่)" : ""}</option>)}
-                </select>
-                {tournaments && tournaments.length === 0 && <p className="form-error">คุณยังไม่ได้รับมอบหมายรายการแข่งขัน</p>}
-              </>
-            )}
+    <section className="panel" id="cc">
+      <div className="panel-head"><h2>สร้างการ์ดการแข่งขัน</h2></div>
+      <form className="panel-body cc" onSubmit={handleSubmit(onSubmit)}>
+        <div className="form-row">
+          <div className="field"><span className="field__label">รายการแข่งขัน</span>
+            {fixedTournament ? <strong>{fixedTournament.name}</strong> :
+              <SelectMenu appearance="prototype" className="sm--block" ariaLabel="รายการแข่งขัน" value={tournamentId}
+                options={tournamentOptions} onChange={setTournamentId} />}
+            {!fixedTournament && !tournamentOptions.length && <span className="field-err">ยังไม่ได้รับมอบหมายรายการแข่งขัน</span>}
           </div>
-          <div className="form-field">
-            <label className="form-label" htmlFor="cf-name">ชื่อการแข่งขัน <span className="required">*</span></label>
+          <div className="field"><label htmlFor="cf-name">ชื่อการแข่งขัน</label>
             <input className="input" id="cf-name" placeholder="เช่น A-Math Championship" {...register("name")} />
-            {errors.name && <p className="form-error">{errors.name.message}</p>}
+            {errors.name && <span className="field-err">{errors.name.message}</span>}
           </div>
-          <div className="form-field">
-            <label className="form-label" htmlFor="cf-division">รุ่นการแข่งขัน <span className="required">*</span></label>
+          <div className="field"><label htmlFor="cf-division">รุ่นการแข่งขัน</label>
             <input className="input" id="cf-division" placeholder="เช่น ประถมศึกษา" {...register("division")} />
-            {errors.division && <p className="form-error">{errors.division.message}</p>}
-          </div>
-          <div className="form-field">
-            <label className="form-label" htmlFor="cf-games">จำนวนเกม <span className="required">*</span></label>
-            <select className="select" id="cf-games" {...register("numberOfGames")}>
-              {Array.from({ length: 11 }, (_, index) => index + 2).map((count) => <option value={count} key={count}>{count} เกม</option>)}
-            </select>
-            {errors.numberOfGames && <p className="form-error">{errors.numberOfGames.message}</p>}
+            {errors.division && <span className="field-err">{errors.division.message}</span>}
           </div>
         </div>
-      </Panel>
+        <div className="form-row">
+          <div className="field"><span className="field__label">จำนวนเกม</span>
+            <SelectMenu appearance="prototype" className="sm--block" ariaLabel="จำนวนเกม" value={String(numberOfGames)}
+              options={Array.from({ length: 11 }, (_, index) => ({ value: String(index + 2), label: `${index + 2} เกม` }))}
+              onChange={(value) => setValue("numberOfGames", Number(value), { shouldValidate: true })} />
+            {errors.numberOfGames && <span className="field-err">{errors.numberOfGames.message}</span>}
+          </div>
+          <div className="field"><span className="field__label">หมายเลขที่ประกาศให้ผู้ชม</span>
+            <SelectMenu appearance="prototype" className="sm--block" ariaLabel="หมายเลขที่ประกาศให้ผู้ชม" value={slotLabel}
+              options={[{ value: "PAIR", label: "คู่ที่ — ผู้ชมเห็นเลขคู่" }, { value: "SEAT", label: "ที่นั่ง — ผู้ชมเห็นเลขที่นั่ง" }]}
+              onChange={(value) => setSlotLabel(value as SlotLabel)} />
+          </div>
+          <div className="field"><span className="field__label">กติกา Pairing เกม 1</span>
+            <SelectMenu appearance="prototype" className="sm--block" ariaLabel="กติกา Pairing เกม 1" value={initialPairingRule}
+              options={initialOptions} onChange={(value) => setInitialPairingRule(value as InitialPairingRule)} />
+          </div>
+        </div>
 
-      <Panel title="Maximum Difference รายเกม" description="ผลต่างของผู้ชนะและผู้แพ้จะถูกจำกัดตามค่านี้ คะแนนดิบยังถูกเก็บครบ">
-        <div className="max-diff-grid panel-padding">
-          {gameMaxDiffs.map((maxDiff, index) => (
-            <div className="form-field" key={index}>
-              <label className="form-label" htmlFor={`cf-max-diff-${index + 1}`}>เกม {index + 1} · Max diff</label>
-              <input className="input" id={`cf-max-diff-${index + 1}`} type="number" min={1} max={1000000} required value={maxDiff}
-                onChange={(event) => setGameMaxDiffs((current) => current.map((value, gameIndex) => gameIndex === index ? Number(event.target.value) : value))} />
-            </div>
-          ))}
-        </div>
-      </Panel>
+        <fieldset className="fs"><legend>Max diff รายเกม</legend>
+          <div className="form-row form-row--tight">{gameMaxDiffs.map((value, index) => <div className="field" key={index}>
+            <label htmlFor={`cf-max-diff-${index + 1}`}>เกม {index + 1}</label>
+            <input className="input prototype-maxdiff num" id={`cf-max-diff-${index + 1}`} type="number" min={1} max={1_000_000}
+              inputMode="numeric" required value={value} onChange={(event) => setGameMaxDiffs((current) =>
+                current.map((entry, gameIndex) => gameIndex === index ? event.target.value : entry))} />
+          </div>)}</div>
+        </fieldset>
 
-      <Panel title="รอบชิงชนะเลิศ" description="เลือกได้ว่ามีรอบตัดสินอันดับหรือไม่ — ผู้เข้าชิงมาจากอันดับท้ายเกมสุดท้าย รอบชิงไม่มี max diff และสรุปผู้ชนะเอง">
-        <div className="panel-padding form-grid">
-          <div className="form-field">
-            <label className="form-label" htmlFor="cf-final-type">รูปแบบรอบชิง</label>
-            <select className="select" id="cf-final-type" value={finalType} onChange={(event) => setFinalType(event.target.value as FinalType)}>
-              <option value="NONE">ไม่มีรอบชิง</option>
-              <option value="CHAMPION">ชิงที่ 1 — อันดับ 1,2 เข้าชิง (ชนะ = ที่ 1, แพ้ = ที่ 2)</option>
-              <option value="CHAMPION_AND_THIRD">ชิงที่ 1 และ 3 — เพิ่มอันดับ 3,4 ชิงที่ 3 (ชนะ = ที่ 3, แพ้ = ที่ 4)</option>
-            </select>
+        <div className="form-row">
+          <div className="field"><span className="field__label">รูปแบบรอบชิง</span>
+            <SelectMenu appearance="prototype" className="sm--block" ariaLabel="รูปแบบรอบชิง" value={finalType}
+              options={[
+                { value: "NONE", label: "ไม่มีรอบชิง" }, { value: "CHAMPION", label: "ชิงที่ 1 — อันดับ 1 และ 2" },
+                { value: "CHAMPION_AND_THIRD", label: "ชิงที่ 1 และ 3 — อันดับ 1–4" },
+              ]} onChange={(value) => setFinalType(value as FinalType)} />
           </div>
-          {finalType !== "NONE" && (
-            <div className="form-field">
-              <label className="form-label" htmlFor="cf-final-games">จำนวนเกมรอบชิง</label>
-              <input className="input" id="cf-final-games" type="number" min={1} max={12} value={finalGames}
-                onChange={(event) => setFinalGames(Math.max(1, Math.min(12, Number(event.target.value) || 1)))} />
-            </div>
-          )}
-          <div className="form-field">
-            <label className="form-label" htmlFor="cf-slot-label">หมายเลขที่ประกาศให้ผู้ชม</label>
-            <select className="select" id="cf-slot-label" value={slotLabel}
-              onChange={(event) => setSlotLabel(event.target.value as SlotLabel)}>
-              <option value="PAIR">คู่ที่ — ผู้ชมเห็นเลขคู่</option>
-              <option value="SEAT">ที่นั่ง — ผู้ชมเห็นเลขที่นั่ง</option>
-            </select>
-            <small className="muted">คู่ที่ 1 คือที่นั่ง 1 กับ 2 — เป็นเลขเดียวกันคนละวิธีนับ เลือกแบบที่งานนี้ประกาศจริง แล้วหน้าผู้ชมจะแสดงคอลัมน์นั้นอย่างเดียว (เปลี่ยนทีหลังไม่ได้)</small>
-          </div>
-          <div className="form-field" style={{ gridColumn: "1 / -1" }}>
-            <label className="form-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-              <input type="checkbox" checked={gibsonEnabled} onChange={(event) => setGibsonEnabled(event.target.checked)} />
-              เปิดใช้ Gibsonization (Gibson Pairing)
-            </label>
-            <small className="muted">เมื่อระบบพิสูจน์ได้ว่ามีผู้เล่นการันตีแชมป์/เข้ารอบแน่นอนแล้ว จะจับคู่ผู้เล่นคนนั้นกับผู้ที่หมดลุ้นรางวัล เพื่อไม่ให้คะแนนไปกระทบลำดับกลุ่มที่ยังลุ้นอยู่ (คำนวณจาก max diff และเกมที่เหลือ)</small>
-          </div>
+          {finalType !== "NONE" && <div className="field">
+            <label htmlFor="cf-final-games">จำนวนเกมรอบชิง</label>
+            <input className="input prototype-maxdiff num" id="cf-final-games" type="number" min={1} max={12}
+              required inputMode="numeric" value={finalGames} onChange={(event) => setFinalGames(event.target.value)} />
+          </div>}
         </div>
-      </Panel>
 
-      <Panel title="ลำดับเกมและกติกาการจับคู่" description="ทุกเส้นเชื่อมต้องมีกติกาหนึ่งรายการก่อนบันทึก">
-        <div className="notice notice--info" style={{ margin: 18 }}><Info size={18} /><p><strong>ระบบอ่านกติกาแยกตามเกม</strong><span>เกม 1 ใช้กติกาเริ่มต้น ส่วนกติกาบนเส้น เกม 1 → เกม 2 ใช้สร้างคู่แข่งขันของเกม 2</span></p></div>
-        <div className="panel-padding" style={{ paddingTop: 0 }}>
-          <div className="form-field">
-            <label className="form-label" htmlFor="cf-initial-rule">กติกา Pairing เกม 1</label>
-            <select className="select" id="cf-initial-rule" value={initialPairingRule}
-              onChange={(event) => setInitialPairingRule(event.target.value as InitialPairingRule)}>
-              <option value="RANDOM">{ruleLabels.RANDOM}</option>
-              <option value="SWISS">{ruleLabels.SWISS}</option>
-              <option value="KING_OF_THE_HILL">{ruleLabels.KING_OF_THE_HILL}</option>
-            </select>
-          </div>
+        <details className="prototype-console-details"><summary>กติกาการจับคู่ระหว่างเกม</summary>
+          {rules.map((rule, index) => <div className="form-row form-row--tight" key={index}>
+            <span className="meta">เกม {index + 1} <ArrowRight className="i" size={12} aria-hidden /> เกม {index + 2}</span>
+            <SelectMenu appearance="prototype" ariaLabel={`กติกาจากเกม ${index + 1} ไปเกม ${index + 2}`} value={rule}
+              options={Object.entries(ruleLabels).map(([value, label]) => ({ value, label }))}
+              onChange={(value) => setRules((current) => current.map((entry, ruleIndex) => ruleIndex === index ? value as PairingRuleType : entry))} />
+          </div>)}
+          <label className="checkbox-chip"><input type="checkbox" checked={gibsonEnabled} onChange={(event) => setGibsonEnabled(event.target.checked)} />เปิดใช้ Gibsonization</label>
+        </details>
+        <div className="form-row prototype-form-end">
+          {cancelHref && <Link prefetch={false} href={cancelHref} className="btn btn--secondary">ยกเลิก</Link>}
+          <button className="btn btn--primary" type="submit" disabled={isSubmitting || (!fixedTournament && !tournamentId) || invalidMaxDiffs || invalidFinal || rules.length !== numberOfGames - 1}>
+            {isSubmitting ? "กำลังสร้างการ์ด…" : "สร้างการ์ด"}
+          </button>
         </div>
-        {rules.includes("PAIR_RESULT") && <div className="notice notice--warning" style={{ margin: 18 }}><Info size={18} /><p><strong>แพ้เจอแพ้ / ชนะเจอชนะ รองรับจำนวนผู้เล่นทุกจำนวน</strong><span>เจ้าหน้าที่จะกรอกผลทั้ง Game ต้นทางและ Game ถัดไปในชุดเดียวกัน ระบบสร้างคู่บายและจัดกลุ่มเศษให้อัตโนมัติ · ห้ามเลือกกติกานี้ต่อกันสองเส้น</span></p></div>}
-        <div className="rule-list">
-          {rules.map((rule, index) => (
-            <div className="rule-row" key={index}>
-              <div className="game-box">เกม {index + 1}</div>
-              <ArrowRight className="rule-arrow" size={17} />
-              <div className="game-box">เกม {index + 2}</div>
-              <select aria-label={`กติกาจากเกม ${index + 1} ไปเกม ${index + 2}`} className="select" value={rule}
-                onChange={(event) => setRules((current) => current.map((value, ruleIndex) => ruleIndex === index ? event.target.value as PairingRuleType : value))}>
-                {Object.entries(ruleLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-              </select>
-            </div>
-          ))}
-        </div>
-        <div className="form-actions">
-          {cancelHref && <Link prefetch={false} href={cancelHref}><Button type="button" variant="secondary">ยกเลิก</Button></Link>}
-          <Button type="submit" disabled={isSubmitting || (!fixedTournament && !tournamentId) || rules.some((rule) => !rule) || gameMaxDiffs.some((value) => !Number.isInteger(value) || value < 1 || value > 1000000)}><Save size={16} />บันทึกการ์ด</Button>
-        </div>
-      </Panel>
-    </form>
+      </form>
+    </section>
   );
 }

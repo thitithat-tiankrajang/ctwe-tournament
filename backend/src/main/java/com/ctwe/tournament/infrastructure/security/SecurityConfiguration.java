@@ -9,6 +9,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.session.SessionRegistry;
+import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -16,6 +18,7 @@ import org.springframework.security.provisioning.JdbcUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.session.HttpSessionEventPublisher;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.cors.CorsConfiguration;
@@ -27,6 +30,16 @@ import java.util.List;
 
 @Configuration
 public class SecurityConfiguration {
+    @Bean
+    SessionRegistry sessionRegistry() {
+        return new SessionRegistryImpl();
+    }
+
+    @Bean
+    HttpSessionEventPublisher httpSessionEventPublisher() {
+        return new HttpSessionEventPublisher();
+    }
+
     @Bean
     PasswordEncoder passwordEncoder() {
         // Matches the {bcrypt}$2a$12$... format stored for the bootstrap account; cost 12 for new accounts.
@@ -92,12 +105,16 @@ public class SecurityConfiguration {
     @Bean
     SecurityFilterChain securityFilterChain(
         HttpSecurity http,
-        UrlBasedCorsConfigurationSource corsConfigurationSource
+        UrlBasedCorsConfigurationSource corsConfigurationSource,
+        LoginThrottle loginThrottle,
+        SessionRegistry sessionRegistry
     ) throws Exception {
         var csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepository.setCookiePath("/");
 
         return http
+            .addFilterBefore(new LoginThrottleFilter(loginThrottle),
+                org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .csrf(csrf -> csrf.csrfTokenRepository(csrfRepository))
             .authorizeHttpRequests(auth -> auth
@@ -139,7 +156,13 @@ public class SecurityConfiguration {
                 .contentTypeOptions(content -> {}))
             .sessionManagement(session -> session
                 .sessionFixation(fixation -> fixation.migrateSession())
-                .maximumSessions(2))
+                .maximumSessions(2)
+                .sessionRegistry(sessionRegistry)
+                .expiredSessionStrategy(event -> {
+                    var response = event.getResponse();
+                    response.addHeader("Set-Cookie", staffSessionMarker(false, event.getRequest().isSecure()).toString());
+                    response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                }))
             .build();
     }
 

@@ -2,6 +2,7 @@
 
 import { Crown, LoaderCircle, LockKeyhole, Save, Trophy } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { editField, FINAL_MAX_SCORE, FINAL_MIN_SCORE, finalSlotDraftKey, parseFinalScore, gameDraftDirty, reconcileGameDrafts, reconcileSummaryDraft, savedText, summaryDraftDirty, type GameDrafts, type SummaryDraft } from "@/ui/components/final-draft";
 import type { FinalSlot, TournamentCard } from "@/domain/tournament/types";
 import { Badge } from "@/ui/components/badge";
 import { Button } from "@/ui/components/button";
@@ -66,20 +67,21 @@ export function FinalRoundBoard({ card, readOnly = false, canManage = false, onS
         </div>
       )}
 
-      {final.slots.map((slot) => (
+      <div className="final-board-matches">{final.slots.map((slot) => (
         <FinalSlotCard
-          key={slot.slot}
+          key={finalSlotDraftKey(card.id, slot)}
           slot={slot}
           name={name}
+          school={id => players.get(id)?.school ?? ""}
           editable={editable}
           editPassword={editPassword ?? undefined}
           onSubmitGame={onSubmitGame}
           onSetWinner={onSetWinner}
           onOpenHistory={onSlotHistory ? () => onSlotHistory(slot) : undefined}
         />
-      ))}
+      ))}</div>
 
-      <Panel title="สรุปผลรอบชิงชนะเลิศ" description={card.finalType === "CHAMPION_AND_THIRD" ? "ชิงที่ 1 และ 3 — summary เป็นค่าที่เจ้าหน้าที่กรอกเอง" : "ชิงที่ 1 — summary เป็นค่าที่เจ้าหน้าที่กรอกเอง"}>
+      <Panel title="สรุปผลรอบชิงชนะเลิศ">
         <div className="panel-padding">
           {placement.length === 0 ? <p className="muted">ยังไม่ได้สรุปผู้ชนะของคู่ชิง</p> : (
             <table className="data-table final-summary" aria-label="สรุปผลรอบชิงชนะเลิศ">
@@ -108,75 +110,88 @@ export function FinalRoundBoard({ card, readOnly = false, canManage = false, onS
   );
 }
 
-function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSetWinner, onOpenHistory }: {
+function FinalSlotCard({ slot, name, school, editable, editPassword, onSubmitGame, onSetWinner, onOpenHistory }: {
   slot: FinalSlot;
   name: NameFn;
+  school: (id: string) => string;
   editable: boolean;
   editPassword?: string;
   onSubmitGame?: (slot: number, gameIndex: number, scoreOne: number, scoreTwo: number, password?: string) => Promise<void>;
   onSetWinner?: (slot: number, winnerId: string, winnerWins: number, winnerLosses: number, totalDiff: number, password?: string) => Promise<void>;
   onOpenHistory?: () => void;
 }) {
-  const [gameDrafts, setGameDrafts] = useState<Record<number, { one: string; two: string }>>({});
-  const [summary, setSummary] = useState({
-    winnerId: slot.winnerId ?? "",
-    wins: slot.winnerWins?.toString() ?? "",
-    losses: slot.winnerLosses?.toString() ?? "",
-    diff: slot.totalDiff?.toString() ?? "",
-  });
-  const [savingGame, setSavingGame] = useState<number | null>(null);
+  const [gameDrafts, setGameDrafts] = useState<GameDrafts>(() => reconcileGameDrafts({}, slot.games));
+  const [summaryDraft, setSummaryDraft] = useState<SummaryDraft>(() => reconcileSummaryDraft(undefined, slot));
+  const [savingGames, setSavingGames] = useState<ReadonlySet<number>>(() => new Set());
   const [savingSummary, setSavingSummary] = useState(false);
+  const summary = editable ? {
+    winnerId: summaryDraft.winnerId.value,
+    wins: summaryDraft.wins.value,
+    losses: summaryDraft.losses.value,
+    diff: summaryDraft.diff.value,
+  } : {
+    winnerId: savedText(slot.winnerId),
+    wins: savedText(slot.winnerWins),
+    losses: savedText(slot.winnerLosses),
+    diff: savedText(slot.totalDiff),
+  };
 
   // Warn before the tab closes while a typed score or summary hasn't been saved yet.
-  const gamesDirty = slot.games.some((game) => {
-    const draft = gameDrafts[game.gameIndex];
-    return Boolean(draft) && (draft.one !== (game.scoreOne?.toString() ?? "") || draft.two !== (game.scoreTwo?.toString() ?? ""));
-  });
-  const summaryDirty = summary.winnerId !== (slot.winnerId ?? "")
-    || summary.wins !== (slot.winnerWins?.toString() ?? "")
-    || summary.losses !== (slot.winnerLosses?.toString() ?? "")
-    || summary.diff !== (slot.totalDiff?.toString() ?? "");
+  const gamesDirty = gameDraftDirty(gameDrafts, slot.games);
+  const summaryDirty = summaryDraftDirty(summaryDraft, slot);
   useUnsavedChangesWarning(editable && (gamesDirty || summaryDirty));
 
+  // A replaced card (own save response, another operator over SSE, a refresh) only updates fields
+  // the operator has not typed over, so an in-flight save can never erase a newer draft.
   useEffect(() => {
-    setGameDrafts(Object.fromEntries(slot.games.map((game) => [game.gameIndex, {
-      one: game.scoreOne?.toString() ?? "",
-      two: game.scoreTwo?.toString() ?? "",
-    }])));
+    setGameDrafts((previous) => reconcileGameDrafts(previous, slot.games));
   }, [slot.games]);
 
+  const { winnerId, winnerWins, winnerLosses, totalDiff } = slot;
   useEffect(() => {
-    setSummary({
-      winnerId: slot.winnerId ?? "",
-      wins: slot.winnerWins?.toString() ?? "",
-      losses: slot.winnerLosses?.toString() ?? "",
-      diff: slot.totalDiff?.toString() ?? "",
-    });
-  }, [slot.playerOneId, slot.winnerId, slot.winnerWins, slot.winnerLosses, slot.totalDiff]);
+    setSummaryDraft((previous) => reconcileSummaryDraft(previous, { winnerId, winnerWins, winnerLosses, totalDiff }));
+  }, [winnerId, winnerWins, winnerLosses, totalDiff]);
 
-  const setScore = (gameIndex: number, field: "one" | "two", value: string) =>
-    setGameDrafts((prev) => ({ ...prev, [gameIndex]: { ...(prev[gameIndex] ?? { one: "", two: "" }), [field]: value } }));
+  // Once the board stops being editable (published, or the unlock lapsed) every draft is dropped, so
+  // read-only cells show only saved values and a later unlock starts from what is saved.
+  useEffect(() => {
+    if (editable) return;
+    setGameDrafts(reconcileGameDrafts({}, slot.games));
+    setSummaryDraft(reconcileSummaryDraft(undefined, { winnerId, winnerWins, winnerLosses, totalDiff }));
+  }, [editable, slot.games, winnerId, winnerWins, winnerLosses, totalDiff]);
+
+  const setScore = (gameIndex: number, field: "one" | "two", value: string) => {
+    const saved = slot.games.find((game) => game.gameIndex === gameIndex);
+    const savedValue = savedText(field === "one" ? saved?.scoreOne : saved?.scoreTwo);
+    setGameDrafts((prev) => {
+      const current = prev[gameIndex] ?? reconcileGameDrafts({}, saved ? [saved] : [])[gameIndex];
+      return { ...prev, [gameIndex]: { ...current, [field]: editField(current?.[field], value, savedValue) } };
+    });
+  };
+  const setSummaryField = (field: keyof SummaryDraft, value: string) =>
+    setSummaryDraft((prev) => ({ ...prev, [field]: editField(prev[field], value, prev[field].base) }));
 
   const outcome = (oneText: string, twoText: string) => {
-    const one = Number(oneText); const two = Number(twoText);
-    if (!Number.isInteger(one) || !Number.isInteger(two) || one < 0 || two < 0) return null;
+    const one = parseFinalScore(oneText); const two = parseFinalScore(twoText);
+    if (one == null || two == null) return null;
     if (one === two) return { label: "เสมอ · 0", diff: 0 };
     const winner = one > two ? slot.playerOneId : slot.playerTwoId;
     return { label: `${name(winner)} +${Math.abs(one - two)}`, diff: Math.abs(one - two) };
   };
 
   const saveGame = async (gameIndex: number) => {
-    const draft = gameDrafts[gameIndex];
-    if (!draft) return;
-    const one = Number(draft.one); const two = Number(draft.two);
-    if (!Number.isInteger(one) || !Number.isInteger(two) || one < 0 || two < 0) {
-      await appDialog.alert("คะแนนต้องเป็นจำนวนเต็ม ≥ 0", "บันทึกเกมรอบชิงไม่ได้", true);
+    const entry = gameDrafts[gameIndex];
+    if (!entry) return;
+    const draft = { one: entry.one.value, two: entry.two.value };
+    const one = parseFinalScore(draft.one); const two = parseFinalScore(draft.two);
+    if (one == null || two == null) {
+      await appDialog.alert(`คะแนนต้องเป็นจำนวนเต็มระหว่าง ${FINAL_MIN_SCORE} ถึง ${FINAL_MAX_SCORE}`, "บันทึกเกมรอบชิงไม่ได้", true);
       return;
     }
-    setSavingGame(gameIndex);
+    setSavingGames((prev) => new Set(prev).add(gameIndex));
     try { await onSubmitGame?.(slot.slot, gameIndex, one, two, editPassword); }
     catch (error) { await appDialog.alert(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ", "บันทึกไม่สำเร็จ", true); }
-    finally { setSavingGame(null); }
+    finally { setSavingGames((prev) => { const next = new Set(prev); next.delete(gameIndex); return next; }); }
   };
 
   const summaryReady = useMemo(() => {
@@ -202,15 +217,22 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
     : name(playerId);
 
   return (
-    <Panel title={slotTitle(slot.slot)} description={`${name(slot.playerOneId)}  พบ  ${name(slot.playerTwoId)}`}>
+    <Panel title={slotTitle(slot.slot)} className="final-entry-match">
       <div className="final-slot">
+        <div className="final-entry-players">{[slot.playerOneId, slot.playerTwoId].map(id => <div key={id} data-winner={slot.winnerId === id}>
+          <span className="code">{id}</span><strong>{playerHeader(id)}</strong><small title={school(id)}>{school(id)}</small>
+        </div>)}</div>
         <table className="final-slot-table" aria-label={`ผลรายเกม ${slotTitle(slot.slot)}`}>
           <thead>
-            <tr><th scope="col">เกม</th><th scope="col">{playerHeader(slot.playerOneId)}</th><th scope="col">{playerHeader(slot.playerTwoId)}</th><th scope="col">ผลเกม</th>{editable && <th scope="col">บันทึก</th>}</tr>
+            <tr><th scope="col">เกม</th><th scope="col" title={name(slot.playerOneId)}>{slot.playerOneId}</th><th scope="col" title={name(slot.playerTwoId)}>{slot.playerTwoId}</th><th scope="col">ผลเกม</th>{editable && <th scope="col">บันทึก</th>}</tr>
           </thead>
           <tbody>
             {slot.games.map((game) => {
-              const draft = gameDrafts[game.gameIndex] ?? { one: "", two: "" };
+              const entry = gameDrafts[game.gameIndex];
+              const draft = editable && entry
+                ? { one: entry.one.value, two: entry.two.value }
+                : { one: savedText(game.scoreOne), two: savedText(game.scoreTwo) };
+              const saving = savingGames.has(game.gameIndex);
               const fill = outcome(draft.one, draft.two);
               return (
                 <tr key={game.gameIndex}>
@@ -218,7 +240,7 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
                   <td><ScoreCell editable={editable} value={draft.one} onChange={(value) => setScore(game.gameIndex, "one", value)} onOpenHistory={onOpenHistory} /></td>
                   <td><ScoreCell editable={editable} value={draft.two} onChange={(value) => setScore(game.gameIndex, "two", value)} onOpenHistory={onOpenHistory} /></td>
                   <td className={fill && fill.diff > 0 ? "final-fill-diff final-fill-diff--win" : "final-fill-diff"}>{fill?.label ?? "—"}</td>
-                  {editable && <td><Button size="sm" variant="success" disabled={savingGame === game.gameIndex} onClick={() => void saveGame(game.gameIndex)}>{savingGame === game.gameIndex ? <LoaderCircle className="loading-spinner" size={13} /> : <Save size={13} />}บันทึก</Button></td>}
+                  {editable && <td><Button size="sm" variant="success" disabled={saving} onClick={() => void saveGame(game.gameIndex)}>{saving ? <LoaderCircle className="loading-spinner" size={13} /> : <Save size={13} />}บันทึก</Button></td>}
                 </tr>
               );
             })}
@@ -226,12 +248,14 @@ function FinalSlotCard({ slot, name, editable, editPassword, onSubmitGame, onSet
         </table>
 
         <section className="final-slot-summary" aria-label={`สรุปผู้ชนะ ${slotTitle(slot.slot)}`}>
-          <header><Crown size={18} /><strong>สรุปผลผู้ชนะ</strong><span>กรอกเองทั้งหมด</span></header>
+          <header><Crown size={18} /><strong>สรุปผลผู้ชนะ</strong></header>
           <div className="final-summary-form">
-            <label>ผู้ชนะ<select className="select" disabled={!editable} value={summary.winnerId} onChange={(event) => setSummary((prev) => ({ ...prev, winnerId: event.target.value }))}><option value="">เลือกผู้ชนะ</option><option value={slot.playerOneId}>{name(slot.playerOneId)}</option><option value={slot.playerTwoId}>{name(slot.playerTwoId)}</option></select></label>
-            <label>ชนะ<ScoreInput className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.wins} onChange={(event) => setSummary((prev) => ({ ...prev, wins: event.target.value }))} /></label>
-            <label>แพ้<ScoreInput className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.losses} onChange={(event) => setSummary((prev) => ({ ...prev, losses: event.target.value }))} /></label>
-            <label>Total diff<ScoreInput className="input" disabled={!editable} type="number" inputMode="numeric" value={summary.diff} onChange={(event) => setSummary((prev) => ({ ...prev, diff: event.target.value }))} /></label>
+            <label>ผู้ชนะ<select className="select" disabled={!editable} value={summary.winnerId} onChange={(event) => setSummaryField("winnerId", event.target.value)}><option value="">เลือกผู้ชนะ</option><option value={slot.playerOneId}>{name(slot.playerOneId)}</option><option value={slot.playerTwoId}>{name(slot.playerTwoId)}</option></select></label>
+            <label>ชนะ<ScoreInput className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.wins} onChange={(event) => setSummaryField("wins", event.target.value)} /></label>
+            <label>แพ้<ScoreInput className="input" disabled={!editable} type="number" min={0} inputMode="numeric" value={summary.losses} onChange={(event) => setSummaryField("losses", event.target.value)} /></label>
+            <label>Total diff<ScoreInput className="input" disabled={!editable} type="text" inputMode="text" value={summary.diff} onChange={(event) => {
+              if (/^-?\d*$/.test(event.target.value)) setSummaryField("diff", event.target.value);
+            }} /></label>
             {editable
               ? <Button size="sm" variant="success" disabled={savingSummary} onClick={() => void saveSummary()}>{savingSummary ? <LoaderCircle className="loading-spinner" size={13} /> : <Save size={13} />}บันทึกสรุปผล</Button>
               : onOpenHistory && <button type="button" className="final-history-link" onClick={onOpenHistory}>ดูประวัติรอบชิง</button>}
@@ -249,7 +273,9 @@ function ScoreCell({ editable, value, onChange, onOpenHistory }: {
   onOpenHistory?: () => void;
 }) {
   return editable
-    ? <ScoreInput className="input final-score" type="number" min={0} inputMode="numeric" value={value} onChange={(event) => onChange(event.target.value)} />
+    ? <ScoreInput className="input final-score" type="text" inputMode="text" value={value} onChange={(event) => {
+      if (/^-?\d*$/.test(event.target.value)) onChange(event.target.value);
+    }} />
     : onOpenHistory
       ? <button type="button" className="final-score-readonly" onClick={onOpenHistory}>{value || "—"}</button>
       : <span className="final-score-readonly final-score-readonly--static">{value || "—"}</span>;

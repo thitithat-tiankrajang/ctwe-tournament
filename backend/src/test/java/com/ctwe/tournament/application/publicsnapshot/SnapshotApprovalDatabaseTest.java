@@ -32,6 +32,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import com.ctwe.tournament.application.WebPushService;
 
 /**
  * Phase E — publication approval — against a real PostgreSQL.
@@ -54,6 +56,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Rollback
 @EnabledIfEnvironmentVariable(named = "DATABASE_PASSWORD", matches = ".+")
 class SnapshotApprovalDatabaseTest {
+
+    /** Test-scoped: Web Push must not create/store VAPID keys, run its scheduled cleanup, or send. */
+    @MockitoBean WebPushService webPush;
 
     @DynamicPropertySource
     static void staffProps(DynamicPropertyRegistry registry) {
